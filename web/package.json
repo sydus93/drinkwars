@@ -8,7 +8,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "deploy": "vite build --base=/drinkwars/ && rm -rf ../../Webpage/drinkwars && cp -R dist ../../Webpage/drinkwars && echo 'Built into ../../Webpage/drinkwars — now commit & push the devinstein.me repo to go live.'"
   },
   "dependencies": {
     "drinkwars-engine": "*",
