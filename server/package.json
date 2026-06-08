@@ -1,0 +1,23 @@
+{
+  "name": "drinkwars-server",
+  "version": "0.1.0",
+  "description": "Drink Wars — persistence + orchestration layer (round lifecycle, engine invocation, append-only history). Storage-adapter abstracted; Supabase schema in supabase/migrations.",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "demo": "tsx src/demo.ts",
+    "test": "tsx --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "drinkwars-engine": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

@@ -1,0 +1,118 @@
+@import "tailwindcss";
+
+/* ─────────────────────────────────────────────────────────────────────────
+   "Taproom Ledger" design tokens. Re-skin to the Relief brand by swapping
+   these — every component reads from them, nothing hardcodes a color.
+   ───────────────────────────────────────────────────────────────────────── */
+@theme {
+  --color-paper: #f4ece0;
+  --color-panel: #ece0cd;
+  --color-panel2: #e3d4bd;
+  --color-ink: #241c16;
+  --color-inksoft: #6a5d4f;
+  --color-copper: #b5632b;
+  --color-copperdeep: #8a4a1f;
+  --color-hop: #5d7c44;
+  --color-brick: #a8392f;
+  --color-gold: #c2912f;
+  --color-line: rgba(36, 28, 22, 0.14);
+  --color-line2: rgba(36, 28, 22, 0.28);
+
+  --font-display: "Fraunces", ui-serif, Georgia, serif;
+  --font-body: "Hanken Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Spline Sans Mono", ui-monospace, monospace;
+}
+
+html {
+  background: var(--color-paper);
+  color-scheme: light;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-body);
+  color: var(--color-ink);
+  background-color: var(--color-paper);
+  /* faint paper grain + a warm copper bloom in the corner */
+  background-image:
+    radial-gradient(120% 90% at 100% 0%, rgba(181, 99, 43, 0.1), transparent 55%),
+    radial-gradient(90% 70% at 0% 100%, rgba(93, 124, 68, 0.07), transparent 50%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: var(--color-copper);
+  color: var(--color-paper);
+}
+
+/* Tabular numerals everywhere we render figures. */
+.tnum {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.display {
+  font-family: var(--font-display);
+  font-optical-sizing: auto;
+  letter-spacing: -0.01em;
+}
+
+/* Letterpress-y section eyebrow */
+.eyebrow {
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 0.68rem;
+  color: var(--color-copperdeep);
+}
+
+.card {
+  background: color-mix(in srgb, var(--color-panel) 55%, var(--color-paper));
+  border: 1px solid var(--color-line);
+  border-radius: 2px;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.5) inset, 0 1px 2px rgba(36, 28, 22, 0.05);
+}
+
+/* thin range slider styled to the palette */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 3px;
+  background: var(--color-line2);
+  border-radius: 999px;
+  outline: none;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--color-copper);
+  border: 2px solid var(--color-paper);
+  box-shadow: 0 1px 3px rgba(36, 28, 22, 0.3);
+  cursor: pointer;
+}
+input[type="number"],
+input[type="text"],
+textarea {
+  font-family: var(--font-mono);
+  background: var(--color-paper);
+  border: 1px solid var(--color-line2);
+  border-radius: 2px;
+  color: var(--color-ink);
+  padding: 0.35rem 0.5rem;
+}
+input:focus,
+textarea:focus {
+  outline: 2px solid color-mix(in srgb, var(--color-copper) 60%, transparent);
+  outline-offset: 1px;
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.rise { animation: rise 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both; }

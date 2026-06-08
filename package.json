@@ -1,0 +1,11 @@
+{
+  "name": "drinkwars",
+  "version": "0.1.0",
+  "description": "Drink Wars — craft-beverage strategy simulation (engine + orchestration). See 01_model_engine_spec.md, 02_application_spec.md.",
+  "private": true,
+  "workspaces": [
+    "engine",
+    "server",
+    "web"
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "name": "drinkwars-web",
+  "version": "0.1.0",
+  "description": "Drink Wars — single-player in-browser prototype (engine + orchestration + adaptive NPCs, no backend).",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "drinkwars-engine": "*",
+    "drinkwars-server": "*",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.7.0",
+    "vite": "^6.0.7"
+  }
+}

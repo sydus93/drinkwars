@@ -1,0 +1,28 @@
+{
+  "name": "drinkwars-engine",
+  "version": "0.1.0",
+  "description": "Drink Wars — deterministic economic engine + balance harness (v1, headless). See ../01_model_engine_spec.md.",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts",
+    "./node": "./src/node.ts"
+  },
+  "scripts": {
+    "balance": "tsx harness/balance.ts",
+    "smoke": "tsx harness/smoke.ts",
+    "test": "tsx --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  },
+  "dependencies": {
+    "yaml": "^2.6.0"
+  }
+}
