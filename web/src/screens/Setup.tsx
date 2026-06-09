@@ -15,11 +15,11 @@ export function Setup({ onStart, busy }: { onStart: (name: string, difficulty: D
     <div className="mx-auto flex min-h-screen max-w-3xl flex-col justify-center px-6 py-16">
       <div className="rise">
         <div className="eyebrow">A craft-beverage strategy simulation</div>
-        <h1 className="display mt-2 text-6xl font-semibold leading-[0.95] sm:text-7xl">
+        <h1 className="wordmark mt-2 text-6xl leading-[0.95] text-ink sm:text-7xl">
           Drink<span className="text-copper">&nbsp;Wars</span>
         </h1>
         <div className="mt-4 h-px w-24 bg-copper" />
-        <p className="mt-6 max-w-xl text-lg leading-relaxed text-ink">
+        <p className="mt-6 max-w-xl font-display text-xl leading-relaxed text-inksoft">
           Run a craft beverage company competing for drinkers across a regional market. Brew your lineup, build capacity, invest in
           quality and brand, manage your taproom, distributors and regulators — then the water table drops, a hop harvest fails, or a
           new category takes off.

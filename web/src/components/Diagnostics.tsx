@@ -3,7 +3,13 @@ import type { GameView } from "../game/controller.js";
 import { SEG_LABEL, STOCK_LABEL, fmt } from "../labels.js";
 import { Bar, Card, Eyebrow, Row, Tag } from "./ui.js";
 
-const PALETTE = { copper: "#b5632b", hop: "#5d7c44", gold: "#c2912f", ink: "#6a5d4f", brick: "#a8392f" };
+const PALETTE = {
+  copper: "var(--color-copper)",
+  hop: "var(--color-hop)",
+  gold: "var(--color-gold)",
+  ink: "var(--color-inksoft)",
+  brick: "var(--color-brick)",
+};
 
 /** §6.4 — decompose the round rather than just showing a rank. */
 export function Diagnostics({ result, view }: { result: FirmRoundResult; view: GameView }) {
@@ -27,7 +33,7 @@ export function Diagnostics({ result, view }: { result: FirmRoundResult; view: G
               { label: "Quality", value: a.quality, color: PALETTE.hop },
               { label: "Brand", value: a.brand, color: PALETTE.copper },
               { label: "Fit / focus", value: a.fit, color: PALETTE.gold },
-              { label: "Collab", value: a.agreement, color: "#7a6cae" },
+              { label: "Collab", value: a.agreement, color: "var(--color-plum)" },
             ].filter((x) => x.value > 0.001);
             return (
               <div key={id} className="border-b border-line pb-3 last:border-0 md:border-0 md:pb-0">

@@ -21,11 +21,11 @@ export function Button({
   variant?: "solid" | "ghost";
   className?: string;
 }) {
-  const base = "font-mono text-sm tracking-wide px-4 py-2 rounded-[2px] transition-all disabled:opacity-40 disabled:cursor-not-allowed";
+  const base = "font-body text-sm font-medium tracking-wide px-4 py-2 transition-all disabled:opacity-40 disabled:cursor-not-allowed";
   const styles =
     variant === "solid"
-      ? "bg-copper text-paper hover:bg-copperdeep shadow-[0_2px_0_var(--color-copperdeep)] active:translate-y-px active:shadow-none"
-      : "border border-line2 text-ink hover:bg-panel";
+      ? "bg-copper text-paper hover:bg-copperdeep active:opacity-85"
+      : "border border-line2 text-ink hover:bg-panel2 active:opacity-85";
   return (
     <button onClick={onClick} disabled={disabled} className={`${base} ${styles} ${className}`}>
       {children}
@@ -68,7 +68,7 @@ export function Tag({ children, tone = "ink" }: { children: ReactNode; tone?: "i
     hop: "border-hop text-hop",
     brick: "border-brick text-brick",
   } as const;
-  return <span className={`font-mono text-[0.62rem] uppercase tracking-[0.12em] border rounded-[2px] px-1.5 py-0.5 ${map[tone]}`}>{children}</span>;
+  return <span className={`font-mono text-[0.6rem] uppercase tracking-[0.12em] border rounded-full px-2 py-0.5 ${map[tone]}`}>{children}</span>;
 }
 
 export function Row({ label, value, strong }: { label: ReactNode; value: ReactNode; strong?: boolean }) {

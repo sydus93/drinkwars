@@ -3,10 +3,10 @@ import { fmt } from "../labels.js";
 import { Card, Eyebrow } from "./ui.js";
 import { LineChart, Legend, type Series } from "./charts.js";
 
-const COPPER = "#b5632b";
-const HOP = "#5d7c44";
-const INK = "#6a5d4f";
-const GOLD = "#c2912f";
+const COPPER = "var(--color-copper)";
+const HOP = "var(--color-hop)";
+const INK = "var(--color-inksoft)";
+const GOLD = "var(--color-gold)";
 
 export function Trends({ view }: { view: GameView }) {
   const h = view.history;

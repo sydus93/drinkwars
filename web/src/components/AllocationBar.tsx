@@ -1,6 +1,7 @@
 import { useRef } from "react";
 
-const COLORS = ["#b5632b", "#5d7c44", "#c2912f", "#7a6cae"];
+// Cartographic series palette: clay / terrain-green / aero-blue / plum.
+const COLORS = ["var(--color-clay)", "var(--color-copper)", "var(--color-aero)", "var(--color-plum)"];
 
 /**
  * Unified capacity-allocation control: a single bar split across the active

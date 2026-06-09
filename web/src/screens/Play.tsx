@@ -141,7 +141,7 @@ function SeasonOver({ view, rank, onReset }: { view: GameView; rank: number; onR
     <Card className="rise">
       <Eyebrow>Season complete</Eyebrow>
       <h2 className="display text-2xl font-semibold">
-        {rank === 1 ? "🏆 You finished #1." : rank > 0 ? `You finished #${rank} of ${view.standings.length}.` : "Your run has ended."}
+        {rank === 1 ? "You finished first." : rank > 0 ? `You finished #${rank} of ${view.standings.length}.` : "Your run has ended."}
       </h2>
       <p className="mt-1 text-sm text-inksoft">Sustained scorecard rewards advantage held across the whole season, not a final-round spike.</p>
       <div className="mt-3"><Button onClick={onReset}>Play again</Button></div>
