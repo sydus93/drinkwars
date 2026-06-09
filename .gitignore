@@ -5,6 +5,8 @@ node_modules/
 dist/
 out/
 .vite/
+# Generated Edge Function bundle (regenerate: npm run build:edge)
+server/supabase/functions/drinkwars/drinkwars-core.js
 
 # Logs & OS
 *.log

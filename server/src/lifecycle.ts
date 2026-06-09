@@ -49,15 +49,16 @@ function zeroFirmDecision(firmId: FirmId, segments: SegmentId[]): FirmDecision {
 }
 
 export class GameOrchestrator {
-  private counter = 0;
   constructor(
     private store: StorageAdapter,
     private clock: () => number = () => Date.now(),
     private opts: { botFillEmptySlots?: boolean } = {},
   ) {}
 
-  private id(prefix: string): string {
-    return `${prefix}_${++this.counter}`;
+  /** Fresh id — a UUID, valid for both the in-memory store and Postgres uuid columns
+   *  (global crypto works in Node and Deno, so this survives the Edge Function bundle). */
+  private id(): string {
+    return crypto.randomUUID();
   }
   private async requireGame(gameId: string): Promise<GameRecord> {
     const g = await this.store.getGame(gameId);
@@ -69,13 +70,13 @@ export class GameOrchestrator {
   async createGame(input: CreateGameInput): Promise<string> {
     const { config } = input;
     if (input.teams.length > config.game.n_firms) throw new LifecycleError(`${input.teams.length} teams exceeds n_firms ${config.game.n_firms}`);
-    const gameId = input.gameId ?? this.id("game");
+    const gameId = input.gameId ?? this.id();
     const world = initGame(config);
     const game: GameRecord = { id: gameId, config, n_rounds: config.game.n_rounds, current_round: 0, lifecycle: "open", join_code: input.joinCode ?? null, created_at: this.clock() };
     await this.store.createGame(game);
     for (let i = 0; i < input.teams.length; i++) {
       const t = input.teams[i];
-      const team: TeamRecord = { id: this.id("team"), game_id: gameId, firm_id: world.firms[i].id, name: t.name, member_user_ids: t.memberUserIds ?? [] };
+      const team: TeamRecord = { id: this.id(), game_id: gameId, firm_id: world.firms[i].id, name: t.name, member_user_ids: t.memberUserIds ?? [] };
       await this.store.createTeam(team);
     }
     await this.store.appendWorldState({ game_id: gameId, round: 0, state: world, seed: config.game.seed, created_at: this.clock() });

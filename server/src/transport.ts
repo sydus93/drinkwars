@@ -19,6 +19,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { loadConfig } from "drinkwars-engine/node";
 import type { FirmDecision } from "drinkwars-engine";
+import { createClient } from "@supabase/supabase-js";
 import { GameOrchestrator, InMemoryAdapter, createSupabaseAdapter, type StorageAdapter } from "./index.js";
 
 // Load server/.env (only needed for supabase mode; harmless otherwise).
@@ -38,6 +39,12 @@ const useSupabase = (process.env.DW_ADAPTER ?? "memory") === "supabase";
 
 const store: StorageAdapter = useSupabase ? createSupabaseAdapter() : new InMemoryAdapter();
 const orch = new GameOrchestrator(store, () => Date.now(), { botFillEmptySlots: true });
+
+// In supabase mode the users→auth.users FK requires a real auth user per joiner,
+// so /join admin-creates an anonymous one. (Memory mode needs no auth.)
+const admin = useSupabase
+  ? createClient(process.env.SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? "", { auth: { persistSession: false } })
+  : null;
 
 // token -> student session. In-memory; fine for a single-process local transport.
 const sessions = new Map<string, { gameId: string; teamId: string; userId: string }>();
@@ -106,7 +113,12 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
   if (method === "POST" && path === "/join") {
     const { code, name } = await readJson(req);
     if (!code || !name) return send(res, 400, { error: "code and name required" });
-    const userId = randomUUID();
+    let userId: string = randomUUID();
+    if (admin) {
+      const { data, error } = await admin.auth.admin.createUser({ email: `anon-${userId}@drinkwars.local`, email_confirm: true });
+      if (error || !data.user) return send(res, 500, { error: `auth: ${error?.message ?? "could not create player"}` });
+      userId = data.user.id;
+    }
     let joined;
     try {
       joined = await orch.joinGame(String(code).toUpperCase(), String(name).slice(0, 40), userId);
