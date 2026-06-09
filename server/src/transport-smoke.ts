@@ -37,7 +37,7 @@ async function main(): Promise<void> {
   ok("two students joined (distinct firms, got config)");
 
   const v1: any = await (await fetch(`${BASE}/view?token=${a.token}`)).json();
-  check(v1.own && v1.own.firm_id === a.firmId, "view returns own firm");
+  check(v1.own && v1.own.id === a.firmId, "view returns own firm");
   check(v1.lifecycle === "open" && v1.round === 0, "round 0 open");
   ok("student view: own firm + open round");
 

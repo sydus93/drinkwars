@@ -22,6 +22,8 @@ export function DecisionForm({
   busy,
   infoCost,
   onInfoChange,
+  submitLabel,
+  footerNote,
 }: {
   view: GameView;
   defaultDecision: () => Promise<FirmDecision>;
@@ -29,6 +31,8 @@ export function DecisionForm({
   busy: boolean;
   infoCost: number;
   onInfoChange?: (bought: boolean) => void;
+  submitLabel?: string;
+  footerNote?: string;
 }) {
   const [d, setD] = useState<FirmDecision | null>(null);
   const activeSegs = view.segments.filter((s) => s.active).map((s) => s.id);
@@ -207,9 +211,9 @@ export function DecisionForm({
           {overcommit && <div className="mt-2 text-[0.72rem] text-brick">You'd run negative before any sales come in — revenue may cover it, but you risk forced exit.</div>}
         </Card>
         <Button onClick={() => onPlay(d)} disabled={busy} className="w-full py-3 text-base">
-          {busy ? "Brewing…" : `Brew & Resolve Round ${view.round + 1}`}
+          {busy ? "Working…" : submitLabel ?? `Brew & Resolve Round ${view.round + 1}`}
         </Button>
-        <div className="text-center text-[0.68rem] text-inksoft">7 rival breweries (adaptive AI) brew at the same time.</div>
+        <div className="text-center text-[0.68rem] text-inksoft">{footerNote ?? "7 rival breweries (adaptive AI) brew at the same time."}</div>
       </div>
     </div>
   );

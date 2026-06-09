@@ -2,6 +2,11 @@ import { useState } from "react";
 import { useGame } from "./game/useGame.js";
 import { Setup } from "./screens/Setup.js";
 import { Play } from "./screens/Play.js";
+import { Lobby } from "./screens/Lobby.js";
+import { Join } from "./screens/Join.js";
+import { MultiplayerPlay } from "./screens/MultiplayerPlay.js";
+import { Instructor } from "./screens/Instructor.js";
+import type { StudentClient } from "./game/multiplayer.js";
 
 type Mode = "foolscap" | "sectional";
 
@@ -37,15 +42,30 @@ function ModeToggle() {
   );
 }
 
-export function App() {
+/** Single-player: the full stack runs in the browser (engine + orchestration + NPCs). */
+function Solo() {
   const { view, busy, start, play, defaultDecision, infoCost, reset } = useGame();
+  if (!view) return <Setup onStart={(name, difficulty) => start({ breweryName: name, difficulty })} busy={busy} />;
+  return <Play view={view} busy={busy} infoCost={infoCost()} onPlay={play} defaultDecision={defaultDecision} onReset={reset} />;
+}
+
+type Screen = "lobby" | "solo" | "join" | "instructor";
+
+export function App() {
+  const [screen, setScreen] = useState<Screen>("lobby");
+  const [student, setStudent] = useState<StudentClient | null>(null);
+
   return (
     <>
-      {!view ? (
-        <Setup onStart={(name, difficulty) => start({ breweryName: name, difficulty })} busy={busy} />
-      ) : (
-        <Play view={view} busy={busy} infoCost={infoCost()} onPlay={play} defaultDecision={defaultDecision} onReset={reset} />
-      )}
+      {screen === "lobby" && <Lobby onPick={setScreen} />}
+      {screen === "solo" && <Solo />}
+      {screen === "join" &&
+        (student ? (
+          <MultiplayerPlay client={student} onExit={() => { setStudent(null); setScreen("lobby"); }} />
+        ) : (
+          <Join onJoined={setStudent} onBack={() => setScreen("lobby")} />
+        ))}
+      {screen === "instructor" && <Instructor onExit={() => setScreen("lobby")} />}
       <ModeToggle />
     </>
   );

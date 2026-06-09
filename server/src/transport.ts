@@ -62,25 +62,35 @@ async function readJson(req: IncomingMessage): Promise<any> {
   return raw ? JSON.parse(raw) : {};
 }
 
-/** Everything a joined student needs to render: own firm + public standings/market. */
+/** Everything a joined student needs to render: their OWN full firm state +
+ *  their own last-round diagnostics + the public standings/market. A rival's
+ *  private state is never included (this team's slice only). */
 async function viewFor(gameId: string, teamId: string) {
   const pub = await orch.getPublicState(gameId);
   const tv = await orch.getTeamView(gameId, teamId);
   const game = await store.getGame(gameId);
   const last = (await store.getPublicRounds(gameId)).at(-1) ?? null;
   const decision = await store.getDecision(gameId, pub.round, teamId);
-  const own = tv.own as any;
+  const own = tv.own as any; // full FirmState for this team's firm | null
+  const config: any = game?.config;
+  const unitCostEst = own ? (own.unit_cost > 0 ? own.unit_cost : (config?.costs?.c_base ?? 0) * 0.85) : 0;
+  // This team's own last-round diagnostics only (extracted server-side).
+  let ownResult: any = null;
+  if (own) {
+    const lastFull = (await store.getRoundResults(gameId)).at(-1);
+    ownResult = lastFull ? (lastFull.result.firm_results.find((f) => f.firm_id === own.id) ?? null) : null;
+  }
   return {
     round: pub.round,
     lifecycle: pub.lifecycle,
     nRounds: game?.n_rounds,
+    complete: pub.lifecycle === "complete",
     segments: pub.segments,
-    own: own
-      ? { firm_id: own.id, status: own.status, cash: own.cash, cap: own.cap, unit_cost: own.unit_cost, Q: own.Q, B: own.B, T_emp: own.T_emp, T_inv: own.T_inv, T_gov: own.T_gov }
-      : null,
+    own, // full FirmState (this firm only)
+    ownResult,
+    unitCostEst,
     standings: last?.standings ?? [],
     events: last?.events ?? [],
-    publicRound: last?.round ?? null,
     submitted: decision?.submitted ?? false,
   };
 }
