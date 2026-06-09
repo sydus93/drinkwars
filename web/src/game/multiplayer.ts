@@ -63,6 +63,37 @@ export class StudentClient {
     this.firmId = r.firmId;
     this.config = r.config;
     this.nRounds = r.nRounds;
+    this.save();
+  }
+
+  /** Persist the (stateless, signed) token + config so a refresh resumes the SAME firm. */
+  private save() {
+    try {
+      localStorage.setItem("dw_mp", JSON.stringify({ token: this.token, config: this.config, firmId: this.firmId, nRounds: this.nRounds }));
+    } catch {
+      /* localStorage unavailable — just no resume */
+    }
+  }
+  clearSaved() {
+    try {
+      localStorage.removeItem("dw_mp");
+    } catch {
+      /* ignore */
+    }
+  }
+  static restore(base: string = TRANSPORT_URL): StudentClient | null {
+    try {
+      const s = JSON.parse(localStorage.getItem("dw_mp") || "null");
+      if (!s?.token) return null;
+      const c = new StudentClient(base);
+      c.token = s.token;
+      c.config = s.config;
+      c.firmId = s.firmId;
+      c.nRounds = s.nRounds ?? 0;
+      return c;
+    } catch {
+      return null;
+    }
   }
 
   async fetchView(): Promise<RawView> {
@@ -171,6 +202,10 @@ export class InstructorClient {
   }
   status(gameId: string): Promise<InstructorStatus> {
     return api(this.base, `/instructor/games/${gameId}/status`, { headers: this.headers() });
+  }
+  /** Re-attach to a running game by its join code (reconnect after a drop). */
+  resume(code: string): Promise<{ gameId: string; joinCode: string; nRounds: number }> {
+    return api(this.base, "/instructor/resume", { method: "POST", headers: this.headers(), body: JSON.stringify({ code }) });
   }
   lock(gameId: string): Promise<{ nonSubmitters: string[] }> {
     return api(this.base, `/instructor/games/${gameId}/lock`, { method: "POST", headers: this.headers() });

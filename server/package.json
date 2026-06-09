@@ -15,7 +15,8 @@
     "supabase:join": "tsx src/supabase-join-smoke.ts",
     "test": "tsx --test test/*.test.ts",
     "typecheck": "tsc --noEmit",
-    "build:edge": "esbuild src/edge-core.ts --bundle --format=esm --platform=neutral --external:@supabase/supabase-js --outfile=supabase/functions/drinkwars/drinkwars-core.js"
+    "build:edge": "esbuild src/edge-core.ts --bundle --format=esm --platform=neutral --external:@supabase/supabase-js --outfile=supabase/functions/drinkwars/drinkwars-core.js",
+    "cleanup:test": "tsx src/cleanup-test-users.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.1",

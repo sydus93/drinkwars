@@ -90,13 +90,18 @@ Deno.serve(async (req: Request) => {
     if (method === "POST" && path === "/join") {
       const { code, name } = body;
       if (!code || !name) return json(400, { error: "code and name required" });
+      const codeUp = String(code).toUpperCase();
+      // Validate BEFORE creating an auth user, so a bad/typo code leaves no orphan.
+      const game = await store.getGameByCode(codeUp);
+      if (!game) return json(400, { error: "no game found for that code" });
+      const teams = await store.getTeams(game.id);
+      if (!teams.some((t: any) => t.member_user_ids.length === 0)) return json(400, { error: "that game is full" });
       const created = await db.auth.admin.createUser({ email: `anon-${crypto.randomUUID()}@drinkwars.local`, email_confirm: true });
       if (created.error || !created.data.user) return json(500, { error: `auth: ${created.error?.message ?? "could not create player"}` });
       const userId = created.data.user.id;
-      const joined = await orch.joinGame(String(code).toUpperCase(), String(name).slice(0, 40), userId);
+      const joined = await orch.joinGame(codeUp, String(name).slice(0, 40), userId);
       const token = await mintToken({ gameId: joined.gameId, teamId: joined.teamId, userId });
-      const game = await store.getGame(joined.gameId);
-      return json(200, { token, gameId: joined.gameId, teamId: joined.teamId, firmId: joined.firmId, nRounds: game?.n_rounds, config: game?.config });
+      return json(200, { token, gameId: joined.gameId, teamId: joined.teamId, firmId: joined.firmId, nRounds: game.n_rounds, config: game.config });
     }
     if (method === "GET" && path === "/view") {
       const s = await readToken(u.searchParams.get("token") ?? "");
@@ -121,6 +126,12 @@ Deno.serve(async (req: Request) => {
         const teams = Array.from({ length: nFirms }, (_, i) => ({ name: `Open slot ${i + 1}` }));
         const gameId = await orch.createGame({ config, joinCode: code, teams });
         return json(200, { gameId, joinCode: code, nFirms, nRounds });
+      }
+      // Re-enter a running game by its join code (instructor reconnect after a drop).
+      if (method === "POST" && path === "/instructor/resume") {
+        const game = await store.getGameByCode(String(body.code ?? "").toUpperCase());
+        if (!game) return json(404, { error: "no game found for that code" });
+        return json(200, { gameId: game.id, joinCode: game.join_code, nRounds: game.n_rounds });
       }
       const m = path.match(/^\/instructor\/games\/([^/]+)\/(status|lock|resolve|advance)$/);
       if (m) {

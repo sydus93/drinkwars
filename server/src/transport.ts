@@ -113,6 +113,12 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
   if (method === "POST" && path === "/join") {
     const { code, name } = await readJson(req);
     if (!code || !name) return send(res, 400, { error: "code and name required" });
+    const codeUp = String(code).toUpperCase();
+    // Validate BEFORE creating an auth user, so a bad/typo code leaves no orphan.
+    const game = await store.getGameByCode(codeUp);
+    if (!game) return send(res, 400, { error: "no game found for that code" });
+    const teams = await store.getTeams(game.id);
+    if (!teams.some((t) => t.member_user_ids.length === 0)) return send(res, 400, { error: "that game is full" });
     let userId: string = randomUUID();
     if (admin) {
       const { data, error } = await admin.auth.admin.createUser({ email: `anon-${userId}@drinkwars.local`, email_confirm: true });
@@ -121,14 +127,13 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     }
     let joined;
     try {
-      joined = await orch.joinGame(String(code).toUpperCase(), String(name).slice(0, 40), userId);
+      joined = await orch.joinGame(codeUp, String(name).slice(0, 40), userId);
     } catch (e) {
       return send(res, 400, { error: msg(e) });
     }
     const token = randomUUID();
     sessions.set(token, { gameId: joined.gameId, teamId: joined.teamId, userId });
-    const game = await store.getGame(joined.gameId);
-    return send(res, 200, { token, gameId: joined.gameId, teamId: joined.teamId, firmId: joined.firmId, nRounds: game?.n_rounds, config: game?.config });
+    return send(res, 200, { token, gameId: joined.gameId, teamId: joined.teamId, firmId: joined.firmId, nRounds: game.n_rounds, config: game.config });
   }
   if (method === "GET" && path === "/view") {
     const s = sessions.get(url.searchParams.get("token") ?? "");
@@ -158,6 +163,14 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
       const teams = Array.from({ length: nFirms }, (_, i) => ({ name: `Open slot ${i + 1}` }));
       const gameId = await orch.createGame({ config, joinCode: code, teams });
       return send(res, 200, { gameId, joinCode: code, nFirms, nRounds });
+    }
+
+    // Re-enter a running game by its join code (instructor reconnect after a drop).
+    if (method === "POST" && path === "/instructor/resume") {
+      const { code } = await readJson(req);
+      const g = await store.getGameByCode(String(code ?? "").toUpperCase());
+      if (!g) return send(res, 404, { error: "no game found for that code" });
+      return send(res, 200, { gameId: g.id, joinCode: g.join_code, nRounds: g.n_rounds });
     }
 
     const m = path.match(/^\/instructor\/games\/([^/]+)\/(status|lock|resolve|advance)$/);

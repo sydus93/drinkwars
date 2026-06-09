@@ -6,8 +6,7 @@ import { Lobby } from "./screens/Lobby.js";
 import { Join } from "./screens/Join.js";
 import { MultiplayerPlay } from "./screens/MultiplayerPlay.js";
 import { Instructor } from "./screens/Instructor.js";
-import { MP_ENABLED } from "./game/multiplayer.js";
-import type { StudentClient } from "./game/multiplayer.js";
+import { MP_ENABLED, StudentClient } from "./game/multiplayer.js";
 
 type Mode = "foolscap" | "sectional";
 
@@ -53,8 +52,9 @@ function Solo() {
 type Screen = "lobby" | "solo" | "join" | "instructor";
 
 export function App() {
-  const [screen, setScreen] = useState<Screen>("lobby");
-  const [student, setStudent] = useState<StudentClient | null>(null);
+  // Resume a saved student session on load (refresh → same firm, not a new slot).
+  const [student, setStudent] = useState<StudentClient | null>(() => (MP_ENABLED ? StudentClient.restore() : null));
+  const [screen, setScreen] = useState<Screen>(() => (student ? "join" : "lobby"));
 
   return (
     <>

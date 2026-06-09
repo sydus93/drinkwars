@@ -4,7 +4,8 @@ import { InstructorClient, type InstructorStatus } from "../game/multiplayer.js"
 
 /** Instructor console: passcode → create a game → share the code → lock / resolve. */
 export function Instructor({ onExit }: { onExit: () => void }) {
-  const [pass, setPass] = useState("");
+  const [pass, setPass] = useState<string>(() => { try { return JSON.parse(localStorage.getItem("dw_instr") || "null")?.pass ?? ""; } catch { return ""; } });
+  const [code, setCode] = useState<string>(() => { try { return JSON.parse(localStorage.getItem("dw_instr") || "null")?.joinCode ?? ""; } catch { return ""; } });
   const [client, setClient] = useState<InstructorClient | null>(null);
   const [nFirms, setNFirms] = useState(6);
   const [nRounds, setNRounds] = useState(16);
@@ -32,6 +33,14 @@ export function Instructor({ onExit }: { onExit: () => void }) {
     };
   }, [client, game]);
 
+  const persist = (gameId: string, joinCode: string) => {
+    try {
+      localStorage.setItem("dw_instr", JSON.stringify({ pass, gameId, joinCode }));
+    } catch {
+      /* ignore */
+    }
+  };
+
   const create = async () => {
     setBusy(true);
     setErr(null);
@@ -40,6 +49,23 @@ export function Instructor({ onExit }: { onExit: () => void }) {
       const g = await c.createGame(nFirms, nRounds);
       setClient(c);
       setGame(g);
+      persist(g.gameId, g.joinCode);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const resume = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const c = new InstructorClient(pass);
+      const g = await c.resume(code.trim().toUpperCase());
+      setClient(c);
+      setGame({ gameId: g.gameId, joinCode: g.joinCode });
+      persist(g.gameId, g.joinCode);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -81,11 +107,19 @@ export function Instructor({ onExit }: { onExit: () => void }) {
                 <input type="number" min={1} max={30} value={nRounds} onChange={(e) => setNRounds(Math.max(1, Math.min(30, +e.target.value)))} />
               </label>
             </div>
-            {err && <div className="text-sm text-brick">{err}</div>}
-            <div className="flex gap-2">
-              <Button onClick={create} disabled={busy || !pass}>{busy ? "Creating…" : "Create game"}</Button>
-              <Button variant="ghost" onClick={onExit}>Back</Button>
+            <Button variant="go" onClick={create} disabled={busy || !pass} className="w-full">{busy ? "Creating…" : "Create game"}</Button>
+            <div className="flex items-center gap-3 text-[0.64rem] tracking-wide text-inksoft">
+              <div className="h-px flex-1 bg-line" />OR RESUME A RUNNING GAME<div className="h-px flex-1 bg-line" />
             </div>
+            <label className="grid gap-1">
+              <span className="text-sm text-inksoft">Join code of a game in progress</span>
+              <div className="flex gap-2">
+                <input value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} maxLength={6} placeholder="6 characters" className="flex-1 uppercase tracking-[0.2em]" />
+                <Button onClick={resume} disabled={busy || !pass || code.trim().length < 4}>Resume</Button>
+              </div>
+            </label>
+            {err && <div className="text-sm text-brick">{err}</div>}
+            <div><Button variant="ghost" onClick={onExit}>Back</Button></div>
           </div>
         </div>
       </div>

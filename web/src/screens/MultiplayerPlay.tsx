@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { FirmDecision } from "drinkwars-engine";
 import type { RawView, StudentClient } from "../game/multiplayer.js";
 import { Button, Card, Eyebrow, Stat, Tag } from "../components/ui.js";
@@ -16,14 +16,22 @@ export function MultiplayerPlay({ client, onExit }: { client: StudentClient; onE
   const [tab, setTab] = useState<Tab>("decide");
   const [busy, setBusy] = useState(false);
 
+  const everLoaded = useRef(false);
   useEffect(() => {
     let live = true;
     const tick = async () => {
       try {
         const v = await client.fetchView();
-        if (live) setRaw({ ...v });
+        if (!live) return;
+        everLoaded.current = true;
+        setRaw({ ...v });
       } catch {
-        /* transport blip — keep last view */
+        // A restored session that never loads is dead (game ended/expired) — drop it.
+        if (live && !everLoaded.current) {
+          client.clearSaved();
+          onExit();
+        }
+        // otherwise a transient blip — keep the last view
       }
     };
     tick();
@@ -32,7 +40,7 @@ export function MultiplayerPlay({ client, onExit }: { client: StudentClient; onE
       live = false;
       clearInterval(h);
     };
-  }, [client]);
+  }, [client, onExit]);
 
   const defaultDecision = useCallback(() => client.defaultDecision(), [client, raw?.round]);
   const submit = useCallback(
@@ -85,7 +93,7 @@ export function MultiplayerPlay({ client, onExit }: { client: StudentClient; onE
         <div className="flex items-center gap-6">
           {view.own && <Stat label="Cash" value={fmt.money(view.own.cash)} accent={view.own.cash < 300 ? "brick" : "ink"} />}
           {view.own && <Stat label="Tanks" value={fmt.int(view.own.cap)} />}
-          <Button variant="ghost" onClick={onExit}>Leave</Button>
+          <Button variant="ghost" onClick={() => { client.clearSaved(); onExit(); }}>Leave</Button>
         </div>
       </header>
 
