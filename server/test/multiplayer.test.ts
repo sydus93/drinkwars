@@ -91,3 +91,28 @@ test("multiplayer: joining a full game is rejected", async () => {
   await orch.joinGame(code, "P2", "u2");
   await assert.rejects(() => orch.joinGame(code, "P3", "u3"), /full/);
 });
+
+test("multiplayer: bot-fill makes unclaimed slots play, not stagnate", async () => {
+  const config = loadConfig({ game: { n_rounds: 2, n_firms: 4 } } as never);
+  const store = new InMemoryAdapter();
+  const orch = new GameOrchestrator(store, () => Date.now(), { botFillEmptySlots: true });
+  const code = GameOrchestrator.makeJoinCode();
+  const gameId = await orch.createGame({ config, joinCode: code, teams: [0, 1, 2, 3].map((i) => ({ name: `Open ${i + 1}` })) });
+
+  const me = await orch.joinGame(code, "Me", "u1"); // one human; three slots stay unclaimed
+  const pub = await orch.getPublicState(gameId);
+  const segs = pub.segments.filter((s) => s.active).map((s) => s.id);
+  const view = await orch.getTeamView(gameId, me.teamId);
+  await orch.submitDecision(gameId, me.teamId, decide(view.own!, segs, config));
+  await orch.lockRound(gameId);
+  await orch.resolveRound(gameId);
+
+  const decisions = await store.getDecisions(gameId, 0);
+  const unclaimed = (await store.getTeams(gameId)).filter((t) => t.member_user_ids.length === 0);
+  assert.equal(unclaimed.length, 3);
+  for (const t of unclaimed) {
+    const d = decisions.find((x) => x.team_id === t.id);
+    const presenceSum = Object.values(d!.decision.presence).reduce((a, b) => a + b, 0);
+    assert.ok(presenceSum > 0, `unclaimed firm ${t.firm_id} should play adaptively, not stagnate`);
+  }
+});

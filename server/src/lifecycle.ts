@@ -12,7 +12,7 @@
  * pure function of (state, decisions, config, seed), so any round is replayable
  * (§3.3) — `replay()` verifies that against the persisted history.
  */
-import { initGame, resolveRound as engineResolve } from "drinkwars-engine";
+import { ADAPTIVE_LEANS, decideAdaptive, initGame, resolveRound as engineResolve } from "drinkwars-engine";
 import type { Config, FirmDecision, FirmId, RoundResult, SegmentId, WorldState } from "drinkwars-engine";
 import type {
   AgreementRow, BeliefRow, DecisionRecord, DistinctivenessRow, FirmRoundRow, GameRecord,
@@ -50,7 +50,11 @@ function zeroFirmDecision(firmId: FirmId, segments: SegmentId[]): FirmDecision {
 
 export class GameOrchestrator {
   private counter = 0;
-  constructor(private store: StorageAdapter, private clock: () => number = () => Date.now()) {}
+  constructor(
+    private store: StorageAdapter,
+    private clock: () => number = () => Date.now(),
+    private opts: { botFillEmptySlots?: boolean } = {},
+  ) {}
 
   private id(prefix: string): string {
     return `${prefix}_${++this.counter}`;
@@ -177,8 +181,18 @@ export class GameOrchestrator {
       if (f.status !== "active" || submittedFirms.has(f.id)) continue;
       const team = teamByFirm.get(f.id);
       if (!team) continue;
+      // An unclaimed slot plays as an adaptive NPC (when enabled), so a game with
+      // fewer humans than firms stays lively; a claimed team that ghosted is
+      // zero-filled + flagged so the non-submission research signal stays honest.
+      let decision: FirmDecision;
+      if (this.opts.botFillEmptySlots && team.member_user_ids.length === 0) {
+        const idx = world.firms.findIndex((x) => x.id === f.id);
+        decision = decideAdaptive(ADAPTIVE_LEANS[idx % ADAPTIVE_LEANS.length], f, world, config);
+      } else {
+        decision = zeroFirmDecision(f.id, segmentIds);
+      }
       await this.store.upsertDecision({
-        game_id: gameId, round, team_id: team.id, firm_id: f.id, decision: zeroFirmDecision(f.id, segmentIds),
+        game_id: gameId, round, team_id: team.id, firm_id: f.id, decision,
         submitted: false, locked: true, revision_count: 0, submitted_at: null, first_opened_at: null,
       });
     }

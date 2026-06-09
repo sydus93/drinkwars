@@ -9,6 +9,8 @@
   },
   "scripts": {
     "demo": "tsx src/demo.ts",
+    "serve": "tsx src/transport.ts",
+    "transport:smoke": "tsx src/transport-smoke.ts",
     "supabase:smoke": "tsx src/supabase-smoke.ts",
     "supabase:join": "tsx src/supabase-join-smoke.ts",
     "test": "tsx --test test/*.test.ts",
