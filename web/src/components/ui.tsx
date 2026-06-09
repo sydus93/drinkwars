@@ -18,14 +18,16 @@ export function Button({
   children: ReactNode;
   onClick?: () => void;
   disabled?: boolean;
-  variant?: "solid" | "ghost";
+  variant?: "solid" | "ghost" | "go";
   className?: string;
 }) {
-  const base = "font-body text-sm font-medium tracking-wide px-4 py-2 transition-all disabled:opacity-40 disabled:cursor-not-allowed";
+  const base = "transition-all disabled:opacity-40 disabled:cursor-not-allowed";
   const styles =
-    variant === "solid"
-      ? "bg-copper text-paper hover:bg-copperdeep active:opacity-85"
-      : "border border-line2 text-ink hover:bg-panel2 active:opacity-85";
+    variant === "go"
+      ? "tt-btn tt-btn--go text-sm"
+      : variant === "ghost"
+        ? "tt-inset px-4 py-2 font-body text-sm font-semibold text-ink hover:opacity-90 active:translate-y-px"
+        : "tt-btn text-sm";
   return (
     <button onClick={onClick} disabled={disabled} className={`${base} ${styles} ${className}`}>
       {children}

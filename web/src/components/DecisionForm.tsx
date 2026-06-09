@@ -4,15 +4,16 @@ import type { GameView } from "../game/controller.js";
 import { SEG_LABEL, SEG_TAG, STOCK_LABEL, fmt } from "../labels.js";
 import { Button, Card, Eyebrow, Row, Tag } from "./ui.js";
 import { AllocationBar } from "./AllocationBar.js";
+import { CategoryCoin } from "./CategoryIcons.js";
 
 type InvestKey = "invest_Q" | "invest_B" | "invest_process" | "invest_T_emp" | "invest_T_inv" | "invest_T_gov";
 const INVEST_FIELDS: { key: InvestKey; label: string; hint: string }[] = [
-  { key: "invest_Q", label: STOCK_LABEL.Q, hint: "Brewing talent & consistency — rewarded most in Craft Premium." },
-  { key: "invest_B", label: STOCK_LABEL.B, hint: "Awareness & identity — the load-bearing craft lever." },
-  { key: "invest_process", label: STOCK_LABEL.process, hint: "Efficiency & yield — lowers unit cost AND buffers shocks (water resilience)." },
-  { key: "invest_T_emp", label: STOCK_LABEL.T_emp, hint: "Regulars & crew — productivity now, resilience under stress." },
-  { key: "invest_T_inv", label: STOCK_LABEL.T_inv, hint: "Lender & investor goodwill — lowers your cost of capital (cheaper debt & equity)." },
-  { key: "invest_T_gov", label: STOCK_LABEL.T_gov, hint: "Distributor & regulator standing — cuts regulatory burden and antitrust exposure." },
+  { key: "invest_Q", label: STOCK_LABEL.Q, hint: "Brewing talent, recipes, and consistency." },
+  { key: "invest_B", label: STOCK_LABEL.B, hint: "Awareness, identity, and reputation." },
+  { key: "invest_process", label: STOCK_LABEL.process, hint: "Operational efficiency and yield." },
+  { key: "invest_T_emp", label: STOCK_LABEL.T_emp, hint: "Your taproom regulars and crew." },
+  { key: "invest_T_inv", label: STOCK_LABEL.T_inv, hint: "Standing with your lenders and investors." },
+  { key: "invest_T_gov", label: STOCK_LABEL.T_gov, hint: "Standing with your distributors and regulators." },
 ];
 
 export function DecisionForm({
@@ -81,9 +82,12 @@ export function DecisionForm({
               const margin = d.price[s] - view.unitCostEst;
               return (
                 <div key={s} className="flex items-center gap-3">
-                  <div className="w-40">
-                    <div className="text-sm font-semibold">{SEG_LABEL[s] ?? s}</div>
-                    <Tag tone="copper">{SEG_TAG[s] ?? s}</Tag>
+                  <div className="flex w-40 items-center gap-2">
+                    <CategoryCoin seg={s} size={28} />
+                    <div>
+                      <div className="text-sm font-semibold">{SEG_LABEL[s] ?? s}</div>
+                      <Tag tone="copper">{SEG_TAG[s] ?? s}</Tag>
+                    </div>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-inksoft">$</span>
@@ -155,9 +159,9 @@ export function DecisionForm({
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             {([
-              { key: "debt_draw", label: "Draw debt (cash in)", hint: "Rate falls with investor relations; capped by leverage." },
+              { key: "debt_draw", label: "Draw debt (cash in)", hint: "Borrow cash now; capped by your leverage." },
               { key: "debt_repay", label: "Repay debt (cash out)", hint: "Lower leverage → cheaper future borrowing." },
-              { key: "equity_raise", label: "Raise equity (cash in)", hint: "Dilutive; an issue cost applies, smaller when investor trust is high." },
+              { key: "equity_raise", label: "Raise equity (cash in)", hint: "Raise cash by issuing equity — dilutive, with an issue cost." },
               { key: "dividend", label: "Pay dividend (cash out)", hint: "Returns cash to owners; capped at a fraction of cash." },
             ] as const).map((f) => (
               <div key={f.key}>
@@ -210,7 +214,7 @@ export function DecisionForm({
           {lastCov != null && <Row label="Interest coverage (last)" value={lastCov > 900 ? "—" : `${lastCov.toFixed(1)}×`} />}
           {overcommit && <div className="mt-2 text-[0.72rem] text-brick">You'd run negative before any sales come in — revenue may cover it, but you risk forced exit.</div>}
         </Card>
-        <Button onClick={() => onPlay(d)} disabled={busy} className="w-full py-3 text-base">
+        <Button variant="go" onClick={() => onPlay(d)} disabled={busy} className="w-full py-3 text-base">
           {busy ? "Working…" : submitLabel ?? `Brew & Resolve Round ${view.round + 1}`}
         </Button>
         <div className="text-center text-[0.68rem] text-inksoft">{footerNote ?? "7 rival breweries (adaptive AI) brew at the same time."}</div>

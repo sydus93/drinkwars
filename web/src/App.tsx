@@ -6,6 +6,7 @@ import { Lobby } from "./screens/Lobby.js";
 import { Join } from "./screens/Join.js";
 import { MultiplayerPlay } from "./screens/MultiplayerPlay.js";
 import { Instructor } from "./screens/Instructor.js";
+import { MP_ENABLED } from "./game/multiplayer.js";
 import type { StudentClient } from "./game/multiplayer.js";
 
 type Mode = "foolscap" | "sectional";
@@ -59,13 +60,13 @@ export function App() {
     <>
       {screen === "lobby" && <Lobby onPick={setScreen} />}
       {screen === "solo" && <Solo />}
-      {screen === "join" &&
+      {screen === "join" && MP_ENABLED &&
         (student ? (
           <MultiplayerPlay client={student} onExit={() => { setStudent(null); setScreen("lobby"); }} />
         ) : (
           <Join onJoined={setStudent} onBack={() => setScreen("lobby")} />
         ))}
-      {screen === "instructor" && <Instructor onExit={() => setScreen("lobby")} />}
+      {screen === "instructor" && MP_ENABLED && <Instructor onExit={() => setScreen("lobby")} />}
       <ModeToggle />
     </>
   );

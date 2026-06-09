@@ -11,6 +11,12 @@ import type { GameView, Standing } from "./controller.js";
 export const TRANSPORT_URL: string =
   (import.meta as any).env?.VITE_TRANSPORT_URL ?? "http://localhost:8787";
 
+/** Multiplayer needs a reachable game server. On the public static build it has
+ *  none, so the Join/Instructor entries are hidden there. Shown in local dev
+ *  (`npm run dev`), or when VITE_ENABLE_MP=1 once a transport is hosted. */
+export const MP_ENABLED: boolean =
+  Boolean((import.meta as any).env?.DEV) || (import.meta as any).env?.VITE_ENABLE_MP === "1";
+
 export interface RawView {
   round: number;
   lifecycle: string;

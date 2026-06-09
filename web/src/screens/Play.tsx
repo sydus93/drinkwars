@@ -103,7 +103,7 @@ export function Play({
               <Eyebrow>Forced exit</Eyebrow>
               <p className="text-sm text-ink">Your brewery ran out of road. Keep watching the shakeout, or start a new run.</p>
               <div className="mt-3 flex gap-2">
-                <Button onClick={() => handlePlay({} as FirmDecision)} disabled={busy}>{busy ? "…" : "Watch next round →"}</Button>
+                <Button variant="go" onClick={() => handlePlay({} as FirmDecision)} disabled={busy}>{busy ? "…" : "Watch next round →"}</Button>
                 <Button variant="ghost" onClick={onReset}>New brewery</Button>
               </div>
             </Card>
@@ -116,7 +116,7 @@ export function Play({
               {view.ownResult ? <Diagnostics result={view.ownResult} view={view} /> : <Card>No diagnostics yet.</Card>}
               {!view.complete && view.ownActive && (
                 <div className="flex justify-end">
-                  <Button onClick={() => setTab("decision")} disabled={busy} className="px-6 py-3 text-base">Next round →</Button>
+                  <Button variant="go" onClick={() => setTab("decision")} disabled={busy} className="px-6 py-3 text-base">Next round →</Button>
                 </div>
               )}
             </div>
@@ -144,7 +144,7 @@ function SeasonOver({ view, rank, onReset }: { view: GameView; rank: number; onR
         {rank === 1 ? "You finished first." : rank > 0 ? `You finished #${rank} of ${view.standings.length}.` : "Your run has ended."}
       </h2>
       <p className="mt-1 text-sm text-inksoft">Sustained scorecard rewards advantage held across the whole season, not a final-round spike.</p>
-      <div className="mt-3"><Button onClick={onReset}>Play again</Button></div>
+      <div className="mt-3"><Button variant="go" onClick={onReset}>Play again</Button></div>
     </Card>
   );
 }

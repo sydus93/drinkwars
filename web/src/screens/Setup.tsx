@@ -1,11 +1,12 @@
 import { useState } from "react";
 import type { Difficulty } from "../game/controller.js";
 import { Button } from "../components/ui.js";
+import { CategoryCoin } from "../components/CategoryIcons.js";
 
 const DIFFICULTIES: { id: Difficulty; label: string; blurb: string }[] = [
-  { id: "relaxed", label: "Relaxed", blurb: "Mixed rivals, lighter investment — room to learn the loop." },
-  { id: "competitive", label: "Competitive", blurb: "Several rivals contest Craft Premium directly." },
-  { id: "cutthroat", label: "Cutthroat", blurb: "Aggressive, premium-hungry rivals that crowd your best moves." },
+  { id: "relaxed", label: "Relaxed", blurb: "A gentler field — room to find your footing." },
+  { id: "competitive", label: "Competitive", blurb: "A balanced field that pushes back." },
+  { id: "cutthroat", label: "Cutthroat", blurb: "Aggressive rivals that crowd whatever's working." },
 ];
 
 export function Setup({ onStart, busy }: { onStart: (name: string, difficulty: Difficulty) => void; busy: boolean }) {
@@ -19,21 +20,24 @@ export function Setup({ onStart, busy }: { onStart: (name: string, difficulty: D
           Drink<span className="text-copper">&nbsp;Wars</span>
         </h1>
         <div className="mt-4 h-px w-24 bg-copper" />
-        <p className="mt-6 max-w-xl font-display text-xl leading-relaxed text-inksoft">
+        <p className="mt-6 max-w-xl text-lg leading-relaxed text-inksoft">
           Run a craft beverage company competing for drinkers across a regional market. Brew your lineup, build capacity, invest in
-          quality and brand, manage your taproom, distributors and regulators — then the water table drops, a hop harvest fails, or a
-          new category takes off.
+          quality and brand, and manage your taproom, distributors, and regulators across a sixteen-round season — and adapt as the
+          market shifts around you.
         </p>
 
         <div className="mt-8 grid gap-3 sm:grid-cols-3">
-          {[
-            { t: "Lagers & Light", d: "Price-sensitive, high volume." },
-            { t: "Craft Premium", d: "Quality- and brand-led." },
-            { t: "Non-Alc / Functional", d: "An emerging category — if it takes off." },
-          ].map((c) => (
+          {([
+            { seg: "mass", t: "Lagers & Light", d: "Lagers, light beers, the familiar pours." },
+            { seg: "niche", t: "Craft Premium", d: "IPAs, stouts, and small-batch specialties." },
+            { seg: "frontier", t: "Non-Alc / Functional", d: "Non-alcoholic, functional, and zero-proof." },
+          ] as const).map((c) => (
             <div key={c.t} className="card p-3">
-              <div className="font-semibold">{c.t}</div>
-              <div className="text-[0.8rem] text-inksoft">{c.d}</div>
+              <div className="flex items-center gap-2">
+                <CategoryCoin seg={c.seg} size={30} />
+                <div className="font-semibold">{c.t}</div>
+              </div>
+              <div className="mt-1 text-[0.8rem] text-inksoft">{c.d}</div>
             </div>
           ))}
         </div>
@@ -63,7 +67,7 @@ export function Setup({ onStart, busy }: { onStart: (name: string, difficulty: D
             className="w-full sm:w-72"
             maxLength={28}
           />
-          <Button onClick={() => onStart(name, difficulty)} disabled={busy} className="px-6 py-3 text-base">
+          <Button variant="go" onClick={() => onStart(name, difficulty)} disabled={busy} className="px-6 py-3 text-base">
             {busy ? "Pouring…" : "Start brewing →"}
           </Button>
         </div>

@@ -1,69 +1,61 @@
 @import "tailwindcss";
 
 /* ─────────────────────────────────────────────────────────────────────────
-   Drink Wars — skinned to the "Devin Stein · Scholarly Identity" system.
-   Two co-equal modes (Foolscap light / Sectional Night dark): every component
-   reads these tokens through Tailwind utilities, so a mode is just an override
-   of the same variables under [data-mode="sectional"].
-   Tokens mirror the design system's colors_and_type.css. App token NAMES are
-   kept so existing components reskin in place; only their VALUES change.
+   TAP HOUSE TYCOON — Drink Wars game skin (warm, glossy management-sim HUD).
+   Token NAMES are kept (some historical); they're re-valued to the tycoon
+   palette so existing utilities (bg-copper, text-ink, border-line, .card…)
+   reskin in place. Light = daytime taproom; [data-mode="sectional"] = night.
+   Type: Big Shoulders Display (headers, UPPERCASE) · Archivo (UI) · Space Mono
+   (every figure). Fonts load via the <link> in index.html.
    ───────────────────────────────────────────────────────────────────────── */
 @theme {
-  /* Surfaces — warm cream book page (Foolscap default) */
-  --color-paper:  #f7f4ec;   /* page */
-  --color-panel:  #fcfaf3;   /* raised — cards */
-  --color-panel2: #efebdf;   /* sunken — secondary fills */
+  --color-paper:      #ece0c4;   /* page */
+  --color-panel:      #fcf5e7;   /* raised panel */
+  --color-panel2:     #e9d7b4;   /* recessed / inset well */
+  --color-ink:        #2c1d11;   /* primary text (never pure black) */
+  --color-inksoft:    #6b513a;   /* secondary text */
+  --color-copper:     #c0703a;   /* PRIMARY accent */
+  --color-copperdeep: #9a5024;   /* primary, pressed */
+  --color-gold:       #e3a52f;   /* amber highlight / CTA */
+  --color-hop:        #6fa03a;   /* secondary (hops green) — "go" / gain */
+  --color-aero:       #1f8c93;   /* tertiary (teal) — non-alc / data */
+  --color-clay:       #b5704f;
+  --color-plum:       #7c4f86;
+  --color-brick:      #c0533f;   /* loss / shock */
+  --color-line:       #d8c39c;   /* hairline / border */
+  --color-line2:      #c2a877;   /* heavier divider / bevel underline */
 
-  /* Ink — never pure black */
-  --color-ink:     #0d0c0a;
-  --color-inksoft: #4a4742;  /* secondary text + neutral chart fills */
-
-  /* Accent. PRIMARY is mode-switched (green in Foolscap, aero-blue on dark). */
-  --color-copper:     #5a8044;  /* primary — terrain green */
-  --color-copperdeep: #3f5e2e;  /* primary, deeper */
-  --color-aero:       #2c5f7f;  /* secondary — aero blue (chart convention) */
-  --color-aerodeep:   #1d4863;
-  --color-clay:       #b5704f;  /* warm tertiary — elevation clay */
-
-  /* Semantic — sparing. Never red/green for the two-series. */
-  --color-hop:   #1c8f9c;  /* gain / success — turquoise */
-  --color-brick: #c87456;  /* loss / shock — terracotta (NOT red) */
-  --color-gold:  #9a6b28;  /* attention / R&R — amber */
-  --color-plum:  #6b4470;  /* rare emphasis */
-
-  /* Rules — warm-grey hairlines */
-  --color-line:  #e3dcca;  /* faint */
-  --color-line2: #c9c2b3;  /* rule */
-
-  /* Type — EB Garamond (display/prose), IBM Plex Sans (UI), IBM Plex Mono (data) */
-  --font-display:    "EB Garamond", "Newsreader", Georgia, serif;
-  --font-ceremonial: "Cormorant Garamond", "EB Garamond", Georgia, serif;
-  --font-body:       "IBM Plex Sans", "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-mono:       "IBM Plex Mono", "JetBrains Mono", ui-monospace, monospace;
+  --font-display: "Big Shoulders Display", "Archivo", system-ui, sans-serif;
+  --font-body:    "Archivo", system-ui, sans-serif;
+  --font-mono:    "Space Mono", ui-monospace, monospace;
 }
 
-/* ── Sectional Night — dark slate + warm parchment. Same tokens, hotter. ── */
+/* metal-coin + wood trim extras (not Tailwind color utilities) */
+:root {
+  --tt-wood:   #3a2a1d;
+  --tt-coin-1: #fff2d8;
+  --tt-coin-2: #e6c98c;
+  --tt-coin-3: #c79a4f;
+}
+
+/* ── Night shift (dark) ── */
 [data-mode="sectional"] {
-  --color-paper:  #16181d;
-  --color-panel:  #1d2027;
-  --color-panel2: #101218;
-
-  --color-ink:     #f4ecd8;
-  --color-inksoft: #b8b0a0;
-
-  --color-copper:     #6fa3c4;  /* primary swaps to aero blue on dark */
-  --color-copperdeep: #9fc4dd;
-  --color-aero:       #6fa3c4;
-  --color-aerodeep:   #9fc4dd;
+  --color-paper:      #241a10;
+  --color-panel:      #2f2114;
+  --color-panel2:     #1b130a;
+  --color-ink:        #f4e6c8;
+  --color-inksoft:    #bda079;
+  --color-copper:     #e0903f;
+  --color-copperdeep: #f3b75f;
+  --color-gold:       #f0b94e;
+  --color-hop:        #8fc24f;
+  --color-aero:       #34c2c9;
   --color-clay:       #c98a68;
-
-  --color-hop:   #5fb8c4;
-  --color-brick: #db8e72;
-  --color-gold:  #c89858;
-  --color-plum:  #a888b0;
-
-  --color-line:  #25241f;
-  --color-line2: #3a3832;
+  --color-plum:       #a888b0;
+  --color-brick:      #d86a52;
+  --color-line:       #3a2a18;
+  --color-line2:      #503b22;
+  --tt-wood:          #120c06;
 }
 
 html { background: var(--color-paper); color-scheme: light; }
@@ -73,111 +65,122 @@ body {
   margin: 0;
   font-family: var(--font-body);
   color: var(--color-ink);
-  background-color: var(--color-paper);
-  /* Flat surface + faint paper grain — the only atmosphere (no gradient mesh). */
-  background-image:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.025'/%3E%3C/svg%3E");
-  background-attachment: fixed;
+  /* flat warm cream + one soft radial — no grain/topo on the game screens */
+  background: radial-gradient(120% 90% at 12% -10%, #fbf2df 0%, var(--color-paper) 55%, #e7d4af 100%) fixed;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
-  font-feature-settings: "kern", "liga";
+}
+[data-mode="sectional"] body {
+  background: radial-gradient(120% 90% at 12% -10%, #2c1f12 0%, var(--color-paper) 60%, #160f07 100%) fixed;
 }
 
-::selection {
-  background: color-mix(in srgb, var(--color-copper) 22%, var(--color-paper));
-  color: var(--color-ink);
-}
+::selection { background: color-mix(in srgb, var(--color-copper) 30%, var(--color-paper)); color: var(--color-ink); }
 
-/* Tabular figures wherever we render numbers (IBM Plex Mono). */
-.tnum {
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums lining-nums;
-  font-feature-settings: "tnum", "zero";
-}
+/* Numbers / readouts — Space Mono, tabular. */
+.tnum { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 
-/* Display headings — EB Garamond, the editorial register. */
-.display {
-  font-family: var(--font-display);
-  font-weight: 500;
-  letter-spacing: -0.012em;
-  color: var(--color-ink);
-}
+/* Display headings / HUD titles — Big Shoulders, UPPERCASE (≥1.05 line-height). */
+.display { font-family: var(--font-display); font-weight: 800; text-transform: uppercase; letter-spacing: 0.01em; line-height: 1.1; color: var(--color-ink); }
+.wordmark { font-family: var(--font-display); font-weight: 900; text-transform: uppercase; letter-spacing: 0.02em; line-height: 1.0; }
 
-/* Ceremonial wordmark — Cormorant, classical engraved roman (used once). */
-.wordmark {
-  font-family: var(--font-ceremonial);
-  font-weight: 500;
-  letter-spacing: 0.005em;
-}
+/* Eyebrow — mono caps label. */
+.eyebrow { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.13em; text-transform: uppercase; color: color-mix(in srgb, var(--color-inksoft) 72%, var(--color-paper)); }
 
-/* Section eyebrow — small-caps mono, the system's "01 · TITLE" register. */
-.eyebrow {
-  font-family: var(--font-mono);
-  text-transform: uppercase;
-  letter-spacing: 0.18em;
-  font-size: 0.66rem;
-  color: var(--color-copper);
-  font-feature-settings: "lnum", "tnum";
-}
-
-/* Card — content panel: sharp corners, warm hairline, barely-there raise. */
+/* Card = beveled tycoon panel (every panel in the app reskins through this). */
 .card {
   background: var(--color-panel);
   border: 1px solid var(--color-line);
-  border-radius: 0;
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.35) inset, 0 1px 2px rgba(13, 12, 10, 0.04);
+  border-radius: 14px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), 0 2px 0 var(--color-line2), 0 10px 22px rgba(40, 25, 8, 0.16);
 }
 [data-mode="sectional"] .card {
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.02) inset, 0 6px 20px rgba(0, 0, 0, 0.35);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 2px 0 var(--color-line2), 0 10px 22px rgba(0, 0, 0, 0.45);
 }
 
-/* Inputs — hairline, sharp, mono figures, green focus ring. */
+/* Inputs — recessed inset well, mono figures. */
 input[type="number"],
 input[type="text"],
 textarea {
   font-family: var(--font-mono);
-  background: var(--color-paper);
+  background: var(--color-panel2);
   border: 1px solid var(--color-line2);
-  border-radius: 0;
+  border-radius: 10px;
   color: var(--color-ink);
-  padding: 0.4rem 0.55rem;
+  padding: 0.4rem 0.6rem;
+  box-shadow: inset 0 2px 4px rgba(60, 40, 15, 0.18);
 }
 input:focus,
-textarea:focus {
-  outline: 2px solid color-mix(in srgb, var(--color-copper) 55%, transparent);
-  outline-offset: 1px;
-}
+textarea:focus { outline: 2px solid color-mix(in srgb, var(--color-copper) 60%, transparent); outline-offset: 1px; }
 
-/* Range slider — thin track, terrain-green thumb. */
+/* Range slider — inset track, metal-coin thumb. */
 input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
-  height: 2px;
-  background: var(--color-line2);
-  border-radius: 999px;
+  height: 9px;
+  border-radius: 6px;
+  background: var(--color-panel2);
+  box-shadow: inset 0 1px 2px rgba(60, 40, 15, 0.25);
   outline: none;
 }
 input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
-  width: 15px;
-  height: 15px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
-  background: var(--color-copper);
-  border: 2px solid var(--color-paper);
-  box-shadow: 0 1px 2px rgba(13, 12, 10, 0.3);
+  background: radial-gradient(circle at 35% 30%, var(--tt-coin-1), var(--tt-coin-2) 60%, var(--tt-coin-3));
+  border: 1px solid #b8902f;
+  box-shadow: inset 0 1px 2px #fff4d8, 0 2px 4px rgba(120, 80, 20, 0.3);
   cursor: pointer;
 }
 
-/* Lucide hairline override — square corners, 1.25px stroke (if icons appear). */
-.lucide {
-  stroke-linecap: square;
-  stroke-linejoin: miter;
-  stroke-width: 1.25px;
+/* Lucide (the mode-toggle icon) — friendlier round stroke. */
+.lucide { stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.75px; }
+
+/* ===== Tap House component utilities ===== */
+.tt-panel { background: var(--color-panel); border: 1px solid var(--color-line); border-radius: 14px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.5), 0 2px 0 var(--color-line2), 0 10px 22px rgba(40,25,8,0.16); }
+.tt-inset { background: var(--color-panel2); border: 1px solid var(--color-line2); border-radius: 10px; box-shadow: inset 0 2px 4px rgba(60,40,15,0.18); }
+
+.tt-btn {
+  font-family: var(--font-display);
+  text-transform: uppercase;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  padding: 10px 18px;
+  color: #3a2206;
+  background: linear-gradient(var(--color-gold), var(--color-copper));
+  border: 1px solid var(--color-copperdeep);
+  border-radius: 11px;
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255,235,180,0.7), 0 2px 0 var(--color-copperdeep), 0 6px 14px rgba(150,80,10,0.30);
+  transition: transform 0.06s ease, box-shadow 0.06s ease, opacity 0.12s ease;
+}
+.tt-btn:hover { opacity: 0.96; }
+.tt-btn:active { transform: translateY(1px); box-shadow: inset 0 1px 0 rgba(255,235,180,0.7), 0 1px 0 var(--color-copperdeep); }
+.tt-btn--go { background: linear-gradient(#7fb343, var(--color-hop)); border-color: #4c7820; color: #142a06; box-shadow: inset 0 1px 0 #d6f3a3, 0 2px 0 #3f6618, 0 6px 14px rgba(70,120,20,0.32); }
+
+.tt-coin {
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, var(--tt-coin-1), var(--tt-coin-2) 60%, var(--tt-coin-3));
+  border: 1px solid #b8902f;
+  box-shadow: inset 0 1px 2px #fff4d8, 0 2px 4px rgba(120,80,20,0.25);
 }
 
-/* Entry fade — the system's only default motion. */
-@keyframes rise {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-.rise { animation: rise 0.48s cubic-bezier(0.25, 0.1, 0.25, 1) both; }
+.tt-tab { display: flex; align-items: center; gap: 9px; padding: 9px 11px; border-radius: 10px; border: 1px solid transparent; font-family: var(--font-body); font-weight: 700; font-size: 13px; color: var(--color-inksoft); cursor: pointer; }
+.tt-tab.is-active { background: var(--color-panel); border-color: var(--color-line); color: var(--color-copperdeep); box-shadow: inset 0 1px 0 rgba(255,255,255,0.6), 0 1px 0 var(--color-line2); }
+
+.tt-bar { height: 9px; border-radius: 6px; background: var(--color-panel2); overflow: hidden; box-shadow: inset 0 1px 2px rgba(60,40,15,0.25); }
+.tt-bar > span { display: block; height: 100%; background: linear-gradient(90deg, var(--color-gold), var(--color-copper)); }
+.tt-bar.is-craft > span { background: linear-gradient(90deg, #8fbf4a, var(--color-hop)); }
+.tt-bar.is-nonalc > span { background: linear-gradient(90deg, #34c2c9, var(--color-aero)); }
+
+.tt-chip { font-family: var(--font-mono); font-size: 11px; padding: 3px 9px; border-radius: 999px; background: var(--color-panel2); border: 1px solid var(--color-line2); color: var(--color-inksoft); }
+.tt-label { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.13em; text-transform: uppercase; color: color-mix(in srgb, var(--color-inksoft) 72%, var(--color-paper)); }
+.tt-display { font-family: var(--font-display); font-weight: 800; text-transform: uppercase; line-height: 1.1; letter-spacing: 0.01em; }
+.tt-num { font-family: var(--font-mono); font-weight: 700; font-variant-numeric: tabular-nums; }
+
+/* Entry fade (respects reduced-motion). */
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+.rise { animation: rise 0.4s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+@media (prefers-reduced-motion: reduce) { .rise { animation: none; } }
