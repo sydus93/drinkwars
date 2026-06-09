@@ -5,7 +5,7 @@
  * orchestration runs on the in-memory adapter (tests/local) and on Supabase
  * (Postgres + RLS), per the chosen local-first approach.
  */
-import type { Config, FirmDecision, FirmId, FirmRoundResult, RoundResult, WorldState } from "drinkwars-engine";
+import type { Config, FirmDecision, FirmId, FirmRoundResult, RoundResult, SegmentId, WorldState } from "drinkwars-engine";
 
 export type Role = "student" | "instructor";
 export type TeamStatus = "active" | "bankrupt" | "exited_banked" | "exited_invested" | "exited_rebuilt";
@@ -35,6 +35,7 @@ export interface GameRecord {
   n_rounds: number;
   current_round: number; // the round currently open / just resolved
   lifecycle: Lifecycle;
+  join_code: string | null; // multiplayer: code a student enters to join (server-validated)
   created_at: number;
 }
 
@@ -65,6 +66,17 @@ export interface RoundResultRecord {
   game_id: string;
   round: number;
   result: RoundResult;
+  created_at: number;
+}
+
+/** Student-facing published projection (§3.2): standings / events / market only —
+ *  never a rival's private diagnostics. Append-only; read by game members via RLS. */
+export interface PublicRoundRecord {
+  game_id: string;
+  round: number;
+  events: string[];
+  standings: { firm_id: FirmId; rank: number; score: number; status: string }[];
+  market: { segment: SegmentId; D: number; total_q: number; active: boolean }[];
   created_at: number;
 }
 
@@ -141,6 +153,7 @@ export interface StorageAdapter {
   // Game
   createGame(g: GameRecord): Promise<void>;
   getGame(id: string): Promise<GameRecord | null>;
+  getGameByCode(code: string): Promise<GameRecord | null>;
   setGameLifecycle(id: string, lifecycle: Lifecycle, currentRound: number): Promise<void>;
 
   // Users & teams
@@ -149,6 +162,8 @@ export interface StorageAdapter {
   createTeam(t: TeamRecord): Promise<void>;
   getTeams(gameId: string): Promise<TeamRecord[]>;
   getTeam(id: string): Promise<TeamRecord | null>;
+  addTeamMember(teamId: string, userId: string): Promise<void>;
+  setTeamName(teamId: string, name: string): Promise<void>;
 
   // World states (append-only)
   appendWorldState(rec: WorldStateRecord): Promise<void>;
@@ -165,6 +180,9 @@ export interface StorageAdapter {
   appendRoundResult(rec: RoundResultRecord): Promise<void>;
   getRoundResult(gameId: string, round: number): Promise<RoundResultRecord | null>;
   getRoundResults(gameId: string): Promise<RoundResultRecord[]>;
+  appendPublicRound(rec: PublicRoundRecord): Promise<void>;
+  getPublicRound(gameId: string, round: number): Promise<PublicRoundRecord | null>;
+  getPublicRounds(gameId: string): Promise<PublicRoundRecord[]>;
   appendFirmRounds(rows: FirmRoundRow[]): Promise<void>;
   getFirmRounds(gameId: string): Promise<FirmRoundRow[]>;
   upsertAgreements(rows: AgreementRow[]): Promise<void>;

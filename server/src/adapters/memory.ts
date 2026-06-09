@@ -5,7 +5,7 @@
  */
 import type {
   AgreementRow, BeliefRow, DecisionRecord, DistinctivenessRow, FirmRoundRow, GameRecord,
-  Lifecycle, ReflectionRow, RoundResultRecord, StorageAdapter, TeamRecord, TelemetryRow,
+  Lifecycle, PublicRoundRecord, ReflectionRow, RoundResultRecord, StorageAdapter, TeamRecord, TelemetryRow,
   UserRecord, WorldStateRecord,
 } from "../types.js";
 
@@ -19,6 +19,7 @@ export class InMemoryAdapter implements StorageAdapter {
   private worldStates = new Map<string, WorldStateRecord>(); // key game::round
   private decisions = new Map<string, DecisionRecord>(); // key game::round::team
   private roundResults = new Map<string, RoundResultRecord>(); // key game::round
+  private publicRounds = new Map<string, PublicRoundRecord>(); // key game::round (append-only)
   private firmRounds: FirmRoundRow[] = [];
   private agreements = new Map<string, AgreementRow>(); // key game::agreementId
   private beliefs: BeliefRow[] = [];
@@ -32,6 +33,10 @@ export class InMemoryAdapter implements StorageAdapter {
   }
   async getGame(id: string): Promise<GameRecord | null> {
     return this.games.has(id) ? clone(this.games.get(id)!) : null;
+  }
+  async getGameByCode(code: string): Promise<GameRecord | null> {
+    for (const g of this.games.values()) if (g.join_code === code) return clone(g);
+    return null;
   }
   async setGameLifecycle(id: string, lifecycle: Lifecycle, currentRound: number): Promise<void> {
     const g = this.games.get(id);
@@ -54,6 +59,16 @@ export class InMemoryAdapter implements StorageAdapter {
   }
   async getTeam(id: string): Promise<TeamRecord | null> {
     return this.teams.has(id) ? clone(this.teams.get(id)!) : null;
+  }
+  async addTeamMember(teamId: string, userId: string): Promise<void> {
+    const t = this.teams.get(teamId);
+    if (!t) throw new Error(`no team ${teamId}`);
+    if (!t.member_user_ids.includes(userId)) t.member_user_ids.push(userId);
+  }
+  async setTeamName(teamId: string, name: string): Promise<void> {
+    const t = this.teams.get(teamId);
+    if (!t) throw new Error(`no team ${teamId}`);
+    t.name = name;
   }
 
   async appendWorldState(rec: WorldStateRecord): Promise<void> {
@@ -99,6 +114,19 @@ export class InMemoryAdapter implements StorageAdapter {
   }
   async getRoundResults(gameId: string): Promise<RoundResultRecord[]> {
     return [...this.roundResults.values()].filter((r) => r.game_id === gameId).sort((a, b) => a.round - b.round).map(clone);
+  }
+
+  async appendPublicRound(rec: PublicRoundRecord): Promise<void> {
+    const k = key(rec.game_id, rec.round);
+    if (this.publicRounds.has(k)) throw new Error(`public_round ${k} is append-only and already exists`);
+    this.publicRounds.set(k, clone(rec));
+  }
+  async getPublicRound(gameId: string, round: number): Promise<PublicRoundRecord | null> {
+    const r = this.publicRounds.get(key(gameId, round));
+    return r ? clone(r) : null;
+  }
+  async getPublicRounds(gameId: string): Promise<PublicRoundRecord[]> {
+    return [...this.publicRounds.values()].filter((r) => r.game_id === gameId).sort((a, b) => a.round - b.round).map(clone);
   }
 
   async appendFirmRounds(rows: FirmRoundRow[]): Promise<void> {

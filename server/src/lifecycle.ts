@@ -13,7 +13,7 @@
  * (§3.3) — `replay()` verifies that against the persisted history.
  */
 import { initGame, resolveRound as engineResolve } from "drinkwars-engine";
-import type { Config, FirmDecision, FirmId, SegmentId, WorldState } from "drinkwars-engine";
+import type { Config, FirmDecision, FirmId, RoundResult, SegmentId, WorldState } from "drinkwars-engine";
 import type {
   AgreementRow, BeliefRow, DecisionRecord, DistinctivenessRow, FirmRoundRow, GameRecord,
   ReflectionRow, StorageAdapter, TeamRecord, TelemetryRow,
@@ -23,6 +23,7 @@ export interface CreateGameInput {
   config: Config;
   teams: { name: string; memberUserIds?: string[] }[];
   gameId?: string;
+  joinCode?: string; // multiplayer: students enter this to claim an open slot
 }
 
 export class LifecycleError extends Error {
@@ -66,7 +67,7 @@ export class GameOrchestrator {
     if (input.teams.length > config.game.n_firms) throw new LifecycleError(`${input.teams.length} teams exceeds n_firms ${config.game.n_firms}`);
     const gameId = input.gameId ?? this.id("game");
     const world = initGame(config);
-    const game: GameRecord = { id: gameId, config, n_rounds: config.game.n_rounds, current_round: 0, lifecycle: "open", created_at: this.clock() };
+    const game: GameRecord = { id: gameId, config, n_rounds: config.game.n_rounds, current_round: 0, lifecycle: "open", join_code: input.joinCode ?? null, created_at: this.clock() };
     await this.store.createGame(game);
     for (let i = 0; i < input.teams.length; i++) {
       const t = input.teams[i];
@@ -75,6 +76,36 @@ export class GameOrchestrator {
     }
     await this.store.appendWorldState({ game_id: gameId, round: 0, state: world, seed: config.game.seed, created_at: this.clock() });
     return gameId;
+  }
+
+  /** A 6-character join code, ambiguous characters (0/O, 1/I) omitted. */
+  static makeJoinCode(): string {
+    const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    let s = "";
+    for (let i = 0; i < 6; i++) s += alphabet[Math.floor(Math.random() * alphabet.length)];
+    return s;
+  }
+
+  /**
+   * A student joins by code + display name: claim an open team slot (an unclaimed
+   * firm), create the user row if new, and name the brewery. Idempotent — rejoining
+   * returns the same team. Server-side only (service role); a student can never
+   * read the join code or another team via RLS.
+   */
+  async joinGame(code: string, displayName: string, userId: string): Promise<{ gameId: string; teamId: string; firmId: FirmId }> {
+    const game = await this.store.getGameByCode(code);
+    if (!game) throw new LifecycleError(`no game found for join code "${code}"`);
+    const teams = await this.store.getTeams(game.id);
+    const mine = teams.find((t) => t.member_user_ids.includes(userId));
+    if (mine) return { gameId: game.id, teamId: mine.id, firmId: mine.firm_id };
+    const open = teams.find((t) => t.member_user_ids.length === 0);
+    if (!open) throw new LifecycleError(`game "${code}" is full`);
+    if (!(await this.store.getUser(userId))) {
+      await this.store.createUser({ id: userId, role: "student", email: null, consent: false, deid_code: `deid_${userId.slice(0, 8)}` });
+    }
+    await this.store.addTeamMember(open.id, userId);
+    await this.store.setTeamName(open.id, displayName);
+    return { gameId: game.id, teamId: open.id, firmId: open.firm_id };
   }
 
   /** Submit (or revise) a team's decision while the window is open. */
@@ -159,12 +190,26 @@ export class GameOrchestrator {
     const { world: nextWorld, result } = engineResolve(world, decisionVectors, config);
     await this.store.appendWorldState({ game_id: gameId, round: round + 1, state: nextWorld, seed: config.game.seed, created_at: this.clock() });
     await this.store.appendRoundResult({ game_id: gameId, round, result, created_at: this.clock() });
+    await this.appendPublicProjection(gameId, round, result);
     await this.persistResearchRows(game, round, result, nextWorld, allDecisions, teamByFirm);
 
     const nextRound = round + 1;
     const lifecycle = nextRound >= game.n_rounds ? "complete" : "published";
     await this.store.setGameLifecycle(gameId, lifecycle, nextRound);
     return { round, lifecycle };
+  }
+
+  /** Persist the student-facing public projection for a resolved round (§3.2):
+   *  ranked standings, public events, and per-segment market — no private diagnostics. */
+  private async appendPublicProjection(gameId: string, round: number, result: RoundResult): Promise<void> {
+    const ranked = [...result.firm_results].sort((a, b) => b.scorecard_cumulative - a.scorecard_cumulative);
+    await this.store.appendPublicRound({
+      game_id: gameId, round,
+      events: result.events,
+      standings: ranked.map((f, i) => ({ firm_id: f.firm_id, rank: i + 1, score: f.scorecard_cumulative, status: f.status })),
+      market: result.market.map((m) => ({ segment: m.segment, D: m.D, total_q: m.total_q, active: m.active })),
+      created_at: this.clock(),
+    });
   }
 
   /** Open the next round's submission window (§5 Published → Open). */

@@ -9,10 +9,13 @@
   },
   "scripts": {
     "demo": "tsx src/demo.ts",
+    "supabase:smoke": "tsx src/supabase-smoke.ts",
+    "supabase:join": "tsx src/supabase-join-smoke.ts",
     "test": "tsx --test test/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.108.1",
     "drinkwars-engine": "*"
   },
   "devDependencies": {

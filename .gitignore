@@ -9,3 +9,8 @@ out/
 # Logs & OS
 *.log
 .DS_Store
+
+# Secrets / env — never commit real keys (.env.example is the safe template)
+.env
+.env.*
+!.env.example

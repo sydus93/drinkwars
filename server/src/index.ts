@@ -6,3 +6,4 @@
 export * from "./types.js";
 export { GameOrchestrator, LifecycleError, type CreateGameInput } from "./lifecycle.js";
 export { InMemoryAdapter } from "./adapters/memory.js";
+export { SupabaseAdapter, createSupabaseAdapter } from "./adapters/supabase.js";
