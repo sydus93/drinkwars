@@ -6,6 +6,7 @@
  * the passcode-gated create / lock / resolve endpoints.
  */
 import type { Config, FirmDecision, FirmId, FirmRoundResult, FirmState, SegmentId } from "drinkwars-engine";
+import type { InstructorDashboard } from "drinkwars-server";
 import type { GameView, Standing } from "./controller.js";
 
 export const TRANSPORT_URL: string =
@@ -212,5 +213,16 @@ export class InstructorClient {
   }
   resolve(gameId: string): Promise<{ round: number; lifecycle: string }> {
     return api(this.base, `/instructor/games/${gameId}/resolve`, { method: "POST", headers: this.headers() });
+  }
+  /** Full analytics payload for the dashboard (read-only; assembled server-side). */
+  dashboard(gameId: string): Promise<InstructorDashboard> {
+    return api(this.base, `/instructor/games/${gameId}/dashboard`, { headers: this.headers() });
+  }
+  /** Research data export — the per-firm-per-round panel as a downloadable file.
+   *  Uses raw fetch (not `api`) so the passcode header reaches the attachment route. */
+  async exportData(gameId: string, format: "csv" | "json"): Promise<Blob> {
+    const res = await fetch(`${this.base}/instructor/games/${gameId}/export?format=${format}`, { headers: this.headers() });
+    if (!res.ok) throw new Error(`export failed (${res.status})`);
+    return res.blob();
   }
 }

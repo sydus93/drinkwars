@@ -3,7 +3,7 @@ import type { GameView } from "../game/controller.js";
 import type { FirmSnapshot } from "../game/controller.js";
 import { SEG_LABEL, fmt } from "../labels.js";
 import { Card, Eyebrow, Row, Tag } from "./ui.js";
-import { CompareBar } from "./charts.js";
+import { CompareBar, Scatter, type ScatterPoint } from "./charts.js";
 
 function avgPrice(f: FirmSnapshot): number {
   const ps = Object.values(f.priceBySeg).filter((p) => p > 0);
@@ -145,16 +145,15 @@ function StrategyMap({ firms }: { firms: FirmSnapshot[] }) {
   const [yKey, setYKey] = useState("B");
   const xDim = DIMS.find((d) => d.key === xKey)!;
   const yDim = DIMS.find((d) => d.key === yKey)!;
-  const pts = firms.map((f) => ({ f, x: xDim.get(f), y: yDim.get(f) }));
-  if (pts.length < 2) return null;
-
-  const W = 360, H = 260, L = 44, R = 16, T = 14, B = 40;
-  const xs = pts.map((p) => p.x);
-  const ys = pts.map((p) => p.y);
-  const xmin = Math.min(...xs), xmax = Math.max(...xs);
-  const ymin = Math.min(...ys), ymax = Math.max(...ys);
-  const sx = (v: number) => L + (xmax === xmin ? 0.5 : (v - xmin) / (xmax - xmin)) * (W - L - R);
-  const sy = (v: number) => H - B - (ymax === ymin ? 0.5 : (v - ymin) / (ymax - ymin)) * (H - T - B);
+  if (firms.length < 2) return null;
+  const pts: ScatterPoint[] = firms.map((f) => ({
+    label: f.isYou ? "you" : f.name.split(" ")[0],
+    color: f.isYou ? "var(--color-copper)" : "var(--color-inksoft)",
+    x: xDim.get(f),
+    y: yDim.get(f),
+    size: f.isYou ? 6 : 4,
+    faded: f.status !== "active",
+  }));
 
   const Select = ({ value, onChange }: { value: string; onChange: (v: string) => void }) => (
     <select value={value} onChange={(e) => onChange(e.target.value)} className="rounded-[2px] border border-line2 bg-paper px-1 py-0.5 font-mono text-xs text-ink">
@@ -169,20 +168,7 @@ function StrategyMap({ firms }: { firms: FirmSnapshot[] }) {
         <span>Y: <Select value={yKey} onChange={setYKey} /></span>
         <span>X: <Select value={xKey} onChange={setXKey} /></span>
       </div>
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full">
-        <line x1={L} y1={H - B} x2={W - R} y2={H - B} stroke="var(--color-line2)" />
-        <line x1={L} y1={T} x2={L} y2={H - B} stroke="var(--color-line2)" />
-        <text x={(L + W - R) / 2} y={H - 6} fontSize="10" textAnchor="middle" fill="var(--color-inksoft)" fontFamily="var(--font-mono)">{xDim.label} →</text>
-        <text transform={`rotate(-90 12 ${(T + H - B) / 2})`} x={12} y={(T + H - B) / 2} fontSize="10" textAnchor="middle" fill="var(--color-inksoft)" fontFamily="var(--font-mono)">↑ {yDim.label}</text>
-        {pts.map((p) => (
-          <g key={p.f.firm_id} opacity={p.f.status === "active" ? 1 : 0.4}>
-            <circle cx={sx(p.x)} cy={sy(p.y)} r={p.f.isYou ? 6 : 4} fill={p.f.isYou ? "var(--color-copper)" : "var(--color-inksoft)"} />
-            <text x={sx(p.x) + 7} y={sy(p.y) + 3} fontSize="8.5" fill={p.f.isYou ? "var(--color-copperdeep)" : "var(--color-inksoft)"} fontFamily="var(--font-mono)">
-              {p.f.isYou ? "you" : p.f.name.split(" ")[0]}
-            </text>
-          </g>
-        ))}
-      </svg>
+      <Scatter points={pts} xLabel={xDim.label} yLabel={yDim.label} />
       <div className="text-[0.7rem] text-inksoft">Open space = a distinctive position; clusters = a crowded red ocean. Try axes you wouldn't expect to correlate.</div>
     </Card>
   );

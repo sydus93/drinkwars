@@ -20,7 +20,7 @@ import { readFileSync } from "node:fs";
 import { loadConfig } from "drinkwars-engine/node";
 import type { FirmDecision } from "drinkwars-engine";
 import { createClient } from "@supabase/supabase-js";
-import { GameOrchestrator, InMemoryAdapter, createSupabaseAdapter, type StorageAdapter } from "./index.js";
+import { GameOrchestrator, InMemoryAdapter, buildInstructorDashboard, createSupabaseAdapter, dashboardToCsv, type StorageAdapter } from "./index.js";
 
 // Load server/.env (only needed for supabase mode; harmless otherwise).
 try {
@@ -61,6 +61,13 @@ function send(res: ServerResponse, status: number, body: unknown) {
   res.setHeader("Content-Type", "application/json");
   res.writeHead(status);
   res.end(JSON.stringify(body));
+}
+function sendAttachment(res: ServerResponse, status: number, contentType: string, body: string, filename: string) {
+  cors(res);
+  res.setHeader("Content-Type", contentType);
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  res.writeHead(status);
+  res.end(body);
 }
 async function readJson(req: IncomingMessage): Promise<any> {
   const chunks: Buffer[] = [];
@@ -173,10 +180,25 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
       return send(res, 200, { gameId: g.id, joinCode: g.join_code, nRounds: g.n_rounds });
     }
 
-    const m = path.match(/^\/instructor\/games\/([^/]+)\/(status|lock|resolve|advance)$/);
+    // Instructor analytics dashboard (read-only) + research data export.
+    const ex = path.match(/^\/instructor\/games\/([^/]+)\/export$/);
+    if (ex && method === "GET") {
+      const gameId = ex[1];
+      try {
+        const dash = await buildInstructorDashboard(store, gameId);
+        const format = (url.searchParams.get("format") ?? "csv").toLowerCase();
+        if (format === "json") return sendAttachment(res, 200, "application/json", JSON.stringify(dash, null, 2), `drinkwars-${gameId}.json`);
+        return sendAttachment(res, 200, "text/csv", dashboardToCsv(dash), `drinkwars-${gameId}.csv`);
+      } catch (e) {
+        return send(res, 400, { error: msg(e) });
+      }
+    }
+
+    const m = path.match(/^\/instructor\/games\/([^/]+)\/(status|lock|resolve|advance|dashboard)$/);
     if (m) {
       const [, gameId, action] = m;
       try {
+        if (action === "dashboard" && method === "GET") return send(res, 200, await buildInstructorDashboard(store, gameId));
         if (action === "status" && method === "GET") {
           const status = await orch.getStatus(gameId);
           const game = await store.getGame(gameId);

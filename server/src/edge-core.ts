@@ -10,4 +10,5 @@
  */
 export { GameOrchestrator } from "./lifecycle.js";
 export { SupabaseAdapter } from "./adapters/supabase.js";
+export { buildInstructorDashboard, dashboardToCsv } from "./dashboard.js";
 export { resolveConfig } from "drinkwars-engine";

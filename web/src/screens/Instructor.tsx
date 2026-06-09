@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button, Card, Eyebrow } from "../components/ui.js";
 import { InstructorClient, type InstructorStatus } from "../game/multiplayer.js";
+import { InstructorDashboard } from "./InstructorDashboard.js";
 
 /** Instructor console: passcode → create a game → share the code → lock / resolve. */
 export function Instructor({ onExit }: { onExit: () => void }) {
@@ -13,6 +14,7 @@ export function Instructor({ onExit }: { onExit: () => void }) {
   const [status, setStatus] = useState<InstructorStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [view, setView] = useState<"controls" | "dashboard">("controls");
 
   useEffect(() => {
     if (!client || !game) return;
@@ -130,8 +132,10 @@ export function Instructor({ onExit }: { onExit: () => void }) {
   const joined = status?.teams.filter((t) => t.joined).length ?? 0;
   const slots = status?.teams.length ?? nFirms;
 
+  const roundKey = `${status?.round ?? 0}:${status?.lifecycle ?? "open"}`;
+
   return (
-    <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6">
+    <div className={`mx-auto ${view === "dashboard" ? "max-w-6xl" : "max-w-3xl"} px-4 py-8 sm:px-6`}>
       <header className="mb-4 flex flex-wrap items-end justify-between gap-4 border-b border-line2 pb-4">
         <div>
           <div className="eyebrow">Instructor · {lc}</div>
@@ -140,33 +144,51 @@ export function Instructor({ onExit }: { onExit: () => void }) {
         <Button variant="ghost" onClick={onExit}>Leave</Button>
       </header>
 
-      <Card className="text-center">
-        <Eyebrow>Share this join code</Eyebrow>
-        <div className="wordmark mt-1 text-5xl tracking-[0.18em] text-copper">{game.joinCode}</div>
-        <div className="mt-1 text-[0.72rem] text-inksoft">Players: open this site → Join a game → enter the code.</div>
-      </Card>
-
-      <Card className="mt-4">
-        <Eyebrow>Brewers · {joined}/{slots} slots claimed</Eyebrow>
-        <div className="mt-2 grid gap-1 sm:grid-cols-2">
-          {(status?.teams ?? []).map((t) => (
-            <div key={t.teamId} className="flex items-center justify-between border-b border-line py-1 text-sm last:border-0">
-              <span className={t.joined ? "font-semibold" : "text-inksoft"}>{t.joined ? t.name : "— open slot —"}</span>
-              <span className="font-mono text-[0.7rem] text-inksoft">
-                {!t.joined ? "open" : status?.nonSubmitters.includes(t.teamId) ? "waiting" : "submitted"}
-              </span>
-            </div>
-          ))}
-        </div>
-      </Card>
-
-      {err && <div className="mt-3 text-sm text-brick">{err}</div>}
-      <div className="mt-4 flex flex-wrap items-center gap-2">
-        <Button onClick={() => act(() => client!.lock(game.gameId))} disabled={busy || lc !== "open"}>Lock round</Button>
-        <Button onClick={() => act(() => client!.resolve(game.gameId))} disabled={busy || lc !== "locked"}>Resolve round</Button>
-        {lc === "complete" && <span className="text-sm text-inksoft">Season complete.</span>}
+      <div className="mb-4 flex gap-1 border-b border-line">
+        {(["controls", "dashboard"] as const).map((v) => (
+          <button
+            key={v}
+            onClick={() => setView(v)}
+            className={`-mb-px border-b-2 px-4 py-2 font-mono text-sm tracking-wide transition-colors ${view === v ? "border-copper text-copperdeep" : "border-transparent text-inksoft hover:text-ink"}`}
+          >
+            {v === "controls" ? "Controls" : "Dashboard"}
+          </button>
+        ))}
       </div>
-      <div className="mt-2 text-[0.72rem] text-inksoft">Lock closes submissions (open slots play as adaptive NPCs); Resolve runs the engine and opens the next round.</div>
+
+      {view === "controls" ? (
+        <>
+          <Card className="text-center">
+            <Eyebrow>Share this join code</Eyebrow>
+            <div className="wordmark mt-1 text-5xl tracking-[0.18em] text-copper">{game.joinCode}</div>
+            <div className="mt-1 text-[0.72rem] text-inksoft">Players: open this site → Join a game → enter the code.</div>
+          </Card>
+
+          <Card className="mt-4">
+            <Eyebrow>Brewers · {joined}/{slots} slots claimed</Eyebrow>
+            <div className="mt-2 grid gap-1 sm:grid-cols-2">
+              {(status?.teams ?? []).map((t) => (
+                <div key={t.teamId} className="flex items-center justify-between border-b border-line py-1 text-sm last:border-0">
+                  <span className={t.joined ? "font-semibold" : "text-inksoft"}>{t.joined ? t.name : "— open slot —"}</span>
+                  <span className="font-mono text-[0.7rem] text-inksoft">
+                    {!t.joined ? "open" : status?.nonSubmitters.includes(t.teamId) ? "waiting" : "submitted"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          {err && <div className="mt-3 text-sm text-brick">{err}</div>}
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <Button onClick={() => act(() => client!.lock(game.gameId))} disabled={busy || lc !== "open"}>Lock round</Button>
+            <Button onClick={() => act(() => client!.resolve(game.gameId))} disabled={busy || lc !== "locked"}>Resolve round</Button>
+            {lc === "complete" && <span className="text-sm text-inksoft">Season complete.</span>}
+          </div>
+          <div className="mt-2 text-[0.72rem] text-inksoft">Lock closes submissions (open slots play as adaptive NPCs); Resolve runs the engine and opens the next round.</div>
+        </>
+      ) : (
+        client && <InstructorDashboard client={client} gameId={game.gameId} roundKey={roundKey} />
+      )}
     </div>
   );
 }

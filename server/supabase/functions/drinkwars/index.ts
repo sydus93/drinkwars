@@ -8,7 +8,7 @@
 // Game logic comes from ./drinkwars-core.js (esbuild bundle of the orchestrator
 // + Supabase adapter + engine). Rebuild it with `npm run build:edge` in server/.
 import { createClient } from "@supabase/supabase-js";
-import { GameOrchestrator, SupabaseAdapter, resolveConfig } from "./drinkwars-core.js";
+import { GameOrchestrator, SupabaseAdapter, buildInstructorDashboard, dashboardToCsv, resolveConfig } from "./drinkwars-core.js";
 
 const url = Deno.env.get("SUPABASE_URL")!;
 const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -25,6 +25,8 @@ const CORS: Record<string, string> = {
 };
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, "Content-Type": "application/json" } });
+const attachment = (status: number, contentType: string, body: string, filename: string) =>
+  new Response(body, { status, headers: { ...CORS, "Content-Type": contentType, "Content-Disposition": `attachment; filename="${filename}"` } });
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 // ── stateless signed session tokens (Web Crypto HMAC; secret = service key) ──
@@ -133,9 +135,19 @@ Deno.serve(async (req: Request) => {
         if (!game) return json(404, { error: "no game found for that code" });
         return json(200, { gameId: game.id, joinCode: game.join_code, nRounds: game.n_rounds });
       }
-      const m = path.match(/^\/instructor\/games\/([^/]+)\/(status|lock|resolve|advance)$/);
+      // Instructor analytics dashboard (read-only) + research data export.
+      const ex = path.match(/^\/instructor\/games\/([^/]+)\/export$/);
+      if (ex && method === "GET") {
+        const gameId = ex[1];
+        const dash = await buildInstructorDashboard(store, gameId);
+        const format = (u.searchParams.get("format") ?? "csv").toLowerCase();
+        if (format === "json") return attachment(200, "application/json", JSON.stringify(dash, null, 2), `drinkwars-${gameId}.json`);
+        return attachment(200, "text/csv", dashboardToCsv(dash), `drinkwars-${gameId}.csv`);
+      }
+      const m = path.match(/^\/instructor\/games\/([^/]+)\/(status|lock|resolve|advance|dashboard)$/);
       if (m) {
         const [, gameId, action] = m;
+        if (action === "dashboard" && method === "GET") return json(200, await buildInstructorDashboard(store, gameId));
         if (action === "status" && method === "GET") {
           const status = await orch.getStatus(gameId);
           const game = await store.getGame(gameId);

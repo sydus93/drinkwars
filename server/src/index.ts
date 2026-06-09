@@ -4,6 +4,7 @@
  * the engine directly (application-spec §2.3).
  */
 export * from "./types.js";
+export * from "./dashboard.js";
 export { GameOrchestrator, LifecycleError, type CreateGameInput } from "./lifecycle.js";
 export { InMemoryAdapter } from "./adapters/memory.js";
 export { SupabaseAdapter, createSupabaseAdapter } from "./adapters/supabase.js";
