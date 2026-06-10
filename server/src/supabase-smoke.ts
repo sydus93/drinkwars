@@ -48,7 +48,7 @@ async function main() {
     // 1. games — create, read, jsonb + timestamptz round-trip
     const game: GameRecord = {
       id: gameId, config: { smoke: true } as any, n_rounds: 3, current_round: 0,
-      lifecycle: "open", join_code: null, created_at: Date.now(),
+      lifecycle: "open", join_code: null, owner_tag: null, created_at: Date.now(),
     };
     await store.createGame(game);
     wroteGame = true;

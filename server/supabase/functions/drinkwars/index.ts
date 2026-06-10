@@ -13,6 +13,18 @@ import { GameOrchestrator, SupabaseAdapter, buildInstructorDashboard, dashboardT
 const url = Deno.env.get("SUPABASE_URL")!;
 const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const PASS = Deno.env.get("DW_INSTRUCTOR_PASS") ?? "letmein";
+// Optional secondary passcode (full access, same as the main one) for a colleague
+// to test with, without sharing the primary credential. Unset = disabled.
+const TEST_PASS = Deno.env.get("DW_INSTRUCTOR_PASS_TEST") ?? "";
+const PASSES = [PASS, ...(TEST_PASS ? [TEST_PASS] : [])];
+const validInstructorPass = (p: string | null): boolean => p !== null && PASSES.includes(p);
+// Map a passcode to its control tier. Games are owned by the tier that created
+// them; the primary tier is a super-user over all games, the test tier only its own.
+type InstructorTier = "primary" | "test";
+const instructorTier = (p: string | null): InstructorTier | null =>
+  p === null ? null : p === PASS ? "primary" : TEST_PASS && p === TEST_PASS ? "test" : null;
+const ownsGame = (tier: InstructorTier | null, game: { owner_tag: string | null }): boolean =>
+  tier === "primary" || (tier != null && game.owner_tag === tier);
 
 const db = createClient(url, serviceKey, { auth: { persistSession: false } });
 const store = new SupabaseAdapter(db);
@@ -119,21 +131,30 @@ Deno.serve(async (req: Request) => {
 
     // ---- instructor (passcode-gated) ----
     if (path.startsWith("/instructor")) {
-      if (req.headers.get("x-instructor-pass") !== PASS) return json(401, { error: "bad instructor passcode" });
+      if (!validInstructorPass(req.headers.get("x-instructor-pass"))) return json(401, { error: "bad instructor passcode" });
+      const tier = instructorTier(req.headers.get("x-instructor-pass"));
       if (method === "POST" && path === "/instructor/games") {
         const nFirms = Number(body.nFirms ?? 6);
         const nRounds = Number(body.nRounds ?? 16);
         const config = resolveConfig({ game: { n_firms: nFirms, n_rounds: nRounds } } as any);
         const code = GameOrchestrator.makeJoinCode();
         const teams = Array.from({ length: nFirms }, (_, i) => ({ name: `Open slot ${i + 1}` }));
-        const gameId = await orch.createGame({ config, joinCode: code, teams });
+        const gameId = await orch.createGame({ config, joinCode: code, teams, ownerTag: tier });
         return json(200, { gameId, joinCode: code, nFirms, nRounds });
       }
       // Re-enter a running game by its join code (instructor reconnect after a drop).
       if (method === "POST" && path === "/instructor/resume") {
         const game = await store.getGameByCode(String(body.code ?? "").toUpperCase());
         if (!game) return json(404, { error: "no game found for that code" });
+        if (!ownsGame(tier, game)) return json(403, { error: "not your game" });
         return json(200, { gameId: game.id, joinCode: game.join_code, nRounds: game.n_rounds });
+      }
+      // Every remaining /instructor/games/:id/* route is scoped to the owning tier.
+      const owned = path.match(/^\/instructor\/games\/([^/]+)\//);
+      if (owned) {
+        const g = await store.getGame(owned[1]);
+        if (!g) return json(404, { error: `no game ${owned[1]}` });
+        if (!ownsGame(tier, g)) return json(403, { error: "not your game" });
       }
       // Instructor analytics dashboard (read-only) + research data export.
       const ex = path.match(/^\/instructor\/games\/([^/]+)\/export$/);

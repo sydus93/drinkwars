@@ -36,6 +36,7 @@ export interface GameRecord {
   current_round: number; // the round currently open / just resolved
   lifecycle: Lifecycle;
   join_code: string | null; // multiplayer: code a student enters to join (server-validated)
+  owner_tag: string | null; // instructor passcode tier that created it ("primary"|"test"); null = legacy/primary-owned
   created_at: number;
 }
 

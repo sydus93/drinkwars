@@ -46,7 +46,7 @@ async function main() {
     // Game row + 2 open slots, created directly via the adapter (no world_state → cleanable).
     const game: GameRecord = {
       id: gameId, config: { mp_smoke: true } as any, n_rounds: 1, current_round: 0,
-      lifecycle: "open", join_code: code, created_at: Date.now(),
+      lifecycle: "open", join_code: code, owner_tag: null, created_at: Date.now(),
     };
     await store.createGame(game);
     createdGame = true;

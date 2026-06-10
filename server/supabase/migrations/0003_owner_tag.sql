@@ -1,0 +1,12 @@
+-- Drink Wars — instructor control scoping (apply AFTER 0002_join_code.sql).
+--
+-- Tags each game with the instructor passcode *tier* that created it:
+--   'primary' = the main DW_INSTRUCTOR_PASS
+--   'test'    = the shared DW_INSTRUCTOR_PASS_TEST (handed to a colleague)
+-- NULL = legacy games created before scoping; treated as primary-owned.
+--
+-- The transport (local + Edge Function) enforces control scoping on every
+-- /instructor/games/:id/* route: the 'test' tier may only control/view games
+-- it created, while 'primary' is a super-user that controls/views all games.
+-- The tag is never a secret (just the tier label), so it is safe at rest.
+alter table games add column if not exists owner_tag text;

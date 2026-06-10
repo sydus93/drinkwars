@@ -36,7 +36,7 @@ function must<T>(res: { data: T; error: { message?: string } | null }): T {
 
 const mapGame = (r: any): GameRecord => ({
   id: r.id, config: r.config, n_rounds: r.n_rounds, current_round: r.current_round,
-  lifecycle: r.lifecycle as Lifecycle, join_code: r.join_code ?? null, created_at: fromTs(r.created_at),
+  lifecycle: r.lifecycle as Lifecycle, join_code: r.join_code ?? null, owner_tag: r.owner_tag ?? null, created_at: fromTs(r.created_at),
 });
 const mapTeam = (r: any): TeamRecord => ({
   id: r.id, game_id: r.game_id, firm_id: r.firm_id, name: r.name,
@@ -64,7 +64,7 @@ export class SupabaseAdapter implements StorageAdapter {
   async createGame(g: GameRecord): Promise<void> {
     must(await this.db.from("games").insert({
       id: g.id, config: g.config, n_rounds: g.n_rounds, current_round: g.current_round,
-      lifecycle: g.lifecycle, join_code: g.join_code, created_at: toTs(g.created_at),
+      lifecycle: g.lifecycle, join_code: g.join_code, owner_tag: g.owner_tag, created_at: toTs(g.created_at),
     }));
   }
   async getGame(id: string): Promise<GameRecord | null> {

@@ -35,6 +35,18 @@ try {
 
 const PORT = Number(process.env.PORT ?? 8787);
 const PASS = process.env.DW_INSTRUCTOR_PASS ?? "letmein";
+// Optional secondary passcode (full access, same as the main one) to hand to a
+// colleague for testing without sharing the primary credential. Unset = disabled.
+const TEST_PASS = process.env.DW_INSTRUCTOR_PASS_TEST ?? "";
+const PASSES = [PASS, ...(TEST_PASS ? [TEST_PASS] : [])];
+const validInstructorPass = (p: unknown): boolean => typeof p === "string" && PASSES.includes(p);
+// Map a passcode to its control tier. Games are owned by the tier that created
+// them; the primary tier is a super-user over all games, the test tier only its own.
+type InstructorTier = "primary" | "test";
+const instructorTier = (p: unknown): InstructorTier | null =>
+  typeof p !== "string" ? null : p === PASS ? "primary" : TEST_PASS && p === TEST_PASS ? "test" : null;
+const ownsGame = (tier: InstructorTier | null, game: { owner_tag: string | null }): boolean =>
+  tier === "primary" || (tier != null && game.owner_tag === tier);
 const useSupabase = (process.env.DW_ADAPTER ?? "memory") === "supabase";
 
 const store: StorageAdapter = useSupabase ? createSupabaseAdapter() : new InMemoryAdapter();
@@ -161,14 +173,15 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
 
   // ---- instructor (passcode-gated) ----
   if (path.startsWith("/instructor")) {
-    if (req.headers["x-instructor-pass"] !== PASS) return send(res, 401, { error: "bad instructor passcode" });
+    if (!validInstructorPass(req.headers["x-instructor-pass"])) return send(res, 401, { error: "bad instructor passcode" });
+    const tier = instructorTier(req.headers["x-instructor-pass"]);
 
     if (method === "POST" && path === "/instructor/games") {
       const { nFirms = 6, nRounds = 16 } = await readJson(req);
       const config = loadConfig({ game: { n_firms: nFirms, n_rounds: nRounds } } as never);
       const code = GameOrchestrator.makeJoinCode();
       const teams = Array.from({ length: nFirms }, (_, i) => ({ name: `Open slot ${i + 1}` }));
-      const gameId = await orch.createGame({ config, joinCode: code, teams });
+      const gameId = await orch.createGame({ config, joinCode: code, teams, ownerTag: tier });
       return send(res, 200, { gameId, joinCode: code, nFirms, nRounds });
     }
 
@@ -177,7 +190,17 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
       const { code } = await readJson(req);
       const g = await store.getGameByCode(String(code ?? "").toUpperCase());
       if (!g) return send(res, 404, { error: "no game found for that code" });
+      if (!ownsGame(tier, g)) return send(res, 403, { error: "not your game" });
       return send(res, 200, { gameId: g.id, joinCode: g.join_code, nRounds: g.n_rounds });
+    }
+
+    // Every remaining /instructor/games/:id/* route (status/lock/resolve/advance/
+    // dashboard/export) is scoped to the owning tier.
+    const owned = path.match(/^\/instructor\/games\/([^/]+)\//);
+    if (owned) {
+      const g = await store.getGame(owned[1]);
+      if (!g) return send(res, 404, { error: `no game ${owned[1]}` });
+      if (!ownsGame(tier, g)) return send(res, 403, { error: "not your game" });
     }
 
     // Instructor analytics dashboard (read-only) + research data export.
@@ -232,5 +255,5 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
 createServer((req, res) => {
   handle(req, res).catch((e) => send(res, 500, { error: msg(e) }));
 }).listen(PORT, () => {
-  console.log(`Drink Wars transport → http://localhost:${PORT}  (adapter: ${useSupabase ? "supabase" : "memory"}, instructor pass: ${PASS === "letmein" ? '"letmein" — set DW_INSTRUCTOR_PASS' : "set"})`);
+  console.log(`Drink Wars transport → http://localhost:${PORT}  (adapter: ${useSupabase ? "supabase" : "memory"}, instructor pass: ${PASS === "letmein" ? '"letmein" — set DW_INSTRUCTOR_PASS' : "set"}${TEST_PASS ? " (+test pass)" : ""})`);
 });

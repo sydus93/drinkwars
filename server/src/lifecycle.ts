@@ -24,6 +24,7 @@ export interface CreateGameInput {
   teams: { name: string; memberUserIds?: string[] }[];
   gameId?: string;
   joinCode?: string; // multiplayer: students enter this to claim an open slot
+  ownerTag?: string | null; // instructor passcode tier that owns this game (control scoping)
 }
 
 export class LifecycleError extends Error {
@@ -72,7 +73,7 @@ export class GameOrchestrator {
     if (input.teams.length > config.game.n_firms) throw new LifecycleError(`${input.teams.length} teams exceeds n_firms ${config.game.n_firms}`);
     const gameId = input.gameId ?? this.id();
     const world = initGame(config);
-    const game: GameRecord = { id: gameId, config, n_rounds: config.game.n_rounds, current_round: 0, lifecycle: "open", join_code: input.joinCode ?? null, created_at: this.clock() };
+    const game: GameRecord = { id: gameId, config, n_rounds: config.game.n_rounds, current_round: 0, lifecycle: "open", join_code: input.joinCode ?? null, owner_tag: input.ownerTag ?? null, created_at: this.clock() };
     await this.store.createGame(game);
     for (let i = 0; i < input.teams.length; i++) {
       const t = input.teams[i];
