@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+title: "Drink Wars: A craft-beverage strategy simulation for teaching and strategy research"
+message: "If you use this software in teaching or research, please cite it as below."
+type: software
+authors:
+  - family-names: Stein
+    given-names: Devin
+    affiliation: Colorado State University
+repository-code: "https://github.com/sydus93/drinkwars"
+url: "https://devinstein.me/drinkwars/"
+abstract: >-
+  Drink Wars is a turn-based, multi-firm strategy simulation built for an
+  undergraduate capstone course and doubling as a strategy-research data
+  instrument. Teams make integrated decisions across marketing, operations,
+  HR, finance, and geography each round; a deterministic, config-driven
+  economic engine resolves the market; and the append-only history feeds both
+  classroom debrief and (with consent) research analysis. The economic core is
+  industry-agnostic, with craft beverage as a configurable skin.
+keywords:
+  - strategy simulation
+  - business education
+  - management
+  - serious games
+  - agent-based modeling
+license: MIT
+version: "0.3.0"
+date-released: "2026-06-10"

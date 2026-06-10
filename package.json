@@ -1,8 +1,25 @@
 {
   "name": "drinkwars",
-  "version": "0.1.0",
-  "description": "Drink Wars — craft-beverage strategy simulation (engine + orchestration). See 01_model_engine_spec.md, 02_application_spec.md.",
+  "version": "0.3.0",
+  "description": "Drink Wars — a turn-based craft-beverage strategy simulation for teaching business strategy and as a research instrument. Monorepo: engine + orchestration + web. See 01_model_engine_spec.md and 02_application_spec.md.",
   "private": true,
+  "license": "MIT",
+  "author": "Devin Stein (https://devinstein.me)",
+  "homepage": "https://devinstein.me/drinkwars/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sydus93/drinkwars.git"
+  },
+  "bugs": {
+    "url": "https://github.com/sydus93/drinkwars/issues"
+  },
+  "keywords": [
+    "strategy-simulation",
+    "business-education",
+    "management",
+    "serious-games",
+    "typescript"
+  ],
   "workspaces": [
     "engine",
     "server",
