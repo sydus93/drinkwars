@@ -54,6 +54,14 @@ export interface DashPanelRow {
   cumOutput: number;
   // Cost
   unitCost: number;
+  // Inventory (production mode; 0 when disabled)
+  inventoryUnits: number;
+  inventorySpoiled: number;
+  inventoryTurnover: number;
+  // Module stocks (0 when the module is off)
+  reputation: number;
+  waterEfficiency: number;
+  rndProgress: number;
   // Finance health
   coverage: number;
   leverage: number;
@@ -203,6 +211,12 @@ export async function buildInstructorDashboard(store: StorageAdapter, gameId: st
         process: fr.state.process,
         cumOutput: fr.state.cum_output,
         unitCost: fr.unit_cost,
+        inventoryUnits: fr.state.inventory_units ?? 0,
+        inventorySpoiled: fr.inventory?.spoiled ?? 0,
+        inventoryTurnover: fr.inventory?.turnover ?? 0,
+        reputation: fr.state.reputation ?? 0,
+        waterEfficiency: fr.state.water_efficiency ?? 0,
+        rndProgress: fr.state.rnd_progress ?? 0,
         coverage: fr.cost_of_capital.coverage,
         leverage: fr.cost_of_capital.leverage,
         creditRationed: fr.cost_of_capital.credit_rationed,
@@ -306,7 +320,7 @@ export function dashboardToCsv(d: InstructorDashboard): string {
     "game_id", "round", "firm_id", "team_name", "joined", "status", "rank",
     "cash", "revenue", "net_income", "equity", "debt",
     "cap", "Q", "B", "T_emp", "T_inv", "T_gov", "process", "cum_output",
-    "unit_cost", "coverage", "leverage", "credit_rationed", "r_debt",
+    "unit_cost", "inventory_units", "inventory_spoiled", "inventory_turnover", "reputation", "water_efficiency", "rnd_progress", "coverage", "leverage", "credit_rationed", "r_debt",
     "score_cumulative",
     "score_fin_raw", "score_mkt_raw", "score_int_raw", "score_stk_raw",
     "score_fin_norm", "score_mkt_norm", "score_int_norm", "score_stk_norm",
@@ -324,7 +338,7 @@ export function dashboardToCsv(d: InstructorDashboard): string {
       d.meta.gameId, p.round, p.firmId, nameByFirm.get(p.firmId) ?? "", joinedByFirm.get(p.firmId) ?? false, p.status, p.rank,
       p.cash, p.revenue, p.netIncome, p.equity, p.debt,
       p.cap, p.Q, p.B, p.T_emp, p.T_inv, p.T_gov, p.process, p.cumOutput,
-      p.unitCost, p.coverage, p.leverage, p.creditRationed, p.rDebt,
+      p.unitCost, p.inventoryUnits, p.inventorySpoiled, p.inventoryTurnover, p.reputation, p.waterEfficiency, p.rndProgress, p.coverage, p.leverage, p.creditRationed, p.rDebt,
       p.scoreCumulative,
       p.scoreRaw.financial, p.scoreRaw.market, p.scoreRaw.intangible, p.scoreRaw.stakeholder,
       p.scoreNorm.financial, p.scoreNorm.market, p.scoreNorm.intangible, p.scoreNorm.stakeholder,

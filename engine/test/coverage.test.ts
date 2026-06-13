@@ -55,7 +55,10 @@ test("joint_marketing pools brand into a signatory's segment utility (§11.2)", 
 });
 
 test("operator-to-investor: voluntary exit buys a stake at fair value (§8.4)", () => {
-  const c = loadConfig();
+  // Inventory disabled: this exercises the §8.4 invest election, not production
+  // economics — with stock on, the hand-built rivals (zero-fill, price 0) would
+  // make firm_1 overproduce and fail the stake-affordability gate.
+  const c = loadConfig({ modules: { inventory: { enabled: false } } } as never);
   const world = initGame(c);
   const decisions = [decision("firm_1", world, { exit_action: { type: "voluntary", path: "invest", target_firm: "firm_2" } })];
   const { world: next } = resolveRound(world, decisions, c);

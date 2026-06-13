@@ -16,7 +16,7 @@ const median = (xs: number[]) => {
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 };
 
-export function Field({ view, infoActive }: { view: GameView; infoActive: boolean }) {
+export function Field({ view, infoActive, onInspect }: { view: GameView; infoActive: boolean; onInspect?: (firmId: string) => void }) {
   const firms = view.firms;
   const you = firms.find((f) => f.isYou);
   const others = firms.filter((f) => !f.isYou);
@@ -85,7 +85,11 @@ export function Field({ view, infoActive }: { view: GameView; infoActive: boolea
                 </thead>
                 <tbody className="tnum">
                   {[...firms].sort((a, b) => b.score - a.score).map((f) => (
-                    <tr key={f.firm_id} className={`border-t border-line ${f.isYou ? "bg-panel2" : ""}`}>
+                    <tr
+                      key={f.firm_id}
+                      onClick={onInspect ? () => onInspect(f.firm_id) : undefined}
+                      className={`border-t border-line ${f.isYou ? "bg-panel2" : ""} ${onInspect ? "cursor-pointer hover:bg-panel2" : ""}`}
+                    >
                       <td className={`py-1 pr-2 ${f.isYou ? "font-bold text-copperdeep" : ""}`}>{f.name}{f.status !== "active" ? " ✗" : ""}</td>
                       <td className="py-1 pr-2 text-right">{f.score.toFixed(2)}</td>
                       <td className="py-1 pr-2 text-right">{f.Q.toFixed(0)}</td>
@@ -109,14 +113,20 @@ export function Field({ view, infoActive }: { view: GameView; infoActive: boolea
               Rivals' quality, brand, capacity, pricing, and the positioning map are hidden. Tick <span className="font-semibold text-copperdeep">Buy market research</span> in
               your decision to reveal the field — its cost and effect show right there.
             </p>
-            <div className="grid w-full grid-cols-2 gap-2 opacity-40 blur-[2px] sm:grid-cols-4">
+            <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-4">
               {others.slice(0, 4).map((f) => (
-                <div key={f.firm_id} className="card p-2">
-                  <div className="text-xs font-semibold">█████ Brewing</div>
-                  <div className="tnum text-[0.7rem] text-inksoft">Q ██ · B ██</div>
-                </div>
+                <button
+                  key={f.firm_id}
+                  onClick={onInspect ? () => onInspect(f.firm_id) : undefined}
+                  className="card p-2 text-left transition-colors hover:border-copper"
+                  title="Open dossier (public record)"
+                >
+                  <div className="truncate text-xs font-semibold">{f.name}</div>
+                  <div className="tnum text-[0.7rem] text-inksoft blur-[2px]">Q ██ · B ██</div>
+                </button>
               ))}
             </div>
+            <p className="text-[0.66rem] text-inksoft">Open any brewery for its public record — size, categories, and visible strain are free; exact numbers need research.</p>
           </div>
         </Card>
       )}

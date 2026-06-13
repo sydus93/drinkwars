@@ -2,6 +2,8 @@ import { useState } from "react";
 import type { Difficulty } from "../game/controller.js";
 import { Button } from "../components/ui.js";
 import { CategoryCoin } from "../components/CategoryIcons.js";
+import { ModeSelector } from "./ModeSelector.js";
+import type { ModuleSelection } from "../game/multiplayer.js";
 
 const DIFFICULTIES: { id: Difficulty; label: string; blurb: string }[] = [
   { id: "relaxed", label: "Relaxed", blurb: "A gentler field — room to find your footing." },
@@ -9,9 +11,12 @@ const DIFFICULTIES: { id: Difficulty; label: string; blurb: string }[] = [
   { id: "cutthroat", label: "Cutthroat", blurb: "Aggressive rivals that crowd whatever's working." },
 ];
 
-export function Setup({ onStart, busy }: { onStart: (name: string, difficulty: Difficulty) => void; busy: boolean }) {
+export function Setup({ onStart, busy }: { onStart: (name: string, difficulty: Difficulty, modules: ModuleSelection) => void; busy: boolean }) {
   const [name, setName] = useState("");
   const [difficulty, setDifficulty] = useState<Difficulty>("competitive");
+  const [showModes, setShowModes] = useState(false);
+  const [modules, setModules] = useState<ModuleSelection>({});
+  const [modCount, setModCount] = useState(0);
   return (
     <div className="mx-auto flex min-h-screen max-w-3xl flex-col justify-center px-6 py-16">
       <div className="rise">
@@ -58,6 +63,23 @@ export function Setup({ onStart, busy }: { onStart: (name: string, difficulty: D
           </div>
         </div>
 
+        {/* Expansion modes — collapsed by default so the first-run surface stays simple. */}
+        <div className="mt-6">
+          <button
+            type="button"
+            onClick={() => setShowModes((v) => !v)}
+            className="flex items-center gap-2 font-mono text-[0.72rem] uppercase tracking-[0.14em] text-inksoft transition-colors hover:text-copperdeep"
+          >
+            <span className={`inline-block transition-transform ${showModes ? "rotate-90" : ""}`}>▸</span>
+            Game modes &amp; expansions{modCount > 0 && <span className="rounded-full border border-copper px-2 py-px text-[0.62rem] text-copperdeep">{modCount} on</span>}
+          </button>
+          {showModes && (
+            <div className="mt-3 rounded-md border border-line bg-paper2/40 p-3">
+              <ModeSelector onChange={(m, n) => { setModules(m); setModCount(n); }} />
+            </div>
+          )}
+        </div>
+
         <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
           <input
             type="text"
@@ -67,8 +89,8 @@ export function Setup({ onStart, busy }: { onStart: (name: string, difficulty: D
             className="w-full sm:w-72"
             maxLength={28}
           />
-          <Button variant="go" onClick={() => onStart(name, difficulty)} disabled={busy} className="px-6 py-3 text-base">
-            {busy ? "Pouring…" : "Start brewing →"}
+          <Button variant="go" onClick={() => onStart(name, difficulty, modules)} disabled={busy} className="px-6 py-3 text-base">
+            {busy ? "Pouring…" : modCount > 0 ? `Start brewing · ${modCount} mode${modCount === 1 ? "" : "s"} →` : "Start brewing →"}
           </Button>
         </div>
         <p className="mt-4 font-mono text-[0.7rem] tracking-wide text-inksoft">

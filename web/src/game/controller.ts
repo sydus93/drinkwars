@@ -4,14 +4,10 @@
  * adaptive NPCs — with no backend. The human is firm_1; the rivals are the
  * adaptive best-response bots from the engine. This is app-spec §9 step 0.
  */
-import { GameOrchestrator, InMemoryAdapter } from "drinkwars-server";
-import { resolveConfig, decideAdaptive, ADAPTIVE_LEANS } from "drinkwars-engine";
-import type { Config, ConfigOverride, FirmDecision, FirmId, FirmRoundResult, FirmState, Lean, RoundResult, SegmentId, WorldState } from "drinkwars-engine";
-
-const NPC_NAMES = [
-  "Old Ledger Brewing", "Hop Theory", "Copper & Cask", "Tributary Brewing",
-  "North Fork Beerworks", "Sediment Co.", "Wild Current", "Keystone Cellars",
-];
+import { GameOrchestrator, InMemoryAdapter, randomBreweryNames, renameFirms } from "drinkwars-server";
+import { resolveConfig, decideAdaptive, ADAPTIVE_LEANS, inventoryEnabled, roleBriefings, firmValuation } from "drinkwars-engine";
+import type { RoleBriefing } from "drinkwars-engine";
+import type { Config, ConfigOverride, FirmDecision, FirmId, FirmRoundResult, FirmState, Lean, ModulesConfig, RoundResult, SegmentId, WorldState } from "drinkwars-engine";
 
 export type Difficulty = "relaxed" | "competitive" | "cutthroat";
 
@@ -70,6 +66,12 @@ export interface FirmSnapshot {
   netIncome: number;
   priceBySeg: Record<SegmentId, number>;
   focus: SegmentId[];
+  cash: number;
+  debt: number;
+  valuation: number; // engine fair value (§7.5) — what an acquirer would reference
+  distressRounds: number; // consecutive rounds below solvency health (M&A target gate)
+  keyHires: string[]; // MOD-B03 roles currently on staff
+  verticalAssets: string[]; // MOD-B06 owned assets
 }
 
 export interface GameView {
@@ -89,6 +91,11 @@ export interface GameView {
   history: { own: OwnTrend; field: FieldTrend }[];
   firms: FirmSnapshot[]; // all firms' latest snapshot (incl. you) — for benchmarks/strategy map
   infoActive: boolean; // did you buy market research for the most recent decision?
+  names: Record<string, string>; // firm_id → display name (events/briefings arrive pre-renamed)
+  inventoryEnabled: boolean; // production/inventory mode on for this game?
+  modules?: ModulesConfig; // resolved expansion-module config (gates the module decision controls)
+  briefings: RoleBriefing[]; // MOD-B05 role intel (empty when off)
+  fx: Record<string, number>; // MOD-B02 export exchange rates (empty when off)
 }
 
 const median = (xs: number[]): number => {
@@ -118,11 +125,12 @@ export class SinglePlayerGame {
     const roster = ROSTERS[this.difficulty];
     this.investScale = roster.investScale;
     const N = this.config.game.n_firms;
+    const npcNames = randomBreweryNames(N - 1);
     const teams: { name: string; memberUserIds: string[] }[] = [];
     for (let i = 0; i < N; i++) {
       const uid = `u_${i + 1}`;
       await this.store.createUser({ id: uid, role: "student", email: null, consent: true, deid_code: `s${i + 1}` });
-      const name = i === 0 ? opts.breweryName?.trim() || "Your Brewery" : NPC_NAMES[(i - 1) % NPC_NAMES.length];
+      const name = i === 0 ? opts.breweryName?.trim() || "Your Brewery" : npcNames[i - 1];
       teams.push({ name, memberUserIds: [uid] });
     }
     this.gameId = await this.orch.createGame({ config: this.config, teams });
@@ -200,8 +208,19 @@ export class SinglePlayerGame {
         leverage: f.debt / Math.max(f.paid_in_capital + f.retained_earnings, 1e-6),
         netIncome: fr?.pnl.net_income ?? 0,
         priceBySeg, focus,
+        cash: f.cash, debt: f.debt,
+        valuation: firmValuation(f, this.config),
+        distressRounds: f.rounds_below_health ?? 0,
+        keyHires: (f.key_hires ?? []).map((h) => h.role),
+        verticalAssets: (f.vertical_assets ?? []).map((a) => a.id),
       };
     });
+
+    // Display names everywhere: engine event/briefing strings carry raw firm
+    // ids; substitute brewery names before anything reaches a component.
+    const names = Object.fromEntries(this.nameByFirm);
+    const briefings = roleBriefings(world, this.config, this.humanFirmId)
+      .map((b) => ({ ...b, lines: b.lines.map((l) => renameFirms(l, names)) }));
 
     return {
       round: game.current_round,
@@ -216,10 +235,15 @@ export class SinglePlayerGame {
       ownResult,
       result: last?.result ?? null,
       standings,
-      events: last?.result.events ?? [],
+      events: (last?.result.events ?? []).map((e) => renameFirms(e, names)),
       history,
       firms,
       infoActive: this.lastInfoBought,
+      names,
+      inventoryEnabled: inventoryEnabled(this.config),
+      modules: this.config.modules,
+      briefings,
+      fx: world.fx_rates ?? {},
     };
   }
 

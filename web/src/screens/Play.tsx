@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FirmDecision } from "drinkwars-engine";
 import type { GameView } from "../game/controller.js";
 import { SEG_TAG, fmt } from "../labels.js";
@@ -7,6 +7,12 @@ import { DecisionForm } from "../components/DecisionForm.js";
 import { Diagnostics } from "../components/Diagnostics.js";
 import { Standings } from "../components/Standings.js";
 import { Events } from "../components/Events.js";
+import { RoundReport } from "../components/RoundReport.js";
+import { FirmDetail } from "../components/FirmDetail.js";
+import { type GameEvent } from "../components/EventModal.js";
+import { parseEvents } from "../components/eventFeed.js";
+import { Boardroom } from "../components/Boardroom.js";
+import { Sparkline } from "../components/Sparkline.js";
 import { Trends } from "../components/Trends.js";
 import { Field } from "../components/Field.js";
 
@@ -29,6 +35,11 @@ export function Play({
 }) {
   const [tab, setTab] = useState<Tab>("decision");
   const [infoPreview, setInfoPreview] = useState(false);
+  // End-of-round briefing: when a round resolves, all its dispatches surface as
+  // ONE categorized outline (RoundReport) before settling into the rail.
+  const [report, setReport] = useState<{ round: number; events: GameEvent[] } | null>(null);
+  const [detailFirm, setDetailFirm] = useState<string | null>(null);
+  const seenRound = useRef<number | null>(null);
 
   // New game (no results yet) → start on the decision tab.
   useEffect(() => {
@@ -38,10 +49,22 @@ export function Play({
   useEffect(() => {
     setInfoPreview(false);
   }, [view.round]);
+  // Surface this round's events on each resolution (not on first mount / replays).
+  // Keyed on resolved-round COUNT, not the round pointer — the pointer stops
+  // advancing on the final round, but history still grows by one.
+  const resolved = view.history.length;
+  useEffect(() => {
+    if (seenRound.current === null) { seenRound.current = resolved; return; }
+    if (resolved !== seenRound.current) {
+      seenRound.current = resolved;
+      if (view.events.length) setReport({ round: resolved, events: parseEvents(view.events, view.names[view.own.id] ?? "") });
+    }
+  }, [resolved, view.events]);
 
   const myRank = view.standings.findIndex((s) => s.isYou) + 1;
   const hasHistory = view.history.length > 0;
   const infoActive = view.infoActive || infoPreview;
+  const detailSnapshot = detailFirm ? view.firms.find((f) => f.firm_id === detailFirm) ?? null : null;
 
   const handlePlay = async (d: FirmDecision) => {
     await onPlay(d);
@@ -56,7 +79,18 @@ export function Play({
   ];
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6">
+    <div className="mx-auto max-w-[1720px] px-4 py-6 sm:px-6">
+      {report && (
+        <RoundReport
+          round={report.round}
+          events={report.events}
+          final={view.complete}
+          onClose={() => setReport(null)}
+        />
+      )}
+      {detailSnapshot && (
+        <FirmDetail firm={detailSnapshot} view={view} infoActive={infoActive} onClose={() => setDetailFirm(null)} />
+      )}
       <header className="mb-4 flex flex-wrap items-end justify-between gap-4 border-b border-line2 pb-4">
         <div>
           <div className="eyebrow">Drink Wars · {view.difficulty}</div>
@@ -73,6 +107,11 @@ export function Play({
         <div className="flex gap-6">
           <Stat label="Cash" value={fmt.money(view.own.cash)} accent={view.own.cash < 300 ? "brick" : "ink"} />
           <Stat label="Tanks" value={fmt.int(view.own.cap)} />
+          {view.ownResult && (
+            <span className="hidden sm:block">
+              <Stat label="Net income" value={fmt.signed(view.ownResult.pnl.net_income)} accent={view.ownResult.pnl.net_income < 0 ? "brick" : "ink"} />
+            </span>
+          )}
           <Stat label="Your rank" value={myRank > 0 ? `#${myRank}` : "—"} accent="copper" sub={view.ownActive ? undefined : "exited"} />
         </div>
       </header>
@@ -123,12 +162,32 @@ export function Play({
           )}
 
           {tab === "trends" && <Trends view={view} />}
-          {tab === "field" && <Field view={view} infoActive={infoActive} />}
+          {tab === "field" && <Field view={view} infoActive={infoActive} onInspect={setDetailFirm} />}
         </div>
 
-        {/* Persistent rail */}
-        <div className="grid content-start gap-4">
-          <Standings view={view} />
+        {/* Persistent rail — pinned on desktop so standings/dispatches stay in view */}
+        <div className="grid content-start gap-4 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:self-start lg:overflow-y-auto">
+          <Standings view={view} onSelect={setDetailFirm} />
+          {view.briefings.length > 0 && <Boardroom briefings={view.briefings} />}
+          {view.history.length > 1 && (
+            <Card>
+              <Eyebrow>Season pulse</Eyebrow>
+              <div className="grid gap-1.5">
+                <div className="flex items-center justify-between text-[0.72rem] text-inksoft">
+                  <span>Cash</span>
+                  <Sparkline values={view.history.map((h) => h.own.cash)} />
+                </div>
+                <div className="flex items-center justify-between text-[0.72rem] text-inksoft">
+                  <span>Score</span>
+                  <Sparkline values={view.history.map((h) => h.own.score)} color="var(--color-copper)" />
+                </div>
+                <div className="flex items-center justify-between text-[0.72rem] text-inksoft">
+                  <span>Net income</span>
+                  <Sparkline values={view.history.map((h) => h.own.netIncome)} />
+                </div>
+              </div>
+            </Card>
+          )}
           <Events events={view.events} />
         </div>
       </div>

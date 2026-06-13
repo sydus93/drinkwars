@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import type { FirmDecision } from "drinkwars-engine";
+import type { ConfigOverride, FirmDecision } from "drinkwars-engine";
 import { SinglePlayerGame, type Difficulty, type GameView } from "./controller.js";
 
 export function useGame() {
@@ -7,7 +7,7 @@ export function useGame() {
   const [view, setView] = useState<GameView | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const start = useCallback(async (opts: { breweryName?: string; difficulty?: Difficulty } = {}) => {
+  const start = useCallback(async (opts: { breweryName?: string; difficulty?: Difficulty; override?: ConfigOverride } = {}) => {
     setBusy(true);
     const g = new SinglePlayerGame();
     await g.start(opts);

@@ -45,7 +45,7 @@ function ModeToggle() {
 /** Single-player: the full stack runs in the browser (engine + orchestration + NPCs). */
 function Solo() {
   const { view, busy, start, play, defaultDecision, infoCost, reset } = useGame();
-  if (!view) return <Setup onStart={(name, difficulty) => start({ breweryName: name, difficulty })} busy={busy} />;
+  if (!view) return <Setup onStart={(name, difficulty, modules) => start({ breweryName: name, difficulty, override: Object.keys(modules).length ? ({ modules } as never) : undefined })} busy={busy} />;
   return <Play view={view} busy={busy} infoCost={infoCost()} onPlay={play} defaultDecision={defaultDecision} onReset={reset} />;
 }
 

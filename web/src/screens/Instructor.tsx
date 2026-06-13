@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { Button, Card, Eyebrow } from "../components/ui.js";
-import { InstructorClient, type InstructorStatus } from "../game/multiplayer.js";
+import { InstructorClient, type InstructorStatus, type ModuleSelection } from "../game/multiplayer.js";
 import { InstructorDashboard } from "./InstructorDashboard.js";
+import { ModeSelector } from "./ModeSelector.js";
 
 /** Instructor console: passcode → create a game → share the code → lock / resolve. */
 export function Instructor({ onExit }: { onExit: () => void }) {
@@ -10,6 +11,8 @@ export function Instructor({ onExit }: { onExit: () => void }) {
   const [client, setClient] = useState<InstructorClient | null>(null);
   const [nFirms, setNFirms] = useState(6);
   const [nRounds, setNRounds] = useState(16);
+  const [modules, setModules] = useState<ModuleSelection>({});
+  const [modCount, setModCount] = useState(0);
   const [game, setGame] = useState<{ gameId: string; joinCode: string } | null>(null);
   const [status, setStatus] = useState<InstructorStatus | null>(null);
   const [busy, setBusy] = useState(false);
@@ -48,7 +51,7 @@ export function Instructor({ onExit }: { onExit: () => void }) {
     setErr(null);
     try {
       const c = new InstructorClient(pass);
-      const g = await c.createGame(nFirms, nRounds);
+      const g = await c.createGame(nFirms, nRounds, modules);
       setClient(c);
       setGame(g);
       persist(g.gameId, g.joinCode);
@@ -90,7 +93,7 @@ export function Instructor({ onExit }: { onExit: () => void }) {
 
   if (!game) {
     return (
-      <div className="mx-auto flex min-h-screen max-w-md flex-col justify-center px-6 py-16">
+      <div className="mx-auto flex min-h-screen max-w-xl flex-col justify-center px-6 py-16">
         <div className="rise">
           <div className="eyebrow">Instructor</div>
           <h1 className="display mt-2 text-4xl font-semibold">New game</h1>
@@ -109,7 +112,12 @@ export function Instructor({ onExit }: { onExit: () => void }) {
                 <input type="number" min={1} max={30} value={nRounds} onChange={(e) => setNRounds(Math.max(1, Math.min(30, +e.target.value)))} />
               </label>
             </div>
-            <Button variant="go" onClick={create} disabled={busy || !pass} className="w-full">{busy ? "Creating…" : "Create game"}</Button>
+            <div className="rounded-md border border-line bg-paper2/40 p-3">
+              <ModeSelector onChange={(m, n) => { setModules(m); setModCount(n); }} />
+            </div>
+            <Button variant="go" onClick={create} disabled={busy || !pass} className="w-full">
+              {busy ? "Creating…" : modCount > 0 ? `Create game · ${modCount} module${modCount === 1 ? "" : "s"}` : "Create game · standard"}
+            </Button>
             <div className="flex items-center gap-3 text-[0.64rem] tracking-wide text-inksoft">
               <div className="h-px flex-1 bg-line" />OR RESUME A RUNNING GAME<div className="h-px flex-1 bg-line" />
             </div>

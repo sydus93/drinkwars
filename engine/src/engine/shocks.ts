@@ -6,6 +6,7 @@
  */
 import type { Config, FirmId, FirmState, ScheduledShock, ShockEffect, SegmentId, WorldState } from "../types.js";
 import { RNG, deriveSeed } from "../rng.js";
+import { waterEfficiencyMitigation } from "./sustainability.js";
 
 /** Resilience mitigation fraction for a firm (process capability + T_emp), capped. */
 export function resilienceMitigation(firm: FirmState, c: Config): number {
@@ -53,7 +54,7 @@ export interface ShockOutcome {
  * Mutates `world` for fired flags and antitrust agreement constraints. Returns
  * per-firm effects (applied in §13 steps 6–9) and segment demand multipliers.
  */
-export function computeShockEffects(world: WorldState, c: Config, coordinationUnits: number): ShockOutcome {
+export function computeShockEffects(world: WorldState, c: Config, coordinationUnits: number, extraWaterMitigation = 0): ShockOutcome {
   const round = world.round;
   const rng = new RNG(deriveSeed(world.seed, round, 13));
   const activeFirms = world.firms.filter((f) => f.status === "active");
@@ -89,9 +90,13 @@ export function computeShockEffects(world: WorldState, c: Config, coordinationUn
       }
       continue;
     }
+    const isWater = s.label.toLowerCase().includes("water");
     for (const f of activeFirms) {
       const eff = perFirm.get(f.id)!;
-      const mit = s.resilience ? resilienceMitigation(f, c) : 0;
+      // Water-efficiency capability (MOD-A03) + the water-commons public good
+      // (MOD-A02) add resilience to the water shock only.
+      const base = s.resilience ? resilienceMitigation(f, c) + (isWater ? waterEfficiencyMitigation(f, c) + extraWaterMitigation : 0) : 0;
+      const mit = Math.min(c.shocks.max_mitigation, base);
       const m = s.magnitude * (1 - mit);
       if (s.kind === "cost_spike") eff.cost_multiplier *= 1 + m;
       else if (s.kind === "capacity_hit") eff.capacity_multiplier *= Math.max(0, 1 - m);

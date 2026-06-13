@@ -7,6 +7,7 @@
  * tuning. Beverage labels are comments only — engine keys stay generic.
  */
 import type { Config } from "../types.js";
+import { defaultModules } from "./modules.js";
 
 export const defaultConfig: Config = {
   game: {
@@ -103,6 +104,10 @@ export const defaultConfig: Config = {
       effect_max: 0.3, // process can shave up to 30% off unit cost
       halfsat: 20,
     },
+    // Premium recipes cost more to brew — the cost-side counterweight to quality's
+    // demand pull, so a pure quality rush trades margin for appeal (κ = up to +45%
+    // unit cost at very high Q; halfsat sets how fast it bites).
+    quality_premium: { kappa: 0.45, halfsat: 35 },
   },
 
   capacity: {
@@ -236,6 +241,11 @@ export const defaultConfig: Config = {
   information: {
     cost: 30, // market research: a costed value-of-information action (§15.7)
   },
+
+  // Expansion modules (04_expansion_module_spec). All off by default ⇒ identical
+  // to the v1 base game. Per-game "modes" are just a subset of these flags flipped
+  // on (see config/modules.ts for the registry + instructor presets).
+  modules: defaultModules,
 
   scoring: {
     weights: { financial: 0.3, market: 0.3, intangible: 0.2, stakeholder: 0.2 },

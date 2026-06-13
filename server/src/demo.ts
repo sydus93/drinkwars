@@ -29,6 +29,7 @@ function decide(firm: Firm, activeSegs: SegmentId[], c: Config, idx: number): Fi
   const each = budget / 4;
   return {
     firm_id: firm.id, price, presence,
+    run_rate: 0.9, // brew near capacity (inventory mode); ignored when disabled
     invest_cap: (c.capacity.depreciation * firm.cap) / c.capacity.gain,
     invest_process: each * 0.6, invest_Q: each, invest_B: each, invest_T_emp: each * 0.6,
     invest_T_inv: 0, invest_T_gov: 0,

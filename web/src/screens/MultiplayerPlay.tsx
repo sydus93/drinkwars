@@ -5,6 +5,9 @@ import { Button, Card, Eyebrow, Stat, Tag } from "../components/ui.js";
 import { DecisionForm } from "../components/DecisionForm.js";
 import { Diagnostics } from "../components/Diagnostics.js";
 import { Standings } from "../components/Standings.js";
+import { RoundReport } from "../components/RoundReport.js";
+import { type GameEvent } from "../components/EventModal.js";
+import { parseEvents } from "../components/eventFeed.js";
 import { SEG_TAG, fmt } from "../labels.js";
 
 type Tab = "decide" | "last" | "standings";
@@ -15,6 +18,21 @@ export function MultiplayerPlay({ client, onExit }: { client: StudentClient; onE
   const [raw, setRaw] = useState<RawView | null>(client.raw());
   const [tab, setTab] = useState<Tab>("decide");
   const [busy, setBusy] = useState(false);
+  // End-of-round briefing: when the instructor resolves, surface the dispatches
+  // as one categorized outline (same RoundReport as solo).
+  const [report, setReport] = useState<{ round: number; events: GameEvent[] } | null>(null);
+  const seenKey = useRef<string | null>(null);
+  useEffect(() => {
+    if (!raw) return;
+    // Round pointer + completion flag: the pointer stops advancing on the final
+    // round, but `complete` flips — either change means a round just resolved.
+    const key = `${raw.round}:${raw.complete}`;
+    if (seenKey.current === null) { seenKey.current = key; return; }
+    if (key !== seenKey.current) {
+      seenKey.current = key;
+      if (raw.events.length) setReport({ round: raw.complete ? raw.nRounds : raw.round, events: parseEvents(raw.events, raw.names?.[client.firmId] ?? "") });
+    }
+  }, [raw]);
 
   const everLoaded = useRef(false);
   useEffect(() => {
@@ -76,7 +94,15 @@ export function MultiplayerPlay({ client, onExit }: { client: StudentClient; onE
   ];
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6">
+    <div className="mx-auto max-w-[1720px] px-4 py-6 sm:px-6">
+      {report && (
+        <RoundReport
+          round={report.round}
+          events={report.events}
+          final={view.complete}
+          onClose={() => setReport(null)}
+        />
+      )}
       <header className="mb-4 flex flex-wrap items-end justify-between gap-4 border-b border-line2 pb-4">
         <div>
           <div className="eyebrow">Drink Wars · multiplayer</div>

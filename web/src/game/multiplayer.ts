@@ -5,7 +5,11 @@
  * Diagnostics / Standings are reused unchanged. The instructor client drives
  * the passcode-gated create / lock / resolve endpoints.
  */
-import type { Config, FirmDecision, FirmId, FirmRoundResult, FirmState, SegmentId } from "drinkwars-engine";
+import type { Config, FirmDecision, FirmId, FirmRoundResult, FirmState, RoleBriefing, SegmentId } from "drinkwars-engine";
+import { inventoryEnabled } from "drinkwars-engine";
+
+/** Module-enable map sent to the create endpoint (id → { enabled }). */
+export type ModuleSelection = Record<string, { enabled: boolean }>;
 import type { InstructorDashboard } from "drinkwars-server";
 import type { GameView, Standing } from "./controller.js";
 
@@ -27,9 +31,12 @@ export interface RawView {
   own: FirmState | null;
   ownResult: FirmRoundResult | null;
   unitCostEst: number;
-  standings: { firm_id: FirmId; rank: number; score: number; status: string }[];
-  events: string[];
+  standings: { firm_id: FirmId; rank: number; score: number; status: string; name?: string }[];
+  events: string[]; // arrive pre-renamed (server substitutes brewery names)
   submitted: boolean;
+  briefings?: RoleBriefing[]; // MOD-B05
+  fx?: Record<string, number>; // MOD-B02
+  names?: Record<string, string>; // firm_id → brewery name
 }
 
 async function api(base: string, path: string, opts: RequestInit = {}): Promise<any> {
@@ -114,7 +121,7 @@ export class StudentClient {
   toGameView(v: RawView): GameView {
     const standings: Standing[] = v.standings.map((s) => ({
       firm_id: s.firm_id,
-      name: s.firm_id === this.firmId ? "You" : labelFor(s.firm_id),
+      name: s.name ?? labelFor(s.firm_id),
       score: s.score,
       status: s.status,
       isYou: s.firm_id === this.firmId,
@@ -136,6 +143,11 @@ export class StudentClient {
       history: [],
       firms: [],
       infoActive: !!this.lastDecision?.buy_info,
+      names: v.names ?? {},
+      inventoryEnabled: this.config ? inventoryEnabled(this.config) : false,
+      modules: this.config?.modules,
+      briefings: v.briefings ?? [],
+      fx: v.fx ?? {},
     };
   }
 
@@ -158,6 +170,10 @@ export class StudentClient {
       return {
         ...this.lastDecision, firm_id: this.firmId, price, presence,
         debt_draw: 0, debt_repay: 0, equity_raise: 0, dividend: 0, buy_info: false, beliefs: {}, reflection: "",
+        // One-shot module actions are deliberate each round (don't auto-repeat).
+        pr_action: null, invest_water_efficiency: 0, public_good_contributions: {},
+        invest_rnd: 0, buy_vertical: [], hire_roles: [], fire_roles: [],
+        draw_convertible: 0, draw_rbf: 0, acquisition_bid: null,
       };
     }
 
@@ -198,8 +214,8 @@ export class InstructorClient {
   private headers() {
     return { "x-instructor-pass": this.pass };
   }
-  async createGame(nFirms: number, nRounds: number): Promise<{ gameId: string; joinCode: string }> {
-    return api(this.base, "/instructor/games", { method: "POST", headers: this.headers(), body: JSON.stringify({ nFirms, nRounds }) });
+  async createGame(nFirms: number, nRounds: number, modules: ModuleSelection = {}): Promise<{ gameId: string; joinCode: string }> {
+    return api(this.base, "/instructor/games", { method: "POST", headers: this.headers(), body: JSON.stringify({ nFirms, nRounds, modules }) });
   }
   status(gameId: string): Promise<InstructorStatus> {
     return api(this.base, `/instructor/games/${gameId}/status`, { headers: this.headers() });

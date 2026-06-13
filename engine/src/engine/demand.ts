@@ -5,25 +5,45 @@
  * one firm uncontested rents.
  *
  * `presence[s]` is a non-negative weight; normalized across segments it both
- * allocates the firm's capacity (capAlloc = effectiveCap · allocFrac) and drives
+ * allocates the firm's sellable supply (capAlloc = supply · allocFrac) and drives
  * the βfit utility term — so focus vs breadth is one lever, no extra machinery.
+ *
+ * The logit/rationing core lives in `resolveArena`, which solves ONE market given
+ * its segment demand sizes, coefficient multipliers, brand-transfer multiplier,
+ * and a per-firm sellable-supply allocation. `resolveDemand` is the single-market
+ * (home) wrapper — its output is identical to the pre-geography engine. MOD-B01
+ * geography calls `resolveArena` once per regional market and aggregates.
  */
-import type { Config, FirmDecision, FirmId, SegmentId, SegmentResult, WorldState } from "../types.js";
+import type { Config, FirmDecision, FirmId, FirmState, SegmentId, SegmentResult, WorldState } from "../types.js";
 
 export interface DemandModifiers {
-  /** Extra brand-equivalent stock for a firm in a segment (joint-marketing pacts). */
+  /** Extra brand-equivalent stock for a firm in a segment (joint-marketing pacts, PR buzz). */
   extraBrand: (firmId: FirmId, seg: SegmentId) => number;
   /** Additive change to a segment's α this round (distress dumping). */
   segmentAlphaDelta: (seg: SegmentId) => number;
-  /** Multiplier on a segment's demand size D_s (demand shocks). */
+  /** Multiplier on a segment's demand size D_s (demand shocks, public-good marketing). */
   segmentDemandMultiplier: (seg: SegmentId) => number;
-  /** A firm's effective capacity this round (after capacity shocks + coordination restraint). */
-  effectiveCap: (firmId: FirmId) => number;
+  /** A firm's sellable supply this round: effective capacity (legacy) or
+   *  carried inventory + this-round production (inventory mode). Split across
+   *  segments by the presence fractions to form each per-segment cap. */
+  sellableSupply: (firmId: FirmId) => number;
+  /** Additive deltas to a segment's taste coefficients (consumer drift, quality
+   *  certification). All-zero ⇒ baseline coefficients. */
+  segmentBetaDelta: (seg: SegmentId) => { q: number; p: number; b: number };
 }
 
 export interface DemandResult {
   perFirm: Map<FirmId, Record<SegmentId, SegmentResult>>;
   segmentTotals: Map<SegmentId, number>;
+}
+
+/** One market to solve: its (effective) segment demand sizes, per-market coefficient
+ *  multipliers, brand-transfer multiplier, and each firm's sellable supply here. */
+export interface Arena {
+  segments: { id: SegmentId; D: number; active: boolean }[];
+  betaMult: { p: number; q: number; b: number };
+  brandMult: number; // brand transfer in this market (1 = home; <1 = less established)
+  supplyOf: (firmId: FirmId) => number;
 }
 
 interface Cell {
@@ -36,9 +56,10 @@ interface Cell {
   attraction: SegmentResult["attraction"];
 }
 
-export function resolveDemand(world: WorldState, decisions: Map<FirmId, FirmDecision>, c: Config, mod: DemandModifiers): DemandResult {
-  const activeFirms = world.firms.filter((f) => f.status === "active");
-  const activeSegments = world.segments.filter((s) => s.active);
+/** Solve one market. Pure given its inputs; the single-market wrapper below and the
+ *  geography loop both call this so there is exactly one logit implementation. */
+export function resolveArena(activeFirms: FirmState[], decisions: Map<FirmId, FirmDecision>, c: Config, arena: Arena, mod: DemandModifiers): DemandResult {
+  const activeSegments = arena.segments.filter((s) => s.active);
   const segConfig = new Map(c.segments.map((s) => [s.id, s]));
 
   // Precompute capacity-allocation fractions per firm (normalized presence).
@@ -63,6 +84,11 @@ export function resolveDemand(world: WorldState, decisions: Map<FirmId, FirmDeci
   for (const seg of activeSegments) {
     const sc = segConfig.get(seg.id)!;
     const alpha = sc.alpha + mod.segmentAlphaDelta(seg.id);
+    // Market coefficient multipliers + drift/quality deltas.
+    const bd = mod.segmentBetaDelta(seg.id);
+    const betaP = Math.max(0, sc.beta_p * arena.betaMult.p + bd.p);
+    const betaQ = Math.max(0, sc.beta_q * arena.betaMult.q + bd.q);
+    const betaB = Math.max(0, sc.beta_b * arena.betaMult.b + bd.b);
     const list: Cell[] = [];
     let best = -Infinity;
     for (const f of activeFirms) {
@@ -70,10 +96,10 @@ export function resolveDemand(world: WorldState, decisions: Map<FirmId, FirmDeci
       if (frac <= 0) continue;
       const d = decisions.get(f.id)!;
       const price = Math.max(0, d.price?.[seg.id] ?? 0);
-      const extraBrand = mod.extraBrand(f.id, seg.id);
-      const tPrice = -sc.beta_p * price;
-      const tQual = sc.beta_q * f.Q;
-      const tBrand = sc.beta_b * (f.B + extraBrand);
+      const brand = arena.brandMult * (f.B + mod.extraBrand(f.id, seg.id));
+      const tPrice = -betaP * price;
+      const tQual = betaQ * f.Q;
+      const tBrand = betaB * brand;
       const tFit = sc.beta_fit * frac;
       const u = alpha + tPrice + tQual + tBrand + tFit;
       best = Math.max(best, u);
@@ -83,8 +109,8 @@ export function resolveDemand(world: WorldState, decisions: Map<FirmId, FirmDeci
         expU: Math.exp(u),
         allocFrac: frac,
         price,
-        capAlloc: mod.effectiveCap(f.id) * frac,
-        attraction: { alpha, price: tPrice, quality: tQual, brand: sc.beta_b * f.B, fit: tFit, agreement: sc.beta_b * extraBrand },
+        capAlloc: arena.supplyOf(f.id) * frac,
+        attraction: { alpha, price: tPrice, quality: tQual, brand: betaB * arena.brandMult * f.B, fit: tFit, agreement: tBrand - betaB * arena.brandMult * f.B },
       });
     }
     cells.set(seg.id, list);
@@ -114,7 +140,7 @@ export function resolveDemand(world: WorldState, decisions: Map<FirmId, FirmDeci
     const constrained: { cell: Cell; sold: number }[] = [];
     const unconstrained: { cell: Cell; sold: number; residual: number; share: number }[] = [];
     let totalUnmet = 0;
-    let unconstrainedShareSum = 0;
+    let unconstrainedExpUSum = 0;
     for (const x of list) {
       const share = x.expU / denom;
       const qStar = Deff * share;
@@ -123,15 +149,22 @@ export function resolveDemand(world: WorldState, decisions: Map<FirmId, FirmDeci
         totalUnmet += qStar - x.capAlloc;
       } else {
         unconstrained.push({ cell: x, sold: qStar, residual: x.capAlloc - qStar, share });
-        unconstrainedShareSum += share;
+        unconstrainedExpUSum += x.expU;
       }
     }
 
-    // Single-pass redistribution of the non-lost remainder to unconstrained firms.
+    // Single-pass redistribution of the non-lost remainder to firms that still
+    // have stock. Shoppers turned away from a sold-out firm re-choose by logit
+    // attractiveness, with the OUTSIDE OPTION kept in the denominator — so an
+    // unappealing lone survivor (e.g. priced absurdly high) attracts almost none
+    // of the overflow; it goes to the outside option (lost) instead. (Weighting
+    // by expU only among unconstrained firms would hand 100% to a single
+    // surviving firm no matter how unattractive — the redistribution bug.)
     const redistributable = (1 - c.demand.unmet_demand_lost_fraction) * totalUnmet;
-    if (redistributable > 0 && unconstrainedShareSum > 0) {
+    const redistribDenom = unconstrainedExpUSum + Math.exp(u0eff);
+    if (redistributable > 0 && redistribDenom > 0) {
       for (const u of unconstrained) {
-        const extra = redistributable * (u.share / unconstrainedShareSum);
+        const extra = redistributable * (u.cell.expU / redistribDenom);
         u.sold += Math.min(extra, u.residual); // overflow beyond residual capacity is lost
       }
     }
@@ -157,4 +190,17 @@ export function resolveDemand(world: WorldState, decisions: Map<FirmId, FirmDeci
   }
 
   return { perFirm, segmentTotals };
+}
+
+/** Single-market (home) demand — the v1 path. Builds one neutral arena over the
+ *  world's active segments and solves it. Output is identical to the pre-arena engine. */
+export function resolveDemand(world: WorldState, decisions: Map<FirmId, FirmDecision>, c: Config, mod: DemandModifiers): DemandResult {
+  const activeFirms = world.firms.filter((f) => f.status === "active");
+  const arena: Arena = {
+    segments: world.segments.map((s) => ({ id: s.id, D: s.D, active: s.active })),
+    betaMult: { p: 1, q: 1, b: 1 },
+    brandMult: 1,
+    supplyOf: (id) => mod.sellableSupply(id),
+  };
+  return resolveArena(activeFirms, decisions, c, arena, mod);
 }

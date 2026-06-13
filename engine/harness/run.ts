@@ -4,9 +4,10 @@
  * (concentration, segment monopoly, comebacks, cartel persistence, invariants),
  * and provides the baseline and coopetition scenario decision providers.
  */
-import type { Config, FirmDecision, RoundResult, SegmentId, WorldState } from "../src/types.js";
+import type { Config, FirmDecision, ModuleId, RoundResult, SegmentId, WorldState } from "../src/types.js";
 import { initGame, resolveRound, InvariantError } from "../src/index.js";
 import { loadConfig } from "../src/config/load.js";
+import { MODULE_REGISTRY } from "../src/config/modules.js";
 import { type ArchetypeId, BASELINE_ASSIGNMENT, makeProvider } from "./archetypes.js";
 import { ADAPTIVE_LEANS, decideAdaptive } from "./adaptive.js";
 
@@ -42,7 +43,16 @@ export interface RunMetrics {
 
 export function configWithSeed(seed: number, override: Parameters<typeof loadConfig>[0] = {}): Config {
   const base = typeof override === "object" ? override : {};
-  return loadConfig({ ...(base as object), game: { ...((base as { game?: object }).game ?? {}), seed } } as never);
+  // DW_MODULES=all (every implemented module) or a comma list of module ids —
+  // lets the whole harness sweep an expansion configuration without code changes.
+  let modules: Record<string, { enabled: boolean }> | undefined;
+  const env = process.env.DW_MODULES;
+  if (env) {
+    const ids = env === "all" ? MODULE_REGISTRY.filter((m) => m.implemented).map((m) => m.id) : (env.split(",") as ModuleId[]);
+    modules = {};
+    for (const id of ids) modules[id] = { enabled: true };
+  }
+  return loadConfig({ ...(base as object), ...(modules ? { modules } : {}), game: { ...((base as { game?: object }).game ?? {}), seed } } as never);
 }
 
 export function runOne(config: Config, labels: string[], provider: Provider): RunMetrics {

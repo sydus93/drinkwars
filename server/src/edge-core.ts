@@ -11,4 +11,5 @@
 export { GameOrchestrator } from "./lifecycle.js";
 export { SupabaseAdapter } from "./adapters/supabase.js";
 export { buildInstructorDashboard, dashboardToCsv } from "./dashboard.js";
-export { resolveConfig } from "drinkwars-engine";
+export { randomBreweryNames, renameFirms } from "./names.js";
+export { resolveConfig, roleBriefings } from "drinkwars-engine";

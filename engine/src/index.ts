@@ -7,11 +7,20 @@
 export * from "./types.js";
 export { defaultConfig } from "./config/defaults.js";
 export { resolveConfig, deepMerge } from "./config/resolve.js";
+// Expansion-module registry, presets, and accessors (04_expansion_module_spec).
+export {
+  defaultModules, MODULE_REGISTRY, MODULE_CATEGORIES, moduleMeta, PRESETS, presetById,
+  moduleEnabled, inventoryEnabled, modulesOverride,
+} from "./config/modules.js";
+export type { ModuleMeta, ModuleCategory, Preset } from "./config/modules.js";
 export { validateConfig, ConfigError } from "./config/schema.js";
 export { initGame, initFirm } from "./engine/init.js";
 export { resolveRound } from "./engine/resolve.js";
 export { firmValuation, InvariantError } from "./engine/finance.js";
 export { resilienceMitigation, rollTimeline } from "./engine/shocks.js";
+export { activeMarkets } from "./engine/geography.js";
+export { roleBriefings } from "./engine/briefings.js";
+export type { RoleBriefing } from "./engine/briefings.js";
 export { RNG, deriveSeed } from "./rng.js";
 // Adaptive best-response bot (single-player NPCs, harness, student onboarding).
 export { decideAdaptive, ADAPTIVE_LEANS } from "./bots/adaptive.js";

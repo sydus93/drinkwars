@@ -7,4 +7,5 @@ export * from "./types.js";
 export * from "./dashboard.js";
 export { GameOrchestrator, LifecycleError, type CreateGameInput } from "./lifecycle.js";
 export { InMemoryAdapter } from "./adapters/memory.js";
+export { randomBreweryNames, renameFirms } from "./names.js";
 export { SupabaseAdapter, createSupabaseAdapter } from "./adapters/supabase.js";

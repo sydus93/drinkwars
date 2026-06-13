@@ -12,7 +12,9 @@
  * exploit or just an artifact of bots that can't reposition — when everyone can
  * pile into a lucrative segment, crowding should erode its rents.
  */
-import type { Config, FirmDecision, FirmState, SegmentId, WorldState } from "../types.js";
+import type { Config, FirmDecision, FirmState, PrPlayType, SegmentId, WorldState } from "../types.js";
+import { invCfg } from "../engine/inventory.js";
+import { firmValuation } from "../engine/finance.js";
 
 export interface Lean {
   id: string;
@@ -93,6 +95,15 @@ export function decideAdaptive(lean: Lean, f: FirmState, world: WorldState, c: C
     }
   }
 
+  // Run-rate (inventory mode): brew to match forecast demand, lightly shaded down
+  // since the per-segment shares above assume full devotion (real fit is split). A
+  // best-responder doesn't want to overbrew into spoilage. Ignored when disabled.
+  const expectedSold = chosen.reduce((a, p) => {
+    const sw = activeSegs.find((s) => s.id === p.seg);
+    return a + (sw ? sw.D * p.share : 0);
+  }, 0);
+  const runRate = chosen.length ? Math.max(0.3, Math.min(1, (0.85 * expectedSold) / Math.max(1, f.cap))) : 0.3;
+
   // How quality- vs cost-oriented is my chosen allocation?
   const totalPresence = Object.values(presence).reduce((a, b) => a + b, 0) || 1;
   const qualityWeight = chosen.filter((p) => QUALITY_SEGS.has(p.seg)).reduce((a, p) => a + presence[p.seg], 0) / totalPresence;
@@ -101,6 +112,114 @@ export function decideAdaptive(lean: Lean, f: FirmState, world: WorldState, c: C
   // Resilience funding scaled by readable upcoming shocks (the §9.4 signal lesson).
   const shockSignal = upcomingSignaledShocks(world);
   const resilienceBoost = shockSignal > 0 ? 40 + 20 * shockSignal : 10;
+
+  // ---- Expansion-module levers (each gated on its module; lean-differentiated so
+  // the field stays heterogeneous: brand bots play PR, cost bots integrate upstream,
+  // stakeholder bots fund the guild, aggressive bots expand and hunt M&A). ----
+  const mods = c.modules;
+  let moduleCash = 0; // up-front cash these plays commit (reserved from the budget)
+  // Shared per-round module budget (~40% of cash) so plays stagger over rounds
+  // rather than stacking into one round and starving core investment.
+  let moduleBudget = 0.4 * Math.max(0, f.cash);
+  const commit = (cost: number): boolean => {
+    if (cost > moduleBudget) return false;
+    moduleBudget -= cost;
+    moduleCash += cost;
+    return true;
+  };
+
+  // PR plays — brand-leaning bots, off cooldown, when cash comfortably covers it.
+  let prAction: PrPlayType | null = null;
+  if (mods?.prEvents?.enabled && lean.bias.B >= 1.2) {
+    const offCooldown = f.pr_cooldown_until == null || world.round >= f.pr_cooldown_until;
+    if (offCooldown && f.cash > mods.prEvents.cost * 3 && commit(mods.prEvents.cost)) {
+      prAction = lean.bias.B >= 2 ? "viral" : "collab";
+    }
+  }
+
+  // Water efficiency — ops/stakeholder bots arm against the signaled drought.
+  let waterInvest = 0;
+  if (mods?.sustainability?.enabled && shockSignal > 0 && (lean.bias.process >= 1.2 || lean.bias.T_emp >= 1.4) && commit(50)) {
+    waterInvest = 50;
+  }
+
+  // Public goods — civic leans contribute; aggressive leans free-ride (the lesson).
+  const contributions: Record<string, number> = {};
+  if (mods?.publicGoods?.enabled && lean.bias.T_gov >= 0.8 && lean.cashGuard <= 0.45 && f.cash > 400) {
+    const want = 15 + (shockSignal > 0 ? 20 : 0);
+    if (commit(want)) {
+      contributions.regional_marketing = 15;
+      if (shockSignal > 0) contributions.water_commons = 20;
+    }
+  }
+
+  // R&D race — quality leans chase the new category while it's still closed.
+  let rndInvest = 0;
+  if (mods?.rndRace?.enabled && lean.bias.Q >= 1.2 && world.segments.some((s) => !s.active) && commit(50)) {
+    rndInvest = 50;
+  }
+
+  // Geography — expand into the region that suits the lean once cash allows.
+  let marketPresence: Record<string, number> | undefined;
+  if (mods?.geography?.enabled && world.round >= 2) {
+    const markets = mods.geography.markets.filter((m) => m.kind !== "export" || mods.international?.enabled);
+    const wantsCheap = lean.bias.process >= 1.8 || lean.bias.cap >= 1.8;
+    const target = markets.find((m) => m.kind === "domestic" && (wantsCheap ? m.beta_p_mult > 1 : m.beta_q_mult > 1));
+    if (target && f.cash > target.entry_cost + 500) {
+      const entered = (f.markets_entered ?? ["home"]).includes(target.id);
+      if (entered || commit(target.entry_cost)) {
+        marketPresence = { home: 0.7, [target.id]: 0.3 };
+        // Aggressive, brand-rich bots also probe an export lane when international is on.
+        const exp = markets.find((m) => m.kind === "export");
+        if (exp && lean.debtDraw >= 160 && f.B > 25 && f.cash > target.entry_cost + exp.entry_cost + 700) {
+          const expEntered = (f.markets_entered ?? []).includes(exp.id);
+          if (expEntered || commit(exp.entry_cost)) marketPresence = { home: 0.6, [target.id]: 0.25, [exp.id]: 0.15 };
+        }
+      }
+    }
+  }
+
+  // Vertical assets — cost bots buy the supplier; regulator-minded bots buy distribution.
+  const buyVertical: string[] = [];
+  if (mods?.verticalIntegration?.enabled && (f.vertical_assets ?? []).length < mods.verticalIntegration.max_assets) {
+    const ownedIds = new Set((f.vertical_assets ?? []).map((a) => a.id));
+    const up = mods.verticalIntegration.assets.find((a) => a.type === "upstream" && !ownedIds.has(a.id));
+    const down = mods.verticalIntegration.assets.find((a) => a.type === "downstream" && !ownedIds.has(a.id));
+    if (up && (lean.bias.process >= 1.8 || lean.bias.cap >= 1.8) && f.cash > up.cost + 400 && commit(up.cost)) {
+      buyVertical.push(up.id);
+    } else if (down && lean.bias.T_gov >= 1.4 && f.cash > down.cost + 500 && commit(down.cost)) {
+      buyVertical.push(down.id);
+    }
+  }
+
+  // Key hires — hire the specialist matching the lean's strongest capability bias.
+  const hireRoles: string[] = [];
+  if (mods?.laborMarket?.enabled && f.cash > 500) {
+    const staffed = new Set((f.key_hires ?? []).map((h) => h.role));
+    const pref =
+      lean.bias.Q >= Math.max(lean.bias.B, lean.bias.process) ? "head_brewer" :
+      lean.bias.B >= lean.bias.process ? "sales_director" : "ops_manager";
+    const role = mods.laborMarket.roles.find((r) => r.id === pref);
+    if (role && !staffed.has(role.id) && commit(role.signing_bonus + role.salary)) {
+      hireRoles.push(role.id);
+    }
+  }
+
+  // Revenue financing — a cash-poor but levered-tolerant bot grabs a lifeline.
+  let drawRbf = 0;
+  if (mods?.financialInstruments?.enabled && f.cash < 150 && (f.rbf_outstanding ?? 0) <= 0 && lean.cashGuard >= 0.4) {
+    drawRbf = 200;
+  }
+
+  // M&A — the aggressive lean bids on a distressed rival at a fair-value price.
+  let acquisitionBid: { target: string; price: number } | null = null;
+  if (mods?.ma?.enabled && lean.debtDraw >= 160 && (f.acquisitions_made ?? 0) < mods.ma.max_acquisitions) {
+    const prey = rivals.filter((r) => r.rounds_below_health >= mods.ma!.min_distress_rounds).sort((a, b) => a.cash - b.cash)[0];
+    if (prey) {
+      const price = Math.max(50, (mods.ma.min_price_fraction + 0.1) * Math.max(0, firmValuation(prey, c)));
+      if (f.cash > price + 300) acquisitionBid = { target: prey.id, price };
+    }
+  }
 
   const base = 65;
   let spend = {
@@ -113,12 +232,15 @@ export function decideAdaptive(lean: Lean, f: FirmState, world: WorldState, c: C
     T_gov: base * lean.bias.T_gov * 0.4,
   };
 
-  // Solvency guard.
+  // Solvency guard. With inventory enabled, brewing is paid in cash up front
+  // (recovered as COGS only when sold), so reserve that production bill before
+  // committing the rest of the cash to discretionary investment.
   const total = Object.values(spend).reduce((a, b) => a + b, 0);
   const equity = f.paid_in_capital + f.retained_earnings;
   const drawRoom = f.debt / Math.max(equity, 1e-6) < c.finance.max_leverage * 0.7;
   const draw = drawRoom ? lean.debtDraw : 0;
-  const budget = Math.max(0, f.cash) * lean.cashGuard + draw;
+  const prodReserve = (invCfg(c).enabled ? runRate * Math.max(0, f.cap) * unit : 0);
+  const budget = Math.max(0, Math.max(0, f.cash) * lean.cashGuard - prodReserve - moduleCash) + draw + drawRbf;
   if (total > budget && total > 0) {
     const scale = budget / total;
     spend = Object.fromEntries(Object.entries(spend).map(([k, v]) => [k, v * scale])) as typeof spend;
@@ -128,6 +250,7 @@ export function decideAdaptive(lean: Lean, f: FirmState, world: WorldState, c: C
     firm_id: f.id,
     price,
     presence,
+    run_rate: runRate,
     invest_cap: spend.cap,
     invest_process: spend.process,
     invest_Q: spend.Q,
@@ -142,6 +265,16 @@ export function decideAdaptive(lean: Lean, f: FirmState, world: WorldState, c: C
     buy_info: shockSignal > 0,
     agreement_actions: [],
     exit_action: null,
+    // Expansion-module levers (undefined/empty when the module is off).
+    pr_action: prAction,
+    invest_water_efficiency: waterInvest,
+    public_good_contributions: contributions,
+    invest_rnd: rndInvest,
+    market_presence: marketPresence,
+    buy_vertical: buyVertical,
+    hire_roles: hireRoles,
+    draw_rbf: drawRbf,
+    acquisition_bid: acquisitionBid,
   };
 }
 

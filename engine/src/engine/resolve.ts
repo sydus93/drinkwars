@@ -11,7 +11,17 @@ import type {
 import { advancePipeline, updateStock } from "./stocks.js";
 import { computeUnitCost } from "./cost.js";
 import { resolveDemand, type DemandModifiers } from "./demand.js";
+import { computeBetaDeltas, zeroBetaDelta } from "./drift.js";
+import { resolvePrEvents } from "./pr.js";
+import { resolveSustainability } from "./sustainability.js";
+import { resolvePublicGoods } from "./publicgoods.js";
+import { resolveGeography, updateFxRates } from "./geography.js";
+import { updateReputation, reputationSpread } from "./reputation.js";
+import { resolveRnd, rndFirstMoverBonus } from "./rndrace.js";
+import { resolveAssets, verticalCostReduction, verticalRegRelief } from "./assets.js";
+import { resolveMa } from "./ma.js";
 import { buildStatements, firmValuation } from "./finance.js";
+import { invCfg, computeInventory, type InventoryFlow } from "./inventory.js";
 import { resolveAgreementActions, computeAgreementEffects } from "./coopetition.js";
 import { computeShockEffects } from "./shocks.js";
 import { scoreRound, type ScoreSnapshot } from "./scoring.js";
@@ -75,6 +85,9 @@ export function resolveRound(prevWorld: WorldState, decisionList: FirmDecision[]
   // Step 3: resolve agreement actions (form/defect), trust effects & costs.
   const agRes = resolveAgreementActions(w, decisions, c, round);
   events.push(...agRes.events);
+  // Step 3.5: reputation (MOD-B10) — advance the credibility stock from this round's
+  // agreement behavior (honor vs defect) before the cost of capital is priced.
+  updateReputation(w, decisions, c);
 
   // Step 4: advance lagged stocks to current.
   for (const f of w.firms) {
@@ -105,6 +118,26 @@ export function resolveRound(prevWorld: WorldState, decisionList: FirmDecision[]
     }
   }
 
+  // Step 4.4: vertical assets + key hires (MOD-B06/B03) — purchases, hires, salaries,
+  // departures. Runs after stocks advance so hire bonuses land on current stocks and
+  // before unit cost / shocks so integrated assets bite this round.
+  const assetsRes = resolveAssets(w, decisions, c, round);
+  events.push(...assetsRes.events);
+
+  // Step 4.5: sustainability (MOD-A03) — advance water-efficiency + T_gov goodwill
+  // BEFORE shocks, so the water-shock resilience term sees this round's stock.
+  const sustRes = resolveSustainability(w, decisions, c);
+
+  // Step 4.6: public goods (MOD-A02) — aggregate contributions into the shared
+  // pools BEFORE shocks/demand so the water-commons, demand, and quality benefits
+  // are live this round.
+  const pgRes = resolvePublicGoods(w, decisions, c);
+  events.push(...pgRes.events);
+
+  // Step 4.7: R&D race (MOD-B04) — accumulate progress toward the frontier category
+  // BEFORE emergence is evaluated below.
+  const rndRes = resolveRnd(w, decisions, c);
+
   // Step 5: events — segment emergence, agreement effects, shocks, distress mods.
   const totalQ = w.firms.filter((f) => f.status === "active").reduce((acc, f) => acc + f.Q, 0);
   for (const sw of w.segments) {
@@ -112,14 +145,23 @@ export function resolveRound(prevWorld: WorldState, decisionList: FirmDecision[]
     const sc = c.segments.find((s) => s.id === sw.id)!;
     const byRound = sc.emerge_round !== null && round >= sc.emerge_round;
     const byCap = sc.emerge_capability_threshold !== null && totalQ >= sc.emerge_capability_threshold;
-    if (byRound || byCap) {
+    // MOD-B04: the R&D leader crossing the threshold pulls emergence forward.
+    const rndCfg = c.modules?.rndRace;
+    const byRnd = !!rndCfg?.enabled && rndRes.leader !== null && rndRes.maxProgress >= rndCfg.threshold;
+    if (byRound || byCap || byRnd) {
       sw.active = true;
       sw.D = sc.D0;
-      events.push(`NEW CATEGORY: segment "${sw.id}" emerges (D=${sc.D0}${byCap && !byRound ? ", capability-triggered" : ""})`);
+      const earlyRnd = byRnd && !byRound && !byCap;
+      if (earlyRnd && rndRes.leader) {
+        w.frontier_first_mover = { firm_id: rndRes.leader, segment: sw.id, until_round: round + (rndCfg!.first_mover_duration) };
+        events.push(`NEW CATEGORY: ${rndRes.leader} opens "${sw.id}" early through R&D — a first-mover head start`);
+      } else {
+        events.push(`NEW CATEGORY: segment "${sw.id}" emerges (D=${sc.D0}${byCap && !byRound ? ", capability-triggered" : ""})`);
+      }
     }
   }
   const agEff = computeAgreementEffects(w, c, round);
-  const shock = computeShockEffects(w, c, agEff.coordinationUnits);
+  const shock = computeShockEffects(w, c, agEff.coordinationUnits + assetsRes.antitrustUnits, pgRes.waterMitigation);
   events.push(...shock.events);
 
   const alphaDelta = new Map<SegmentId, number>();
@@ -130,48 +172,152 @@ export function resolveRound(prevWorld: WorldState, decisionList: FirmDecision[]
   // Step 6: unit cost per firm (supply-share + shock multipliers).
   for (const f of w.firms) {
     if (f.status !== "active") continue;
-    const { unitCost } = computeUnitCost(f, c, agEff.unitCostReduction.get(f.id) ?? 0, shock.perFirm.get(f.id)?.cost_multiplier ?? 1);
+    // Supply-share agreements + integrated upstream assets both cut the input bill.
+    const costReduction = Math.min(0.5, (agEff.unitCostReduction.get(f.id) ?? 0) + verticalCostReduction(f, c, round));
+    const { unitCost } = computeUnitCost(f, c, costReduction, shock.perFirm.get(f.id)?.cost_multiplier ?? 1);
     f.unit_cost = unitCost;
   }
 
-  // Step 7: demand, shares, quantities.
+  // Step 6.5: production. Effective capacity (after shocks + coordination restraint)
+  // caps how much each firm can brew this round; the run-rate lever chooses how hard
+  // to run. Carried inventory + production = the sellable supply fed to the demand
+  // step. In legacy mode (inventory disabled) production = full effective capacity and
+  // nothing carries, so sellable supply == effective capacity — identical to before.
   const firmsById = new Map(w.firms.map((f) => [f.id, f]));
-  const mods: DemandModifiers = {
-    extraBrand: (id, seg) => agEff.extraBrand.get(id)?.get(seg) ?? 0,
-    segmentAlphaDelta: (seg) => alphaDelta.get(seg) ?? 0,
-    segmentDemandMultiplier: (seg) => shock.segmentDemandMultiplier.get(seg) ?? 1,
-    effectiveCap: (id) => {
-      const f = firmsById.get(id)!;
-      const restraint = agEff.capacityRestraint.get(id) ?? 0;
-      const capMult = shock.perFirm.get(id)?.capacity_multiplier ?? 1;
-      return Math.max(0, f.cap * (1 - restraint) * capMult);
-    },
+  const inv = invCfg(c);
+  const effectiveCap = (id: FirmId): number => {
+    const f = firmsById.get(id)!;
+    const restraint = agEff.capacityRestraint.get(id) ?? 0;
+    const capMult = shock.perFirm.get(id)?.capacity_multiplier ?? 1;
+    return Math.max(0, f.cap * (1 - restraint) * capMult);
   };
-  const demand = resolveDemand(w, decisions, c, mods);
+  const prodByFirm = new Map<FirmId, number>();
+  const sellableByFirm = new Map<FirmId, number>();
   for (const f of w.firms) {
     if (f.status !== "active") continue;
-    const segs = demand.perFirm.get(f.id) ?? {};
-    f.cum_output += Object.values(segs).reduce((acc, r) => acc + r.q_sold, 0);
+    const effCap = effectiveCap(f.id);
+    const invBeginUnits = inv.enabled ? f.inventory_units ?? 0 : 0;
+    let qProd: number;
+    if (inv.enabled) {
+      const rr = decisions.get(f.id)?.run_rate;
+      // Missing ⇒ default to full capacity; provided ⇒ clamp into [0, max_run_rate].
+      const runRate = rr == null || !Number.isFinite(rr) ? 1 : Math.max(0, Math.min(rr, inv.max_run_rate));
+      qProd = runRate * effCap;
+    } else {
+      qProd = effCap; // legacy: produce to capacity, nothing carried
+    }
+    prodByFirm.set(f.id, qProd);
+    sellableByFirm.set(f.id, invBeginUnits + qProd);
+  }
+
+  // Step 6.6: PR events (MOD-A04). Proactive plays add a fast-decaying brand spike;
+  // negative PR can fire (blunted by T_emp). The spike feeds the brand utility term.
+  const prRes = resolvePrEvents(w, decisions, c, round);
+  events.push(...prRes.events);
+
+  // Step 7: demand, shares, quantities. Consumer drift (MOD-A08) evolves the
+  // segment taste coefficients deterministically with the round index.
+  const betaDeltas = computeBetaDeltas(c, round);
+  if (c.modules?.consumerDrift?.enabled && round === 1) {
+    events.push("MARKET SHIFT: consumer tastes are evolving — quality is gaining ground in the mainstream");
+  }
+  const mods: DemandModifiers = {
+    extraBrand: (id, seg) => (agEff.extraBrand.get(id)?.get(seg) ?? 0) + (prRes.spikeByFirm.get(id) ?? 0) + rndFirstMoverBonus(w, c, id, seg, round),
+    segmentAlphaDelta: (seg) => alphaDelta.get(seg) ?? 0,
+    // Shock demand multiplier × the public-good regional-marketing bonus.
+    segmentDemandMultiplier: (seg) => (shock.segmentDemandMultiplier.get(seg) ?? 1) * (1 + (pgRes.demandBonus.get(seg) ?? 0)),
+    sellableSupply: (id) => sellableByFirm.get(id) ?? 0,
+    // Consumer drift + the public-good quality-certification βq lift.
+    segmentBetaDelta: (seg) => {
+      const d = betaDeltas.get(seg) ?? zeroBetaDelta();
+      const qBonus = pgRes.betaQBonus.get(seg) ?? 0;
+      return qBonus ? { q: d.q + qBonus, p: d.p, b: d.b } : d;
+    },
+  };
+  // Geography (MOD-B01/B02): with markets on, resolve demand per market and
+  // aggregate; otherwise the single home-market path (identical to v1). FX is
+  // advanced first (no-op unless international is on). `perFirmSegs` is the
+  // aggregated per-firm per-segment view; revenue/qSold/dist+entry costs are
+  // unified so the finance + scoring steps below are market-agnostic.
+  updateFxRates(w, c);
+  const geoOn = !!c.modules?.geography?.enabled;
+  const revenueByFirm = new Map<FirmId, number>();
+  const qSoldByFirm = new Map<FirmId, number>();
+  const geoOpexByFirm = new Map<FirmId, number>(); // distribution + tariff + entry (→ opex)
+  let perFirmSegs: Map<FirmId, Record<SegmentId, SegmentResult>>;
+  let segTotals: Map<SegmentId, number>;
+  let marketBreakdown: Map<FirmId, Record<string, { revenue: number; q_sold: number; entered: boolean }>> | null = null;
+  if (geoOn) {
+    const geo = resolveGeography(w, decisions, c, sellableByFirm, mods);
+    events.push(...geo.events);
+    perFirmSegs = geo.perFirm;
+    segTotals = geo.segmentTotals;
+    marketBreakdown = geo.marketBreakdown;
+    for (const f of w.firms) {
+      if (f.status !== "active") continue;
+      revenueByFirm.set(f.id, geo.revenueByFirm.get(f.id) ?? 0);
+      qSoldByFirm.set(f.id, geo.qSoldByFirm.get(f.id) ?? 0);
+      geoOpexByFirm.set(f.id, (geo.distCostByFirm.get(f.id) ?? 0) + (geo.entryCostByFirm.get(f.id) ?? 0));
+    }
+  } else {
+    const demand = resolveDemand(w, decisions, c, mods);
+    perFirmSegs = demand.perFirm;
+    segTotals = demand.segmentTotals;
+    for (const f of w.firms) {
+      if (f.status !== "active") continue;
+      const segs = demand.perFirm.get(f.id) ?? {};
+      let rev = 0, q = 0;
+      for (const r of Object.values(segs)) { rev += r.revenue; q += r.q_sold; }
+      revenueByFirm.set(f.id, rev);
+      qSoldByFirm.set(f.id, q);
+    }
+  }
+  for (const f of w.firms) {
+    if (f.status !== "active") continue;
+    // Learning accrues to output produced (you learn by brewing), or sold in legacy.
+    f.cum_output += inv.enabled ? (prodByFirm.get(f.id) ?? 0) : (qSoldByFirm.get(f.id) ?? 0);
   }
 
   // Step 8 (+9): statements, cash, balance sheet; cash-hit damage flows through here.
+  // Inventory accounting (weighted-average cost) sits here: produced output is
+  // capitalized into stock, COGS expenses what sold, spoilage writes off the rest.
   const finByFirm = new Map<FirmId, ReturnType<typeof buildStatements>>();
+  const invByFirm = new Map<FirmId, InventoryFlow | null>();
   for (const f of w.firms) {
     if (f.status !== "active") continue;
     const d = decisions.get(f.id)!;
-    const segs = demand.perFirm.get(f.id) ?? {};
-    let revenue = 0;
-    let cogs = 0;
-    for (const r of Object.values(segs)) {
-      revenue += r.revenue;
-      cogs += f.unit_cost * r.q_sold;
+    const revenue = revenueByFirm.get(f.id) ?? 0;
+    const qSold = qSoldByFirm.get(f.id) ?? 0;
+
+    let cogs: number;
+    let spoilage = 0;
+    let invValueBegin = 0;
+    let invValueEnd = 0;
+    let holdingCost = 0;
+    let flow: InventoryFlow | null = null;
+    if (inv.enabled) {
+      flow = computeInventory(f.inventory_units ?? 0, f.inventory_value ?? 0, prodByFirm.get(f.id) ?? 0, f.unit_cost, qSold, inv.spoilage_rate);
+      cogs = flow.cogs;
+      spoilage = flow.spoilage_cost;
+      invValueBegin = flow.value_begin;
+      invValueEnd = flow.value_end;
+      holdingCost = inv.holding_cost_per_unit * (f.inventory_units ?? 0);
+    } else {
+      cogs = f.unit_cost * qSold; // legacy: cost of what sold, nothing carried
     }
+
     const fin = buildStatements({
-      firm: f, revenue, cogs,
-      invest: { Q: d.invest_Q, B: d.invest_B, T_emp: d.invest_T_emp, T_inv: d.invest_T_inv, T_gov: d.invest_T_gov, process: d.invest_process, cap: d.invest_cap },
+      firm: f, revenue, cogs, spoilage, inventoryValueBegin: invValueBegin, inventoryValueEnd: invValueEnd,
+      // Vertical purchases (MOD-B06) are capitalized through the capex channel:
+      // cash swaps into PP&E without adding brewing capacity.
+      invest: { Q: d.invest_Q, B: d.invest_B, T_emp: d.invest_T_emp, T_inv: d.invest_T_inv, T_gov: d.invest_T_gov, process: d.invest_process, cap: d.invest_cap + (assetsRes.capexByFirm.get(f.id) ?? 0) },
       financing: { debt_draw: d.debt_draw, debt_repay: d.debt_repay, equity_raise: d.equity_raise, dividend: d.dividend },
-      extraOpex: (agRes.extraOpex.get(f.id) ?? 0) + (d.buy_info ? c.information.cost : 0),
+      extraOpex: (agRes.extraOpex.get(f.id) ?? 0) + (d.buy_info ? c.information.cost : 0) + holdingCost + (prRes.costByFirm.get(f.id) ?? 0) + (sustRes.costByFirm.get(f.id) ?? 0) + (pgRes.costByFirm.get(f.id) ?? 0) + (geoOpexByFirm.get(f.id) ?? 0) + (rndRes.costByFirm.get(f.id) ?? 0) + (assetsRes.opexByFirm.get(f.id) ?? 0),
       cashHit: shock.perFirm.get(f.id)?.cash_hit ?? 0,
+      spreadReduction: reputationSpread(f, c),
+      regBurdenReduction: verticalRegRelief(f, c, round),
+      round,
+      instruments: { draw_convertible: nn(d.draw_convertible ?? 0), draw_rbf: nn(d.draw_rbf ?? 0) },
       config: c,
     });
     f.cash = fin.next.cash;
@@ -179,13 +325,24 @@ export function resolveRound(prevWorld: WorldState, decisionList: FirmDecision[]
     f.paid_in_capital = fin.next.paid_in_capital;
     f.retained_earnings = fin.next.retained_earnings;
     f.ppe_book = fin.next.ppe_book;
+    f.convertible_note = fin.next.convertible_note;
+    f.rbf_outstanding = fin.next.rbf_outstanding;
+    f.rbf_principal = fin.next.rbf_principal;
+    events.push(...fin.events);
+    f.inventory_units = flow ? flow.end : 0;
+    f.inventory_value = flow ? flow.value_end : 0;
     f.ni_history.push(fin.pnl.net_income);
     finByFirm.set(f.id, fin);
+    invByFirm.set(f.id, flow);
     // Banked-path firms accrue risk-free interest on parked capital (§8.4).
   }
   for (const f of w.firms) {
     if (f.status === "exited_banked" && f.banked_cash > 0) f.banked_cash *= 1 + c.finance.r_f;
   }
+
+  // Step 9.5: M&A (MOD-B07) — bids on distressed rivals settle after the books are
+  // closed; an acquired firm is out before exits are processed.
+  events.push(...resolveMa(w, decisions, c));
 
   // Step 10: solvency / exit / investor elections.
   const coverageByFirm = new Map<FirmId, number>();
@@ -196,7 +353,7 @@ export function resolveRound(prevWorld: WorldState, decisionList: FirmDecision[]
     coverageByFirm.set(id, finByFirm.get(id)?.cost_of_capital.coverage ?? 999);
     valuationByFirm.set(id, firmValuation(f, c));
     const m = new Map<SegmentId, number>();
-    const segs = demand.perFirm.get(id) ?? {};
+    const segs = perFirmSegs.get(id) ?? {};
     for (const [seg, r] of Object.entries(segs)) m.set(seg, r.share);
     sharesByFirm.set(id, m);
   }
@@ -225,7 +382,7 @@ export function resolveRound(prevWorld: WorldState, decisionList: FirmDecision[]
     const f = firmsById.get(id)!;
     const fin = finByFirm.get(id)!;
     const d = decisions.get(id)!;
-    const segMap = demand.perFirm.get(id) ?? {};
+    const segMap = perFirmSegs.get(id) ?? {};
     const segments: Record<SegmentId, SegmentResult> = {};
     for (const segId of activeSegmentIds) {
       segments[segId] = segMap[segId] ?? {
@@ -240,16 +397,21 @@ export function resolveRound(prevWorld: WorldState, decisionList: FirmDecision[]
       unit_cost: f.unit_cost,
       cost_buildup: { ...cb, shock: shock.perFirm.get(id)?.cost_multiplier ?? 1, supply_share: 1 - (agEff.unitCostReduction.get(id) ?? 0) },
       pnl: fin.pnl, balance_sheet: fin.balance_sheet, cash_flow: fin.cash_flow, cost_of_capital: fin.cost_of_capital,
-      state: { cash: f.cash, cap: f.cap, Q: f.Q, B: f.B, T_emp: f.T_emp, T_inv: f.T_inv, T_gov: f.T_gov, process: f.process, cum_output: f.cum_output, debt: f.debt, equity: fin.balance_sheet.equity },
+      state: { cash: f.cash, cap: f.cap, Q: f.Q, B: f.B, T_emp: f.T_emp, T_inv: f.T_inv, T_gov: f.T_gov, process: f.process, cum_output: f.cum_output, debt: f.debt, equity: fin.balance_sheet.equity, inventory_units: f.inventory_units, reputation: f.reputation ?? 0, water_efficiency: f.water_efficiency ?? 0, rnd_progress: f.rnd_progress ?? 0 },
       scorecard_raw: sc.raw, scorecard_norm: sc.norm, scorecard_cumulative: sc.cumulative,
       distinctiveness: distinct.get(id) ?? null,
       valuation: valuationByFirm.get(id) ?? 0,
       info_purchased: d.buy_info,
+      inventory: (() => {
+        const fl = invByFirm.get(id);
+        return fl ? { begin: fl.begin, produced: fl.produced, sold: fl.sold, spoiled: fl.spoiled, end: fl.end, turnover: fl.turnover } : null;
+      })(),
+      markets: marketBreakdown?.get(id) ?? null,
       events: [],
     };
   });
 
-  const market = w.segments.map((s) => ({ segment: s.id, D: s.D, total_q: demand.segmentTotals.get(s.id) ?? 0, active: s.active }));
+  const market = w.segments.map((s) => ({ segment: s.id, D: s.D, total_q: segTotals.get(s.id) ?? 0, active: s.active }));
 
   // Grow active-segment demand for the next round; advance the clock.
   for (const sw of w.segments) {

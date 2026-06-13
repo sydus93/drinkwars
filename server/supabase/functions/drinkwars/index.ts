@@ -8,7 +8,7 @@
 // Game logic comes from ./drinkwars-core.js (esbuild bundle of the orchestrator
 // + Supabase adapter + engine). Rebuild it with `npm run build:edge` in server/.
 import { createClient } from "@supabase/supabase-js";
-import { GameOrchestrator, SupabaseAdapter, buildInstructorDashboard, dashboardToCsv, resolveConfig } from "./drinkwars-core.js";
+import { GameOrchestrator, SupabaseAdapter, buildInstructorDashboard, dashboardToCsv, randomBreweryNames, renameFirms, resolveConfig, roleBriefings } from "./drinkwars-core.js";
 
 const url = Deno.env.get("SUPABASE_URL")!;
 const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -83,10 +83,24 @@ async function viewFor(gameId: string, teamId: string) {
     const lastFull = (await store.getRoundResults(gameId)).at(-1);
     ownResult = lastFull ? (lastFull.result.firm_results.find((f: any) => f.firm_id === own.id) ?? null) : null;
   }
+  // MOD-B05 briefings + MOD-B02 FX from the live world (this team only).
+  let briefings: { role: string; title: string; lines: string[] }[] = [];
+  let fx: Record<string, number> = {};
+  if (own) {
+    const ws = await store.getLatestWorldState(gameId);
+    if (ws && config?.modules?.teamRoles?.enabled) briefings = roleBriefings(ws.state, config, own.id) as never;
+    if (ws) fx = ws.state.fx_rates ?? {};
+  }
+  // Presentation names: firm ids in display text read as brewery names.
+  const names: Record<string, string> = {};
+  for (const t of await store.getTeams(gameId)) names[t.firm_id] = t.name;
   return {
     round: pub.round, lifecycle: pub.lifecycle, nRounds: game?.n_rounds, complete: pub.lifecycle === "complete",
-    segments: pub.segments, own, ownResult, unitCostEst,
-    standings: last?.standings ?? [], events: last?.events ?? [], submitted: decision?.submitted ?? false,
+    segments: pub.segments, own, ownResult, unitCostEst, fx, names,
+    briefings: briefings.map((b) => ({ ...b, lines: b.lines.map((l: string) => renameFirms(l, names)) })),
+    standings: (last?.standings ?? []).map((s: any) => ({ ...s, name: names[s.firm_id] ?? s.firm_id })),
+    events: (last?.events ?? []).map((e: string) => renameFirms(e, names)),
+    submitted: decision?.submitted ?? false,
   };
 }
 
@@ -136,9 +150,15 @@ Deno.serve(async (req: Request) => {
       if (method === "POST" && path === "/instructor/games") {
         const nFirms = Number(body.nFirms ?? 6);
         const nRounds = Number(body.nRounds ?? 16);
-        const config = resolveConfig({ game: { n_firms: nFirms, n_rounds: nRounds } } as any);
+        const override: Record<string, unknown> = { game: { n_firms: nFirms, n_rounds: nRounds } };
+        // Expansion modules (instructor selector) + legacy inventory boolean.
+        const mods: Record<string, unknown> = body.modules && typeof body.modules === "object" ? { ...body.modules } : {};
+        if (body.inventory) mods.inventory = { enabled: true };
+        if (Object.keys(mods).length) override.modules = mods;
+        const config = resolveConfig(override as any);
         const code = GameOrchestrator.makeJoinCode();
-        const teams = Array.from({ length: nFirms }, (_, i) => ({ name: `Open slot ${i + 1}` }));
+        // Real brewery names up front (students rename theirs on join).
+        const teams = randomBreweryNames(nFirms).map((name: string) => ({ name }));
         const gameId = await orch.createGame({ config, joinCode: code, teams, ownerTag: tier });
         return json(200, { gameId, joinCode: code, nFirms, nRounds });
       }

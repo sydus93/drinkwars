@@ -31,6 +31,17 @@ export function productivity(tEmp: number, c: Config): number {
   return 1 + productivity_kappa * (tEmp / (tEmp + productivity_halfsat));
 }
 
+/** Premium-recipe cost markup: higher recipe quality (better ingredients, slower
+ *  brewing, tighter QC) costs more per unit. Concave & bounded by κ. This is the
+ *  cost-side counterweight to quality's demand-side pull — so quality is a real
+ *  tradeoff (margin vs appeal), not a free lunch. 1.0 when unconfigured. */
+export function qualityPremium(quality: number, c: Config): number {
+  const qp = c.costs.quality_premium;
+  if (!qp) return 1;
+  const q = Math.max(0, quality);
+  return 1 + qp.kappa * (q / (q + qp.halfsat));
+}
+
 export function computeUnitCost(
   firm: FirmState,
   c: Config,
@@ -40,11 +51,12 @@ export function computeUnitCost(
   const learning = learningMultiplier(firm.cum_output, c);
   const pEff = processEffect(firm.process, c);
   const prod = productivity(firm.T_emp, c);
+  const qPrem = qualityPremium(firm.Q, c);
   const supply = Math.min(0.95, Math.max(0, supplyShareReduction));
   const shock = Math.max(1, shockCostMultiplier);
 
   const unitCost =
-    c.costs.c_base * learning * (1 - pEff) * firm.location_factor / prod * (1 - supply) * shock;
+    c.costs.c_base * learning * (1 - pEff) * qPrem * firm.location_factor / prod * (1 - supply) * shock;
 
   return {
     unitCost: Math.max(0, unitCost),
@@ -54,6 +66,7 @@ export function computeUnitCost(
       process: 1 - pEff,
       location: firm.location_factor,
       productivity: prod,
+      quality_premium: qPrem,
       supply_share: 1 - supply,
       shock,
     },
