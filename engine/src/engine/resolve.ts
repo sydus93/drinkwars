@@ -22,7 +22,8 @@ import { resolveAssets, verticalCostReduction, verticalRegRelief } from "./asset
 import { resolveMa } from "./ma.js";
 import { buildStatements, firmValuation } from "./finance.js";
 import { invCfg, computeInventory, type InventoryFlow } from "./inventory.js";
-import { resolveAgreementActions, computeAgreementEffects } from "./coopetition.js";
+import { resolveAgreementActions, computeAgreementEffects, resolveContingentClauses } from "./coopetition.js";
+import { resolveLobbying } from "./lobbying.js";
 import { computeShockEffects } from "./shocks.js";
 import { scoreRound, type ScoreSnapshot } from "./scoring.js";
 import { buildStrategyVector, computeDistinctiveness, type StrategyVector } from "./distinctiveness.js";
@@ -138,8 +139,16 @@ export function resolveRound(prevWorld: WorldState, decisionList: FirmDecision[]
   // BEFORE emergence is evaluated below.
   const rndRes = resolveRnd(w, decisions, c);
 
+  // Step 4.75: lobbying (MOD-A09) — accumulate initiative progress, fire any cleared
+  // regulation into the segment-mod channel (read into the demand modifiers below),
+  // and fine heavy offensive lobbyists. Runs before shocks so the antitrust-adjacent
+  // scrutiny is settled and any fired regulation is live in this round's demand.
+  const loRes = resolveLobbying(w, decisions, c, round);
+  events.push(...loRes.events);
+
   // Step 5: events — segment emergence, agreement effects, shocks, distress mods.
   const totalQ = w.firms.filter((f) => f.status === "active").reduce((acc, f) => acc + f.Q, 0);
+  const emergedThisRound = new Set<SegmentId>();
   for (const sw of w.segments) {
     if (sw.active) continue;
     const sc = c.segments.find((s) => s.id === sw.id)!;
@@ -151,6 +160,7 @@ export function resolveRound(prevWorld: WorldState, decisionList: FirmDecision[]
     if (byRound || byCap || byRnd) {
       sw.active = true;
       sw.D = sc.D0;
+      emergedThisRound.add(sw.id);
       const earlyRnd = byRnd && !byRound && !byCap;
       if (earlyRnd && rndRes.leader) {
         w.frontier_first_mover = { firm_id: rndRes.leader, segment: sw.id, until_round: round + (rndCfg!.first_mover_duration) };
@@ -164,9 +174,24 @@ export function resolveRound(prevWorld: WorldState, decisionList: FirmDecision[]
   const shock = computeShockEffects(w, c, agEff.coordinationUnits + assetsRes.antitrustUnits, pgRes.waterMitigation);
   events.push(...shock.events);
 
+  // Step 5.5: contingent clauses (MOD-A05) — react to this round's shock / emergence /
+  // partner distress on active agreements. Effects (suspend/terminate/open-reneg) take
+  // hold from the next round (this round's agreement effects are already computed).
+  const activeShockTypes = new Set<string>();
+  for (const s of w.shock_timeline) if (round >= s.round && round < s.round + s.duration) activeShockTypes.add(s.type_id);
+  for (const t of w.live_triggers) activeShockTypes.add(t);
+  events.push(...resolveContingentClauses(w, c, round, activeShockTypes, emergedThisRound).events);
+
+  // Active segment mods (distress dumping + MOD-A09 fired regulations): an α shift and,
+  // for lobbying-driven regulations, additive βq / βb deltas.
   const alphaDelta = new Map<SegmentId, number>();
+  const betaQModDelta = new Map<SegmentId, number>();
+  const betaBModDelta = new Map<SegmentId, number>();
   for (const m of w.pending_segment_mods) {
-    if (round < m.until_round) alphaDelta.set(m.segment, (alphaDelta.get(m.segment) ?? 0) + m.alpha_delta);
+    if (round >= m.until_round) continue;
+    if (m.alpha_delta) alphaDelta.set(m.segment, (alphaDelta.get(m.segment) ?? 0) + m.alpha_delta);
+    if (m.beta_q_delta) betaQModDelta.set(m.segment, (betaQModDelta.get(m.segment) ?? 0) + m.beta_q_delta);
+    if (m.beta_b_delta) betaBModDelta.set(m.segment, (betaBModDelta.get(m.segment) ?? 0) + m.beta_b_delta);
   }
 
   // Step 6: unit cost per firm (supply-share + shock multipliers).
@@ -227,11 +252,13 @@ export function resolveRound(prevWorld: WorldState, decisionList: FirmDecision[]
     // Shock demand multiplier × the public-good regional-marketing bonus.
     segmentDemandMultiplier: (seg) => (shock.segmentDemandMultiplier.get(seg) ?? 1) * (1 + (pgRes.demandBonus.get(seg) ?? 0)),
     sellableSupply: (id) => sellableByFirm.get(id) ?? 0,
-    // Consumer drift + the public-good quality-certification βq lift.
+    // Consumer drift + the public-good quality-certification βq lift + MOD-A09
+    // fired regulations (quality-standards βq lift, ad-restrictions βb cut).
     segmentBetaDelta: (seg) => {
       const d = betaDeltas.get(seg) ?? zeroBetaDelta();
-      const qBonus = pgRes.betaQBonus.get(seg) ?? 0;
-      return qBonus ? { q: d.q + qBonus, p: d.p, b: d.b } : d;
+      const qBonus = (pgRes.betaQBonus.get(seg) ?? 0) + (betaQModDelta.get(seg) ?? 0);
+      const bDelta = betaBModDelta.get(seg) ?? 0;
+      return qBonus || bDelta ? { q: d.q + qBonus, p: d.p, b: d.b + bDelta } : d;
     },
   };
   // Geography (MOD-B01/B02): with markets on, resolve demand per market and
@@ -312,7 +339,7 @@ export function resolveRound(prevWorld: WorldState, decisionList: FirmDecision[]
       // cash swaps into PP&E without adding brewing capacity.
       invest: { Q: d.invest_Q, B: d.invest_B, T_emp: d.invest_T_emp, T_inv: d.invest_T_inv, T_gov: d.invest_T_gov, process: d.invest_process, cap: d.invest_cap + (assetsRes.capexByFirm.get(f.id) ?? 0) },
       financing: { debt_draw: d.debt_draw, debt_repay: d.debt_repay, equity_raise: d.equity_raise, dividend: d.dividend },
-      extraOpex: (agRes.extraOpex.get(f.id) ?? 0) + (d.buy_info ? c.information.cost : 0) + holdingCost + (prRes.costByFirm.get(f.id) ?? 0) + (sustRes.costByFirm.get(f.id) ?? 0) + (pgRes.costByFirm.get(f.id) ?? 0) + (geoOpexByFirm.get(f.id) ?? 0) + (rndRes.costByFirm.get(f.id) ?? 0) + (assetsRes.opexByFirm.get(f.id) ?? 0),
+      extraOpex: (agRes.extraOpex.get(f.id) ?? 0) + (d.buy_info ? c.information.cost : 0) + holdingCost + (prRes.costByFirm.get(f.id) ?? 0) + (sustRes.costByFirm.get(f.id) ?? 0) + (pgRes.costByFirm.get(f.id) ?? 0) + (geoOpexByFirm.get(f.id) ?? 0) + (rndRes.costByFirm.get(f.id) ?? 0) + (assetsRes.opexByFirm.get(f.id) ?? 0) + (loRes.costByFirm.get(f.id) ?? 0),
       cashHit: shock.perFirm.get(f.id)?.cash_hit ?? 0,
       spreadReduction: reputationSpread(f, c),
       regBurdenReduction: verticalRegRelief(f, c, round),

@@ -10,7 +10,7 @@
  * trust effect; capacity-coordination and collective forms feed the antitrust
  * coordination signal (§9.3, §11.4).
  */
-import type { AgreementState, Config, FirmDecision, FirmId, SegmentId, WorldState } from "../types.js";
+import type { AgreementState, ClauseCondition, Config, FirmDecision, FirmId, SegmentId, WorldState } from "../types.js";
 
 export interface AgreementResolution {
   events: string[];
@@ -62,8 +62,48 @@ export function resolveAgreementActions(world: WorldState, decisions: Map<FirmId
           dissolution_type: null,
           constrained_until_round: null,
         };
+        // MOD-A05: attach contingent clauses (formal/collective contracts only).
+        const ccfg = c.modules?.contingentContracts;
+        if (ccfg?.enabled && a.clauses?.length && (a.form === "formal" || a.form === "collective")) {
+          agreement.clauses = a.clauses
+            .slice(0, ccfg.max_clauses_per_agreement)
+            .map((cl) => ({ condition: cl.condition, action: cl.action, fired_round: null }));
+        }
         world.agreements.push(agreement);
-        res.events.push(`${signatories.join("+")} formed ${a.form} ${a.template}`);
+        res.events.push(`${signatories.join("+")} formed ${a.form} ${a.template}${agreement.clauses?.length ? ` with ${agreement.clauses.length} contingent clause(s)` : ""}`);
+      } else if (a.type === "renegotiate" && a.agreement_id) {
+        // MOD-A06: call to renegotiate — pay the call cost, open the call, propose terms.
+        const rcfg = c.modules?.renegotiation;
+        if (!rcfg?.enabled) continue;
+        const ag = world.agreements.find((x) => x.id === a.agreement_id && x.active);
+        if (!ag || !ag.signatories.includes(f.id)) continue;
+        if (ag.renegotiation || ag.renegotiation_used) continue; // one open call, once per lifetime
+        ag.renegotiation = { caller: f.id, called_round: round, proposed_template: a.proposed_template, proposed_segment: a.proposed_segment };
+        ag.renegotiation_used = true;
+        addOpex(res.extraOpex, f.id, rcfg.call_cost);
+        res.events.push(`${f.id} calls to renegotiate ${ag.form} ${ag.template} (${ag.id})`);
+      } else if (a.type === "renegotiate_response" && a.agreement_id) {
+        // MOD-A06: a counterparty answers an open call — accept / reject / exit.
+        const rcfg = c.modules?.renegotiation;
+        if (!rcfg?.enabled) continue;
+        const ag = world.agreements.find((x) => x.id === a.agreement_id && x.active);
+        if (!ag || !ag.renegotiation) continue;
+        if (!ag.signatories.includes(f.id) || f.id === ag.renegotiation.caller) continue; // counterparty only
+        const resp = a.response ?? "reject";
+        if (resp === "accept") {
+          if (ag.renegotiation.proposed_template) ag.template = ag.renegotiation.proposed_template;
+          if (ag.renegotiation.proposed_segment !== undefined) ag.segment = ag.template === "joint_marketing" ? ag.renegotiation.proposed_segment ?? ag.segment : null;
+          res.events.push(`${f.id} accepts new terms on ${ag.form} ${ag.template} (${ag.id})`);
+        } else if (resp === "exit") {
+          ag.active = false;
+          ag.dissolution_round = round;
+          ag.dissolution_type = "renegotiated";
+          if (ag.form === "formal") addOpex(res.extraOpex, f.id, c.coopetition.forms.formal.breach_penalty * rcfg.exit_breach_fraction);
+          res.events.push(`${f.id} exits ${ag.form} ${ag.template} via renegotiation (${ag.id})`);
+        } else {
+          res.events.push(`${f.id} rejects renegotiation of ${ag.form} ${ag.template} (${ag.id})`);
+        }
+        ag.renegotiation = null;
       } else if (a.type === "defect" && a.agreement_id) {
         const ag = world.agreements.find((x) => x.id === a.agreement_id && x.active);
         if (!ag || !ag.signatories.includes(f.id)) continue;
@@ -123,4 +163,69 @@ export function computeAgreementEffects(world: WorldState, c: Config, round: num
     }
   }
   return eff;
+}
+
+export interface ClauseResolution {
+  events: string[];
+}
+
+/**
+ * MOD-A05 · Evaluate contingent clauses on active agreements (§spec A05). Runs
+ * after shocks resolve and before scoring, so a clause can react to this round's
+ * shock / emergence / partner-distress. Each clause fires at most once. Because
+ * this runs after `computeAgreementEffects`, a fired clause's effect (suspend /
+ * terminate / open renegotiation) takes hold from the FOLLOWING round — the clause
+ * triggers when the condition hits; the adaptation lands next round.
+ */
+export function resolveContingentClauses(
+  world: WorldState,
+  c: Config,
+  round: number,
+  activeShockTypes: Set<string>,
+  emergedThisRound: Set<SegmentId>,
+): ClauseResolution {
+  const res: ClauseResolution = { events: [] };
+  const ccfg = c.modules?.contingentContracts;
+  if (!ccfg?.enabled) return res;
+  const fById = new Map(world.firms.map((f) => [f.id, f]));
+
+  const conditionMet = (cond: ClauseCondition, ag: AgreementState): boolean => {
+    switch (cond) {
+      case "water_shock": return activeShockTypes.has("water");
+      case "harvest_shock": return activeShockTypes.has("harvest");
+      case "capacity_shock": return activeShockTypes.has("co2");
+      case "segment_emerges": return emergedThisRound.size > 0;
+      case "partner_distress":
+        return ag.signatories.some((id) => {
+          const f = fById.get(id);
+          return !!f && (f.status !== "active" || (f.rounds_below_health ?? 0) >= ccfg.distress_rounds);
+        });
+      default: return false;
+    }
+  };
+
+  for (const ag of world.agreements) {
+    if (!ag.active || !ag.clauses?.length) continue;
+    for (const cl of ag.clauses) {
+      if (cl.fired_round != null) continue; // each clause fires once
+      if (!conditionMet(cl.condition, ag)) continue;
+      cl.fired_round = round;
+      const rcfg = c.modules?.renegotiation;
+      if (cl.action === "suspend") {
+        ag.constrained_until_round = Math.max(ag.constrained_until_round ?? 0, round + ccfg.suspend_rounds);
+        res.events.push(`CLAUSE: ${ag.form} ${ag.template} (${ag.id}) auto-suspends — a contingent clause fired (${cl.condition})`);
+      } else if (cl.action === "renegotiate" && rcfg?.enabled && !ag.renegotiation && !ag.renegotiation_used) {
+        ag.renegotiation = { caller: ag.signatories[0], called_round: round, proposed_template: undefined, proposed_segment: undefined };
+        ag.renegotiation_used = true;
+        res.events.push(`CLAUSE: ${ag.form} ${ag.template} (${ag.id}) opens for renegotiation — a contingent clause fired (${cl.condition})`);
+      } else {
+        // "terminate" (and the renegotiate fallback when MOD-A06 is off): clean dissolution.
+        ag.active = false;
+        ag.dissolution_round = round;
+        ag.dissolution_type = "clause";
+        res.events.push(`CLAUSE: ${ag.form} ${ag.template} (${ag.id}) auto-terminates — a contingent clause fired (${cl.condition})`);
+      }
+    }
+  }
+  return res;
 }

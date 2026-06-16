@@ -45,8 +45,8 @@ export const defaultModules: ModulesConfig = {
     negative_pr_t_emp_mitigation: 0.6,
     negative_pr_brand_damage: 9,
   },
-  contingentContracts: { enabled: false },
-  renegotiation: { enabled: false },
+  contingentContracts: { enabled: false, max_clauses_per_agreement: 2, suspend_rounds: 2, distress_rounds: 2 },
+  renegotiation: { enabled: false, call_cost: 40, exit_breach_fraction: 0.4 },
   asymmetricStarts: {
     enabled: false,
     incumbent_count: 2, // first N firms start as incumbents; the rest as entrants
@@ -63,7 +63,24 @@ export const defaultModules: ModulesConfig = {
       { segment: "niche", variable: "beta_q", delta_per_round: 0.004, ceiling: 0.26 },
     ],
   },
-  lobbying: { enabled: false },
+  lobbying: {
+    enabled: false,
+    // Three industry regulations, each firing through the existing segment-mod channel
+    // so no new demand/cost plumbing is needed. Thresholds are sized so a regulation
+    // wants ~3–4 rounds of sustained funding (net of decay) before it passes.
+    initiatives: [
+      { id: "quality_standards", regulation: "quality_standards", label: "Quality standards", threshold: 180, segments: ["mass", "niche"], effect: 0.05 },
+      { id: "ad_restrictions", regulation: "ad_restrictions", label: "Advertising limits", threshold: 180, segments: ["mass", "niche"], effect: 0.05 },
+      { id: "craft_promotion", regulation: "craft_promotion", label: "Craft promotion", threshold: 160, segments: ["niche"], effect: 0.4 },
+    ],
+    duration: 3,
+    decay: 0.1,
+    counter_effectiveness: 1.0,
+    scrutiny_base_prob: 0.25,
+    scrutiny_spend_halfsat: 120,
+    scrutiny_tgov_k: 0.04,
+    scrutiny_fine: 200,
+  },
   // ---- Tier B — medium lift ----
   geography: {
     enabled: false,
@@ -169,13 +186,13 @@ export const MODULE_REGISTRY: ModuleMeta[] = [
     id: "contingentContracts", code: "MOD-A05", tier: "A", category: "finance", name: "Contingent contracts",
     blurb: "Automatic clauses on formal agreements that fire on named conditions (a shock hits, cash falls, etc.).",
     pedagogy: "Incomplete contracting, adaptation vs commitment, hold-up, contingent governance.",
-    deps: [], implemented: false,
+    deps: [], implemented: true,
   },
   {
     id: "renegotiation", code: "MOD-A06", tier: "A", category: "finance", name: "Renegotiation",
     blurb: "A middle path between honor and defect: call to renegotiate an agreement once per lifetime.",
     pedagogy: "TCE adaptation, relational vs formal governance, flexibility vs stability.",
-    deps: [], implemented: false,
+    deps: [], implemented: true,
   },
   {
     id: "asymmetricStarts", code: "MOD-A07", tier: "A", category: "markets", name: "Asymmetric starts",
@@ -193,7 +210,7 @@ export const MODULE_REGISTRY: ModuleMeta[] = [
     id: "lobbying", code: "MOD-A09", tier: "A", category: "society", name: "Regulatory capture / lobbying",
     blurb: "Direct government-relations spend offensively to win a favorable regulation; rivals can counter-lobby.",
     pedagogy: "Non-market strategy, regulatory capture, political CSR, competitive lobbying.",
-    deps: [], implemented: false,
+    deps: [], implemented: true,
   },
   // ---- Tier B ----
   {

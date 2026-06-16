@@ -17,6 +17,9 @@
     "test": "tsx --test test/*.test.ts",
     "typecheck": "tsc --noEmit",
     "build:edge": "esbuild src/edge-core.ts --bundle --format=esm --platform=neutral --external:@supabase/supabase-js --outfile=supabase/functions/drinkwars/drinkwars-core.js",
+    "db:push": "supabase db push",
+    "functions:deploy": "supabase functions deploy drinkwars",
+    "deploy": "npm run build:edge && npm run db:push && npm run functions:deploy",
     "cleanup:test": "tsx src/cleanup-test-users.ts"
   },
   "dependencies": {

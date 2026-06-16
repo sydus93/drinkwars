@@ -12,4 +12,4 @@ export { GameOrchestrator } from "./lifecycle.js";
 export { SupabaseAdapter } from "./adapters/supabase.js";
 export { buildInstructorDashboard, dashboardToCsv } from "./dashboard.js";
 export { randomBreweryNames, renameFirms } from "./names.js";
-export { resolveConfig, roleBriefings } from "drinkwars-engine";
+export { resolveConfig, roleBriefings, summarizeAgreementsFor, summarizeLobbying } from "drinkwars-engine";

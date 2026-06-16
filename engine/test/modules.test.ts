@@ -333,6 +333,81 @@ test("MOD-A04 off ⇒ no PR state moves (parity)", () => {
   assert.ok(r.world.firms.every((f) => f.pr_spike === 0 && f.pr_cooldown_until === null), "PR action ignored when module off");
 });
 
+test("MOD-A09 lobbying: spend pushes an initiative, a cleared threshold fires the regulation; off ⇒ none", () => {
+  const c = loadConfig(modulesOverride(["lobbying"]));
+  const w = initGame(c);
+  // A big one-shot push clears the quality-standards threshold this round.
+  const r = resolveRound(w, [mkDecision("firm_1", w, { lobby_spend: 300, lobby_initiative: "quality_standards" }), mkDecision("firm_2", w)], c);
+  const init = r.world.lobbying_initiatives?.find((i) => i.id === "quality_standards");
+  assert.ok(init?.fired, "the regulation fires once its threshold is cleared");
+  // The fired regulation lands as a βq lift on its segments (the existing mod channel).
+  const mod = r.world.pending_segment_mods.find((m) => (m.beta_q_delta ?? 0) > 0);
+  assert.ok(mod, "a quality-standards regulation pushes a positive βq segment mod");
+  // The lobbying spend is expensed (private cost of influence).
+  const opexLob = r.result.firm_results.find((f) => f.firm_id === "firm_1")!.pnl.opex;
+  const noLob = resolveRound(w, [mkDecision("firm_1", w), mkDecision("firm_2", w)], c).result.firm_results.find((f) => f.firm_id === "firm_1")!.pnl.opex;
+  assert.ok(opexLob > noLob, "offensive lobbying costs the firm");
+  // Counter-lobbying bleeds an initiative's progress back down.
+  const w2 = initGame(c);
+  const push = resolveRound(w2, [mkDecision("firm_1", w2, { lobby_spend: 100, lobby_initiative: "craft_promotion" }), mkDecision("firm_2", w2)], c);
+  const after = resolveRound(push.world, [mkDecision("firm_1", push.world), mkDecision("firm_2", push.world, { lobby_spend: 200, lobby_counter: "craft_promotion" })], c);
+  const cp0 = push.world.lobbying_initiatives!.find((i) => i.id === "craft_promotion")!.progress;
+  const cp1 = after.world.lobbying_initiatives!.find((i) => i.id === "craft_promotion")!.progress;
+  assert.ok(cp1 < cp0, "a counter-lobby reduces the initiative's progress");
+  // Off ⇒ a lobby action is inert.
+  const off = resolveRound(initGame(loadConfig()), [mkDecision("firm_1", w, { lobby_spend: 300, lobby_initiative: "quality_standards" }), mkDecision("firm_2", w)], loadConfig());
+  assert.equal(off.world.lobbying_initiatives, undefined, "no initiatives tracked when the module is off");
+});
+
+test("MOD-A05 contingent contracts: a clause auto-fires on its condition (partner distress ⇒ terminate)", () => {
+  const c = loadConfig(modulesOverride(["contingentContracts"]));
+  const w = initGame(c);
+  // firm_1 forms a formal capacity-coordination pact with firm_2, with a clause:
+  // if a partner falls into distress, the pact auto-terminates.
+  const form = mkDecision("firm_1", w, {
+    agreement_actions: [{ type: "form", form: "formal", template: "capacity_coordination", counterparties: ["firm_2"], clauses: [{ condition: "partner_distress", action: "terminate" }] }],
+  });
+  const r0 = resolveRound(w, [form, mkDecision("firm_2", w)], c);
+  const ag0 = r0.world.agreements.find((a) => a.signatories.includes("firm_1") && a.signatories.includes("firm_2"));
+  assert.ok(ag0?.active && ag0.clauses?.length === 1, "pact forms with one contingent clause, dormant");
+  assert.equal(ag0!.clauses![0].fired_round, null, "clause hasn't fired while partners are healthy");
+  // Round 1: firm_2 is now in distress ⇒ the clause fires and the pact terminates.
+  r0.world.firms.find((f) => f.id === "firm_2")!.rounds_below_health = c.modules!.contingentContracts.distress_rounds;
+  const r1 = resolveRound(r0.world, [mkDecision("firm_1", r0.world), mkDecision("firm_2", r0.world)], c);
+  const ag1 = r1.world.agreements.find((a) => a.id === ag0!.id)!;
+  assert.equal(ag1.active, false, "the clause auto-terminated the pact");
+  assert.equal(ag1.dissolution_type, "clause", "dissolution is attributed to the clause");
+  assert.equal(ag1.clauses![0].fired_round, r0.world.round, "clause records the round it fired");
+});
+
+test("MOD-A06 renegotiation: call → accept updates terms; off ⇒ inert", () => {
+  const c = loadConfig(modulesOverride(["renegotiation"]));
+  const w = initGame(c);
+  const form = mkDecision("firm_1", w, { agreement_actions: [{ type: "form", form: "formal", template: "capacity_coordination", counterparties: ["firm_2"] }] });
+  const r0 = resolveRound(w, [form, mkDecision("firm_2", w)], c);
+  const ag = r0.world.agreements.find((a) => a.signatories.includes("firm_1") && a.signatories.includes("firm_2"))!;
+  // Round 1: firm_1 calls to renegotiate, proposing a switch to supply-share. Call costs cash.
+  const call = mkDecision("firm_1", r0.world, { agreement_actions: [{ type: "renegotiate", agreement_id: ag.id, proposed_template: "supply_share" }] });
+  const r1 = resolveRound(r0.world, [call, mkDecision("firm_2", r0.world)], c);
+  const ag1 = r1.world.agreements.find((a) => a.id === ag.id)!;
+  assert.ok(ag1.renegotiation && ag1.renegotiation.caller === "firm_1", "an open renegotiation call is recorded");
+  const opexCall = r1.result.firm_results.find((f) => f.firm_id === "firm_1")!.pnl.opex;
+  const opexNo = resolveRound(r0.world, [mkDecision("firm_1", r0.world), mkDecision("firm_2", r0.world)], c).result.firm_results.find((f) => f.firm_id === "firm_1")!.pnl.opex;
+  assert.ok(Math.abs((opexCall - opexNo) - c.modules!.renegotiation.call_cost) < 1e-6, "calling charges exactly the call cost");
+  // Round 2: firm_2 (the counterparty) accepts ⇒ the template updates, call closes.
+  const accept = mkDecision("firm_2", r1.world, { agreement_actions: [{ type: "renegotiate_response", agreement_id: ag.id, response: "accept" }] });
+  const r2 = resolveRound(r1.world, [mkDecision("firm_1", r1.world), accept], c);
+  const ag2 = r2.world.agreements.find((a) => a.id === ag.id)!;
+  assert.equal(ag2.template, "supply_share", "accepted renegotiation updates the pact terms");
+  assert.equal(ag2.renegotiation, null, "the open call is cleared on response");
+  // Off ⇒ a renegotiate action does nothing (no open call, terms unchanged).
+  const offC = loadConfig();
+  const offForm = resolveRound(initGame(offC), [mkDecision("firm_1", w, { agreement_actions: form.agreement_actions }), mkDecision("firm_2", w)], offC);
+  const agOff = offForm.world.agreements[0];
+  const offCall = resolveRound(offForm.world, [mkDecision("firm_1", offForm.world, { agreement_actions: [{ type: "renegotiate", agreement_id: agOff.id, proposed_template: "supply_share" }] }), mkDecision("firm_2", offForm.world)], offC);
+  assert.ok(!offCall.world.agreements[0].renegotiation, "renegotiation is inert when the module is off");
+});
+
 test("disabled asymmetric starts ⇒ symmetric opening state (parity with v1)", () => {
   const on = initGame(loadConfig(modulesOverride(["asymmetricStarts"])));
   const off = initGame(loadConfig());

@@ -9,6 +9,7 @@ import { EventModal, type GameEvent } from "./EventModal.js";
 import { InfoDot } from "./InfoDot.js";
 import { WorldMap } from "./WorldMap.js";
 import { MarketDetail } from "./MarketDetail.js";
+import { Alliances } from "./Alliances.js";
 
 const PR_PLAYS: { id: PrPlayType; label: string; description: string }[] = [
   { id: "festival", label: "Festival sponsorship", description: "A steady brand lift at a community event." },
@@ -160,8 +161,19 @@ export function DecisionForm({
   const setWeight = (id: string, v: number) => set({ market_presence: { ...marketWeights, [id]: Math.max(0, v) } });
   const geoEntrySpend = geoOn ? markets.filter((m) => m.kind !== "home" && (marketWeights[m.id] ?? 0) > 0 && !entered.includes(m.id)).reduce((a, m) => a + m.entry_cost, 0) : 0;
 
-  const moduleSpend = prSpend + waterSpend + pgSpend + geoEntrySpend + rndSpend + vertSpend + hireSpend;
-  const anyModuleControls = prOn || sustOn || pgOn || rndOn || vertOn || labOn || maOn;
+  // MOD-A09 lobbying · MOD-A05/A06 alliances
+  const lobOn = !!mods?.lobbying?.enabled;
+  const lobInits = view.lobbyInitiatives ?? [];
+  const lobSpend = lobOn ? Math.max(0, d?.lobby_spend ?? 0) : 0;
+  const lobTargeted = lobOn && !!(d?.lobby_initiative || d?.lobby_counter);
+  const lobSpendEff = lobTargeted ? lobSpend : 0; // the engine only charges spend that has a target
+  const setLobby = (patch: Partial<FirmDecision>) => set(patch);
+  const coopOn = !!(mods?.contingentContracts?.enabled || mods?.renegotiation?.enabled);
+  const renegCallQueued = (d?.agreement_actions ?? []).some((a) => a.type === "renegotiate");
+  const renegCallCost = renegCallQueued ? (mods?.renegotiation?.call_cost ?? 0) : 0;
+
+  const moduleSpend = prSpend + waterSpend + pgSpend + geoEntrySpend + rndSpend + vertSpend + hireSpend + lobSpendEff + renegCallCost;
+  const anyModuleControls = prOn || sustOn || pgOn || rndOn || vertOn || labOn || maOn || lobOn;
   const setContribution = (goodId: string, v: number) => set({ public_good_contributions: { ...contribs, [goodId]: Math.max(0, v) } });
   const prEvent: GameEvent | null = prModal
     ? {
@@ -192,7 +204,7 @@ export function DecisionForm({
   // Desktop command-center: with expansion content on, the cards split into two
   // columns — run the brewery (left) and grow the empire (right) — so a wide
   // screen shows the whole round at once instead of a long scroll.
-  const twoCol = geoOn || anyModuleControls;
+  const twoCol = geoOn || anyModuleControls || coopOn;
 
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
@@ -618,6 +630,57 @@ export function DecisionForm({
                 )}
               </div>
             )}
+
+            {lobOn && lobInits.length > 0 && (
+              <div className="mt-3 border-t border-line pt-3">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-sm font-semibold">Lobbying</span>
+                  <InfoDot title="Non-market strategy">Spend to push an industry regulation that suits your position — quality standards reward quality leaders, ad limits hurt brand-heavy rivals, craft promotion grows the premium category. Rivals can counter-lobby to bleed your progress. Heavy <i>offensive</i> lobbying risks an investigation fine, softened by your distributor/regulator standing.</InfoDot>
+                </div>
+                <div className="mt-1 flex items-center justify-between">
+                  <span className="text-[0.72rem] text-inksoft">Lobbying budget {lobTargeted ? "" : "— pick a target below"}</span>
+                  <span className="tnum text-xs text-inksoft">{fmt.money(lobSpendEff)}</span>
+                </div>
+                <input type="range" min="0" max={Math.max(200, Math.round(cash * 0.3))} step="10" value={lobSpend} onChange={(e) => setLobby({ lobby_spend: +e.target.value })} className="mt-1 w-full" />
+                <div className="mt-1 grid gap-1.5">
+                  {lobInits.map((it) => {
+                    const pushing = d?.lobby_initiative === it.id && !d?.lobby_counter;
+                    const countering = d?.lobby_counter === it.id;
+                    return (
+                      <div key={it.id}>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[0.74rem] font-semibold">{it.label}{it.fired && <span className="ml-1 text-[0.6rem] uppercase tracking-[0.1em] text-hop">· in force</span>}</span>
+                          {!it.fired && (
+                            <div className="flex shrink-0 gap-1">
+                              <button type="button" onClick={() => setLobby({ lobby_initiative: pushing ? null : it.id, lobby_counter: null })}
+                                className={`rounded-full border px-2 py-0.5 text-[0.64rem] ${pushing ? "border-copper bg-copper/10 text-copperdeep" : "border-line2 text-inksoft hover:border-copper"}`}>Push{pushing ? " ✓" : ""}</button>
+                              <button type="button" onClick={() => setLobby({ lobby_counter: countering ? null : it.id, lobby_initiative: null })}
+                                className={`rounded-full border px-2 py-0.5 text-[0.64rem] ${countering ? "border-brick bg-brick/10 text-brick" : "border-line2 text-inksoft hover:border-brick"}`}>Counter{countering ? " ✓" : ""}</button>
+                            </div>
+                          )}
+                        </div>
+                        <div className="mt-0.5 h-1.5 w-full overflow-hidden rounded-full bg-line2/40">
+                          <div className={`h-full ${it.fired ? "bg-hop" : "bg-copper"}`} style={{ width: `${Math.round(it.pct * 100)}%` }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </Card>
+        )}
+
+        {/* Alliances (MOD-A05 contingent contracts + MOD-A06 renegotiation) */}
+        {coopOn && (
+          <Card>
+            <div className="flex items-center gap-1.5">
+              <Eyebrow>Alliances</Eyebrow>
+              <InfoDot title="Coopetition">Form a pact with a rival — pool brand, coordinate capacity, or share supply. The governance form is the real choice: a handshake costs trust to break, a formal contract costs cash but supports contingent clauses and renegotiation, a guild is powerful but draws antitrust.</InfoDot>
+            </div>
+            <div className="mt-2">
+              <Alliances view={view} d={d} set={set} />
+            </div>
           </Card>
         )}
 

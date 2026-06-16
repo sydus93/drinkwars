@@ -5,7 +5,7 @@
  * Diagnostics / Standings are reused unchanged. The instructor client drives
  * the passcode-gated create / lock / resolve endpoints.
  */
-import type { Config, FirmDecision, FirmId, FirmRoundResult, FirmState, RoleBriefing, SegmentId } from "drinkwars-engine";
+import type { AllianceSummary, Config, FirmDecision, FirmId, FirmRoundResult, FirmState, LobbySummary, RoleBriefing, SegmentId } from "drinkwars-engine";
 import { inventoryEnabled } from "drinkwars-engine";
 
 /** Module-enable map sent to the create endpoint (id → { enabled }). */
@@ -36,6 +36,8 @@ export interface RawView {
   submitted: boolean;
   briefings?: RoleBriefing[]; // MOD-B05
   fx?: Record<string, number>; // MOD-B02
+  agreements?: AllianceSummary[]; // MOD-A05/A06
+  lobbyInitiatives?: LobbySummary[]; // MOD-A09
   names?: Record<string, string>; // firm_id → brewery name
 }
 
@@ -148,6 +150,8 @@ export class StudentClient {
       modules: this.config?.modules,
       briefings: v.briefings ?? [],
       fx: v.fx ?? {},
+      agreements: v.agreements ?? [],
+      lobbyInitiatives: v.lobbyInitiatives ?? [],
     };
   }
 

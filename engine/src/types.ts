@@ -423,6 +423,69 @@ export interface AsymmetricStartsConfig {
   entrant: StartProfile;
 }
 
+/** One contingent clause on a formal/collective agreement (MOD-A05): if `condition`
+ *  occurs this round, `action` fires automatically. Conditions and actions are
+ *  drawn from fixed menus so clause resolution stays deterministic (no free-form
+ *  triggers). No new state variable — clauses live on the agreement itself. */
+export type ClauseCondition = "water_shock" | "harvest_shock" | "capacity_shock" | "partner_distress" | "segment_emerges";
+export type ClauseAction = "suspend" | "terminate" | "renegotiate";
+export interface ContingentClause {
+  condition: ClauseCondition;
+  action: ClauseAction;
+  fired_round?: number | null; // set the round the clause fires (diagnostic; null/absent ⇒ dormant)
+}
+
+/** MOD-A05 · Contingent contracts. Adds optional auto-firing clauses to formal /
+ *  collective agreements; evaluated after shocks resolve, before scoring. */
+export interface ContingentContractsConfig {
+  enabled: boolean;
+  max_clauses_per_agreement: number;
+  suspend_rounds: number; // how many rounds a "suspend" clause pauses the pact's effects
+  distress_rounds: number; // rounds-below-health that counts as a partner in "distress"
+}
+
+/** MOD-A06 · Renegotiation. A middle path between honoring and defecting: a party
+ *  pays to call a renegotiation and propose new terms; a counterparty accepts
+ *  (terms update), rejects (continues on original terms), or exits (dissolves at a
+ *  reduced breach penalty vs. a flat defection). Once per agreement lifetime. */
+export interface RenegotiationConfig {
+  enabled: boolean;
+  call_cost: number; // cash cost to call a renegotiation (expensed)
+  exit_breach_fraction: number; // exit pays this fraction of the formal breach penalty
+}
+
+export type RegulationType = "quality_standards" | "ad_restrictions" | "craft_promotion";
+
+/** One lobbyable regulation (MOD-A09). When cumulative net lobbying clears
+ *  `threshold` the regulation fires as an industry event for `duration` rounds via
+ *  the existing segment-mod channel; the effect favors whoever's positioned for it
+ *  (quality standards reward quality, ad limits hurt brand-heavy firms, craft
+ *  promotion grows the segment). `effect` is a positive magnitude; its sign by
+ *  regulation is applied in the resolver. */
+export interface LobbyInitiativeConfig {
+  id: string;
+  regulation: RegulationType;
+  label: string;
+  threshold: number; // cumulative net lobbying spend that fires the regulation
+  segments?: SegmentId[]; // segments the effect lands on (default: all active)
+  effect: number; // βq lift · βb cut · α lift magnitude (sign applied per regulation)
+}
+
+/** MOD-A09 · Regulatory capture / lobbying. A dedicated offensive government-relations
+ *  lever (kept separate from `invest_T_gov` so the defensive T_gov stock is untouched).
+ *  Heavy offensive lobbying risks a scrutiny fine, scaled down by T_gov. */
+export interface LobbyingConfig {
+  enabled: boolean;
+  initiatives: LobbyInitiativeConfig[];
+  duration: number; // rounds a fired regulation stays in effect
+  decay: number; // per-round decay on un-fired lobbying progress
+  counter_effectiveness: number; // $1 of counter-lobbying cancels this much progress
+  scrutiny_base_prob: number; // base chance a heavy offensive lobbyist is investigated
+  scrutiny_spend_halfsat: number; // offensive spend at which exposure reaches half
+  scrutiny_tgov_k: number; // T_gov scales the scrutiny probability down
+  scrutiny_fine: number; // cash fine (expensed) on an investigation
+}
+
 /** The module registry as it appears in a resolved Config. All keys are always
  *  present after `resolveConfig` (defaults fill them); a persisted pre-modules
  *  game has `modules` absent entirely, which every accessor treats as all-off. */
@@ -431,11 +494,11 @@ export interface ModulesConfig {
   publicGoods: PublicGoodsConfig;
   sustainability: SustainabilityConfig;
   prEvents: PrEventsConfig;
-  contingentContracts: ModuleToggle;
-  renegotiation: ModuleToggle;
+  contingentContracts: ContingentContractsConfig;
+  renegotiation: RenegotiationConfig;
   asymmetricStarts: AsymmetricStartsConfig;
   consumerDrift: ConsumerDriftConfig;
-  lobbying: ModuleToggle;
+  lobbying: LobbyingConfig;
   // Tier B
   geography: GeographyConfig;
   international: InternationalConfig;
@@ -575,8 +638,14 @@ export interface AgreementState {
   formation_round: number;
   active: boolean;
   dissolution_round: number | null;
-  dissolution_type: "defection" | "mutual" | "antitrust" | null;
-  constrained_until_round: number | null; // antitrust constraint
+  dissolution_type: "defection" | "mutual" | "antitrust" | "renegotiated" | "clause" | null;
+  constrained_until_round: number | null; // antitrust / contingent-suspend constraint
+  // MOD-A05 contingent clauses (auto-fire on a named condition). Absent ⇒ none.
+  clauses?: ContingentClause[];
+  // MOD-A06 renegotiation: an open call awaiting a counterparty response. Null/absent
+  // ⇒ no open call. `renegotiation_used` enforces once-per-agreement-lifetime.
+  renegotiation?: { caller: FirmId; called_round: number; proposed_template?: TemplateId; proposed_segment?: SegmentId | null } | null;
+  renegotiation_used?: boolean;
 }
 
 export interface ScheduledShock {
@@ -601,8 +670,21 @@ export interface SegmentWorld {
 
 export interface SegmentPriceMod {
   segment: SegmentId;
-  alpha_delta: number; // additive change to α_s while active (distress dumping)
+  alpha_delta: number; // additive change to α_s while active (distress dumping, craft-promotion lobbying)
+  beta_q_delta?: number; // MOD-A09 quality-standards regulation: additive βq lift while active
+  beta_b_delta?: number; // MOD-A09 ad-restrictions regulation: additive βb change (negative) while active
   until_round: number;
+}
+
+/** Live state of one lobbying initiative (MOD-A09), created lazily on first spend
+ *  and carried on world state round-to-round. `progress` decays until it clears the
+ *  configured threshold and the regulation `fired`. */
+export interface LobbyingInitiative {
+  id: string; // matches a LobbyInitiativeConfig id
+  regulation: RegulationType;
+  progress: number;
+  fired: boolean;
+  fired_round: number | null;
 }
 
 export interface WorldState {
@@ -618,6 +700,7 @@ export interface WorldState {
   public_good_pools?: Record<string, number>; // MOD-A02 accumulators (absent ⇒ none)
   fx_rates?: Record<string, number>; // MOD-B02 per-export-market exchange rate (absent ⇒ none)
   frontier_first_mover?: { firm_id: string; segment: string; until_round: number } | null; // MOD-B04
+  lobbying_initiatives?: LobbyingInitiative[]; // MOD-A09 active/fired regulation pushes (absent ⇒ none)
 }
 
 // ----------------------------------------------------------------------------
@@ -625,14 +708,20 @@ export interface WorldState {
 // ----------------------------------------------------------------------------
 
 export interface AgreementAction {
-  type: "form" | "defect";
+  type: "form" | "defect" | "renegotiate" | "renegotiate_response";
   // form:
   form?: GovernanceForm;
   template?: TemplateId;
   counterparties?: FirmId[];
   segment?: SegmentId;
-  // defect:
+  clauses?: ContingentClause[]; // MOD-A05: contingent clauses attached at formation (formal/collective only)
+  // defect / renegotiate / renegotiate_response:
   agreement_id?: string;
+  // renegotiate (MOD-A06): the new terms the caller proposes.
+  proposed_template?: TemplateId;
+  proposed_segment?: SegmentId | null;
+  // renegotiate_response (MOD-A06): a counterparty's answer to an open call.
+  response?: "accept" | "reject" | "exit";
 }
 
 export type ExitAction =
@@ -655,6 +744,10 @@ export interface FirmDecision {
   draw_convertible?: number; // MOD-B08: convertible-note draw (cash in)
   draw_rbf?: number; // MOD-B08: revenue-based-financing draw (cash in)
   acquisition_bid?: { target: FirmId; price: number } | null; // MOD-B07: bid on a distressed rival
+  // MOD-A09 lobbying (offensive government relations; separate from invest_T_gov).
+  lobby_spend?: number; // cash directed at lobbying this round (expensed)
+  lobby_initiative?: string | null; // a regulation initiative id to PUSH (offensive; draws scrutiny)
+  lobby_counter?: string | null; // a regulation initiative id to COUNTER (defensive; no scrutiny)
   invest_cap: number;
   invest_process: number;
   invest_Q: number;

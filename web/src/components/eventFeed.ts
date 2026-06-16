@@ -125,6 +125,49 @@ const RULES: Rule[] = [
     kind: "opportunity", title: "A rival rebuilds",
     body: (_r, m) => `${m[1]} is back in the game, repositioned toward ${m[2]}.`,
   },
+  // Lobbying (MOD-A09)
+  {
+    test: /^LOBBYING SCRUTINY:\s*(.+?)\s+is fined/i,
+    kind: "regulatory", title: "Lobbying scrutiny",
+    body: (_r, m) => `${m[1]} was fined after regulators scrutinized its lobbying.`,
+  },
+  {
+    test: /^LOBBYING:\s*a\s*"(.+?)"\s*regulation passes/i,
+    kind: "regulatory", title: "A regulation passes",
+    body: (_r, m) => `A new "${m[1]}" regulation passed — it reshapes the market for a few rounds.`,
+  },
+  // Contingent clauses (MOD-A05)
+  {
+    test: /^CLAUSE:.*?\b(auto-suspends|auto-terminates|opens for renegotiation)\b.*?\(([a-z_]+)\)\s*$/i,
+    kind: "regulatory", title: "A contract clause fires",
+    body: (_r, m) => {
+      const verb = m[1].toLowerCase();
+      const cond = m[2].replace(/_/g, " ");
+      const what = verb.includes("suspend") ? "auto-suspended an alliance" : verb.includes("terminate") ? "dissolved an alliance" : "opened an alliance for renegotiation";
+      return `A contingent clause fired when ${cond} — it ${what}.`;
+    },
+  },
+  // Renegotiation (MOD-A06)
+  {
+    test: /^(.+?)\s+calls to renegotiate\s+/i,
+    kind: "opportunity", title: "Renegotiation called",
+    body: (_r, m) => `${m[1]} called to renegotiate an alliance.`,
+  },
+  {
+    test: /^(.+?)\s+accepts new terms on\s+/i,
+    kind: "info", title: "Alliance terms updated",
+    body: (_r, m) => `${m[1]} accepted new alliance terms.`,
+  },
+  {
+    test: /^(.+?)\s+exits\s+.+?\s+via renegotiation/i,
+    kind: "shock", title: "An alliance dissolves",
+    body: (_r, m) => `${m[1]} exited an alliance through renegotiation.`,
+  },
+  {
+    test: /^(.+?)\s+rejects renegotiation of\s+/i,
+    kind: "info", title: "Renegotiation rejected",
+    body: (_r, m) => `${m[1]} rejected a renegotiation — the alliance continues unchanged.`,
+  },
   {
     test: /^(.+?)\s+formed\s+(.+)$/i,
     kind: "opportunity", title: "An alliance forms",

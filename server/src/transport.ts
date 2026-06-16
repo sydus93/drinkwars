@@ -18,7 +18,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { loadConfig } from "drinkwars-engine/node";
-import { roleBriefings } from "drinkwars-engine";
+import { roleBriefings, summarizeAgreementsFor, summarizeLobbying } from "drinkwars-engine";
 import type { FirmDecision } from "drinkwars-engine";
 import { createClient } from "@supabase/supabase-js";
 import { GameOrchestrator, InMemoryAdapter, buildInstructorDashboard, createSupabaseAdapter, dashboardToCsv, randomBreweryNames, renameFirms, type StorageAdapter } from "./index.js";
@@ -107,21 +107,31 @@ async function viewFor(gameId: string, teamId: string) {
     const lastFull = (await store.getRoundResults(gameId)).at(-1);
     ownResult = lastFull ? (lastFull.result.firm_results.find((f) => f.firm_id === own.id) ?? null) : null;
   }
-  // MOD-B05 briefings + MOD-B02 FX come from the live world (this team's slice only).
-  let briefings: { role: string; title: string; lines: string[] }[] = [];
-  let fx: Record<string, number> = {};
-  if (own) {
-    const ws = await store.getLatestWorldState(gameId);
-    if (ws && config?.modules?.teamRoles?.enabled) briefings = roleBriefings(ws.state, config, own.id) as never;
-    if (ws) fx = ws.state.fx_rates ?? {};
-  }
   // Presentation names: every firm id that leaks into display text (events,
   // briefings) reads as its team's brewery name, never `firm_3`.
   const names: Record<string, string> = {};
   for (const t of await store.getTeams(gameId)) names[t.firm_id] = t.name;
+  const nameOf = (id: string) => names[id] ?? id;
+  // MOD-B05 briefings + MOD-B02 FX + MOD-A05/A06 alliances + MOD-A09 lobbying come
+  // from the live world (this team's slice only).
+  let briefings: { role: string; title: string; lines: string[] }[] = [];
+  let fx: Record<string, number> = {};
+  let agreements: ReturnType<typeof summarizeAgreementsFor> = [];
+  let lobbyInitiatives: ReturnType<typeof summarizeLobbying> = [];
+  if (own) {
+    const ws = await store.getLatestWorldState(gameId);
+    if (ws && config?.modules?.teamRoles?.enabled) briefings = roleBriefings(ws.state, config, own.id) as never;
+    if (ws) {
+      fx = ws.state.fx_rates ?? {};
+      agreements = summarizeAgreementsFor(ws.state, own.id, nameOf);
+      if (config) lobbyInitiatives = summarizeLobbying(config, ws.state);
+    }
+  }
   return {
     briefings: briefings.map((b) => ({ ...b, lines: b.lines.map((l) => renameFirms(l, names)) })),
     fx,
+    agreements,
+    lobbyInitiatives,
     names,
     round: pub.round,
     lifecycle: pub.lifecycle,

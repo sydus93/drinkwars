@@ -8,7 +8,7 @@
 // Game logic comes from ./drinkwars-core.js (esbuild bundle of the orchestrator
 // + Supabase adapter + engine). Rebuild it with `npm run build:edge` in server/.
 import { createClient } from "@supabase/supabase-js";
-import { GameOrchestrator, SupabaseAdapter, buildInstructorDashboard, dashboardToCsv, randomBreweryNames, renameFirms, resolveConfig, roleBriefings } from "./drinkwars-core.js";
+import { GameOrchestrator, SupabaseAdapter, buildInstructorDashboard, dashboardToCsv, randomBreweryNames, renameFirms, resolveConfig, roleBriefings, summarizeAgreementsFor, summarizeLobbying } from "./drinkwars-core.js";
 
 const url = Deno.env.get("SUPABASE_URL")!;
 const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -83,20 +83,27 @@ async function viewFor(gameId: string, teamId: string) {
     const lastFull = (await store.getRoundResults(gameId)).at(-1);
     ownResult = lastFull ? (lastFull.result.firm_results.find((f: any) => f.firm_id === own.id) ?? null) : null;
   }
-  // MOD-B05 briefings + MOD-B02 FX from the live world (this team only).
-  let briefings: { role: string; title: string; lines: string[] }[] = [];
-  let fx: Record<string, number> = {};
-  if (own) {
-    const ws = await store.getLatestWorldState(gameId);
-    if (ws && config?.modules?.teamRoles?.enabled) briefings = roleBriefings(ws.state, config, own.id) as never;
-    if (ws) fx = ws.state.fx_rates ?? {};
-  }
   // Presentation names: firm ids in display text read as brewery names.
   const names: Record<string, string> = {};
   for (const t of await store.getTeams(gameId)) names[t.firm_id] = t.name;
+  const nameOf = (id: string) => names[id] ?? id;
+  // MOD-B05 briefings + MOD-B02 FX + MOD-A05/A06 alliances + MOD-A09 lobbying.
+  let briefings: { role: string; title: string; lines: string[] }[] = [];
+  let fx: Record<string, number> = {};
+  let agreements: any[] = [];
+  let lobbyInitiatives: any[] = [];
+  if (own) {
+    const ws = await store.getLatestWorldState(gameId);
+    if (ws && config?.modules?.teamRoles?.enabled) briefings = roleBriefings(ws.state, config, own.id) as never;
+    if (ws) {
+      fx = ws.state.fx_rates ?? {};
+      agreements = summarizeAgreementsFor(ws.state, own.id, nameOf);
+      if (config) lobbyInitiatives = summarizeLobbying(config, ws.state);
+    }
+  }
   return {
     round: pub.round, lifecycle: pub.lifecycle, nRounds: game?.n_rounds, complete: pub.lifecycle === "complete",
-    segments: pub.segments, own, ownResult, unitCostEst, fx, names,
+    segments: pub.segments, own, ownResult, unitCostEst, fx, names, agreements, lobbyInitiatives,
     briefings: briefings.map((b) => ({ ...b, lines: b.lines.map((l: string) => renameFirms(l, names)) })),
     standings: (last?.standings ?? []).map((s: any) => ({ ...s, name: names[s.firm_id] ?? s.firm_id })),
     events: (last?.events ?? []).map((e: string) => renameFirms(e, names)),

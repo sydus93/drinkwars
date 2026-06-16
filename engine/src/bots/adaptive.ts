@@ -221,6 +221,20 @@ export function decideAdaptive(lean: Lean, f: FirmState, world: WorldState, c: C
     }
   }
 
+  // Lobbying (MOD-A09) — government-relations-leaning bots push the regulation that
+  // suits their lean; a quality leader wants quality standards, a brand-light cost
+  // leader wants ad limits, otherwise craft promotion grows the premium segment.
+  let lobbySpend = 0;
+  let lobbyInitiative: string | null = null;
+  if (mods?.lobbying?.enabled && lean.bias.T_gov >= 1.4 && mods.lobbying.initiatives.length && f.cash > 300 && commit(40)) {
+    const wantId =
+      lean.bias.Q >= 1.4 ? "quality_standards" :
+      lean.bias.B <= 0.6 ? "ad_restrictions" : "craft_promotion";
+    const init = mods.lobbying.initiatives.find((i) => i.id === wantId) ?? mods.lobbying.initiatives[0];
+    lobbyInitiative = init.id;
+    lobbySpend = 40;
+  }
+
   const base = 65;
   let spend = {
     Q: base * lean.bias.Q * qualityWeight,
@@ -275,6 +289,8 @@ export function decideAdaptive(lean: Lean, f: FirmState, world: WorldState, c: C
     hire_roles: hireRoles,
     draw_rbf: drawRbf,
     acquisition_bid: acquisitionBid,
+    lobby_spend: lobbySpend,
+    lobby_initiative: lobbyInitiative,
   };
 }
 

@@ -5,8 +5,8 @@
  * adaptive best-response bots from the engine. This is app-spec §9 step 0.
  */
 import { GameOrchestrator, InMemoryAdapter, randomBreweryNames, renameFirms } from "drinkwars-server";
-import { resolveConfig, decideAdaptive, ADAPTIVE_LEANS, inventoryEnabled, roleBriefings, firmValuation } from "drinkwars-engine";
-import type { RoleBriefing } from "drinkwars-engine";
+import { resolveConfig, decideAdaptive, ADAPTIVE_LEANS, inventoryEnabled, roleBriefings, firmValuation, summarizeAgreementsFor, summarizeLobbying } from "drinkwars-engine";
+import type { RoleBriefing, AllianceSummary, LobbySummary } from "drinkwars-engine";
 import type { Config, ConfigOverride, FirmDecision, FirmId, FirmRoundResult, FirmState, Lean, ModulesConfig, RoundResult, SegmentId, WorldState } from "drinkwars-engine";
 
 export type Difficulty = "relaxed" | "competitive" | "cutthroat";
@@ -96,6 +96,8 @@ export interface GameView {
   modules?: ModulesConfig; // resolved expansion-module config (gates the module decision controls)
   briefings: RoleBriefing[]; // MOD-B05 role intel (empty when off)
   fx: Record<string, number>; // MOD-B02 export exchange rates (empty when off)
+  agreements: AllianceSummary[]; // MOD-A05/A06 active pacts you're party to (empty when off)
+  lobbyInitiatives: LobbySummary[]; // MOD-A09 regulation initiatives + progress (empty when off)
 }
 
 const median = (xs: number[]): number => {
@@ -244,6 +246,8 @@ export class SinglePlayerGame {
       modules: this.config.modules,
       briefings,
       fx: world.fx_rates ?? {},
+      agreements: summarizeAgreementsFor(world, this.humanFirmId, (id) => this.nameOf(id)),
+      lobbyInitiatives: summarizeLobbying(this.config, world),
     };
   }
 

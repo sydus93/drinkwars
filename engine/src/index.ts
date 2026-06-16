@@ -21,6 +21,9 @@ export { resilienceMitigation, rollTimeline } from "./engine/shocks.js";
 export { activeMarkets } from "./engine/geography.js";
 export { roleBriefings } from "./engine/briefings.js";
 export type { RoleBriefing } from "./engine/briefings.js";
+// Coopetition (MOD-A05/A06) + lobbying (MOD-A09) presentation summaries.
+export { summarizeAgreementsFor, summarizeLobbying } from "./engine/views.js";
+export type { AllianceSummary, AllianceClauseSummary, LobbySummary } from "./engine/views.js";
 export { RNG, deriveSeed } from "./rng.js";
 // Adaptive best-response bot (single-player NPCs, harness, student onboarding).
 export { decideAdaptive, ADAPTIVE_LEANS } from "./bots/adaptive.js";
