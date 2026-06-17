@@ -1,4 +1,40 @@
 import type { EventKind, GameEvent } from "./EventModal.js";
+import { SEG_LABEL } from "../labels.js";
+
+/** Map a raw segment id (mass/niche/frontier) to its beverage label; tolerate the
+ *  engine's "?"/"(unset)" placeholders so no code-style token reaches the player. */
+const seg = (id: string): string => {
+  const k = id.trim().toLowerCase();
+  if (!k || k === "?" || k === "(unset)") return "a fresh focus";
+  return SEG_LABEL[k] ?? id;
+};
+
+/** Friendly names for shock type ids + their mechanical "kind", so a fired shock
+ *  reads as prose instead of "water (cost_spike, mag 0.35, unannounced)". */
+const SHOCK_LABEL: Record<string, string> = {
+  water: "Water shortage",
+  harvest: "Harvest failure",
+  co2: "CO₂ & packaging squeeze",
+};
+const SHOCK_KIND: Record<string, string> = {
+  cost_spike: "input costs spike",
+  capacity_hit: "brewing capacity is constrained",
+  demand_drop: "demand softens",
+  demand_boost: "demand surges",
+  cash_hit: "an unexpected cash hit lands",
+};
+const severity = (mag: number): string => (mag >= 0.3 ? "sharply" : mag >= 0.15 ? "moderately" : "mildly");
+
+/** Plain-language gloss for each contingent-clause trigger (MOD-A05). */
+const CLAUSE_COND: Record<string, string> = {
+  water_shock: "a water shortage hit",
+  harvest_shock: "a harvest failure hit",
+  capacity_shock: "a capacity squeeze hit",
+  partner_distress: "a partner fell into distress",
+  segment_emerges: "a new category emerged",
+};
+
+const titleCase = (s: string): string => s.replace(/\b\w/g, (c) => c.toUpperCase());
 
 /**
  * Turn the engine's terse event strings (e.g. "SHOCK water: +35% unit cost",
@@ -12,7 +48,8 @@ import type { EventKind, GameEvent } from "./EventModal.js";
 interface Rule {
   test: RegExp;
   kind: EventKind;
-  title: string;
+  /** Static headline, or one derived from the match (e.g. shock type). */
+  title: string | ((m: RegExpMatchArray) => string);
   /** Rewrite the raw string into prose. Default: strip a leading "TAG:" prefix. */
   body?: (raw: string, m: RegExpMatchArray) => string;
 }
@@ -69,7 +106,7 @@ const RULES: Rule[] = [
   {
     test: /^GUILD:\s*the industry "(.+?)" fund reaches its threshold/i,
     kind: "opportunity", title: "Industry fund activates",
-    body: (_r, m) => `The industry ${m[1].replace(/_/g, " ")} fund cleared its threshold — the shared benefit is now live for everyone.`,
+    body: (_r, m) => `The industry ${titleCase(m[1].replace(/_/g, " "))} fund cleared its threshold — the shared benefit is now live for everyone.`,
   },
   {
     test: /^PR PLAY:\s*(.+?)\s+ran\s+(.+?)\s*—/i,
@@ -94,7 +131,7 @@ const RULES: Rule[] = [
   {
     test: /^NEW CATEGORY:\s*segment\s*"(.+?)"\s+emerges/i,
     kind: "market", title: "A new category opens",
-    body: (_r, m) => `A new category — "${m[1]}" — has emerged in the market.`,
+    body: (_r, m) => `A new category — ${seg(m[1])} — has emerged in the market.`,
   },
   {
     test: /ANTITRUST investigation triggered.*?;\s*(\d+) firms? fined,\s*(\d+) pacts?\s+constrained/i,
@@ -108,7 +145,7 @@ const RULES: Rule[] = [
   {
     test: /^DISTRESS DUMPING:\s*(.+?)'s collapse depresses\s+(\w+)/i,
     kind: "shock", title: "Distress dumping",
-    body: (_r, m) => `${m[1]}'s collapse is flooding the ${m[2]} category with cut-price product, depressing prices.`,
+    body: (_r, m) => `${m[1]}'s collapse is flooding the ${seg(m[2])} category with cut-price product, depressing prices.`,
   },
   {
     test: /^FORCED EXIT \(bankruptcy\):\s*(.+?)\s*\(/i,
@@ -123,7 +160,12 @@ const RULES: Rule[] = [
   {
     test: /^RE-ENTRY:\s*(.+?)\s+re-activates\s*\(repositioned to\s+(.+?)\)/i,
     kind: "opportunity", title: "A rival rebuilds",
-    body: (_r, m) => `${m[1]} is back in the game, repositioned toward ${m[2]}.`,
+    body: (_r, m) => `${m[1]} is back in the game, repositioned toward ${seg(m[2])}.`,
+  },
+  {
+    test: /^EXIT→REBUILD:\s*(.+?)\s+repositions to\s+(.+?),\s*pays\s*([\d.]+)\s*\(cooldown to r(\d+)\)/i,
+    kind: "opportunity", title: "A brewery rebuilds",
+    body: (_r, m) => `${m[1]} is rebuilding — repositioning toward ${seg(m[2])} for $${Math.round(+m[3])}, back in round ${m[4]}.`,
   },
   // Lobbying (MOD-A09)
   {
@@ -142,9 +184,9 @@ const RULES: Rule[] = [
     kind: "regulatory", title: "A contract clause fires",
     body: (_r, m) => {
       const verb = m[1].toLowerCase();
-      const cond = m[2].replace(/_/g, " ");
+      const cond = CLAUSE_COND[m[2].toLowerCase()] ?? m[2].replace(/_/g, " ");
       const what = verb.includes("suspend") ? "auto-suspended an alliance" : verb.includes("terminate") ? "dissolved an alliance" : "opened an alliance for renegotiation";
-      return `A contingent clause fired when ${cond} — it ${what}.`;
+      return `A contingent clause fired — ${cond}, so it ${what}.`;
     },
   },
   // Renegotiation (MOD-A06)
@@ -178,17 +220,29 @@ const RULES: Rule[] = [
     kind: "shock", title: "An alliance breaks",
     body: (_r, m) => `${m[1]} walked away from its ${m[2]} agreement.`,
   },
-  // Shocks (no firm named).
-  { test: /SHOCK.*water/i, kind: "shock", title: "Water shortage", body: (r) => stripPrefix(r) },
-  { test: /SHOCK.*harvest/i, kind: "shock", title: "Harvest failure", body: (r) => stripPrefix(r) },
-  { test: /SHOCK.*(co2|packaging)/i, kind: "shock", title: "Packaging squeeze", body: (r) => stripPrefix(r) },
+  // Shocks (no firm named). Parse the structured "SHOCK fired: <type> (<kind>, mag
+  // <m>, <signaling>)" / "SHOCK live-triggered: <type>" forms into prose; the raw
+  // type/kind/magnitude ids must never reach the player.
+  {
+    test: /^SHOCK (?:fired|live-triggered):\s*([a-z0-9_]+)(?:\(live\))?\s*(?:\(([a-z_]+),\s*mag\s*([\d.]+)[^)]*\))?/i,
+    kind: "shock",
+    title: (m) => SHOCK_LABEL[m[1].toLowerCase()] ?? "Market disruption",
+    body: (_r, m) => {
+      const label = SHOCK_LABEL[m[1].toLowerCase()] ?? "A supply shock";
+      if (!m[2]) return `${label} just hit the market.`;
+      return `${label}: ${SHOCK_KIND[m[2]] ?? "the market is disrupted"} ${severity(+m[3])} this round.`;
+    },
+  },
   { test: /SHOCK/i, kind: "shock", title: "Market disruption", body: (r) => stripPrefix(r) },
 ];
 
 function classify(raw: string): { kind: EventKind; title: string; body: string } {
   for (const r of RULES) {
     const m = raw.match(r.test);
-    if (m) return { kind: r.kind, title: r.title, body: r.body ? r.body(raw, m) : stripPrefix(raw) };
+    if (m) {
+      const title = typeof r.title === "function" ? r.title(m) : r.title;
+      return { kind: r.kind, title, body: r.body ? r.body(raw, m) : stripPrefix(raw) };
+    }
   }
   return { kind: "info", title: "Dispatch", body: stripPrefix(raw) };
 }

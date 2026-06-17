@@ -278,10 +278,12 @@ export class SinglePlayerGame {
       for (const s of active) if (!price[s]) price[s] = Math.round(unit * 1.8 * 100) / 100;
       // Carry standing levers (prices, allocation, investment) forward; RESET one-shot
       // transactions (financing, research, beliefs, reflection) so they don't auto-repeat.
+      // agreement_actions/exit_action MUST reset too — otherwise a "form alliance" action
+      // re-fires every round, silently re-forming (and re-charging) a duplicate pact.
       return {
         ...this.lastHuman, firm_id: this.humanFirmId, price, presence,
         debt_draw: 0, debt_repay: 0, equity_raise: 0, dividend: 0,
-        buy_info: false, beliefs: {}, reflection: "",
+        buy_info: false, agreement_actions: [], exit_action: null, beliefs: {}, reflection: "",
       };
     }
 

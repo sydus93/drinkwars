@@ -32,7 +32,7 @@ export function InfoDot({ title, children, align = "left" }: { title?: ReactNode
       {open && (
         <span
           role="tooltip"
-          className={`absolute top-[1.45rem] z-30 block w-64 rounded-md border border-line2 bg-paper p-3 text-left shadow-lg ${align === "right" ? "right-0" : "left-0"}`}
+          className={`absolute top-[1.45rem] z-30 block w-64 max-w-[calc(100vw-1.5rem)] rounded-md border border-line2 bg-paper p-3 text-left shadow-lg ${align === "right" ? "right-0" : "left-0"}`}
         >
           {title && <span className="mb-1 block text-[0.7rem] font-semibold uppercase tracking-[0.1em] text-copperdeep">{title}</span>}
           <span className="block text-[0.74rem] leading-snug text-ink">{children}</span>
