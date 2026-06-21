@@ -208,7 +208,7 @@ export type ModuleId =
   | "renegotiation" | "asymmetricStarts" | "consumerDrift" | "lobbying"
   // Tier B — medium lift
   | "geography" | "international" | "laborMarket" | "rndRace" | "teamRoles"
-  | "verticalIntegration" | "ma" | "financialInstruments" | "inventory" | "reputation";
+  | "verticalIntegration" | "ma" | "financialInstruments" | "inventory" | "reputation" | "facilities";
 
 /** Minimal module config: a plain on/off flag. Modules whose engine logic isn't
  *  wired yet use this shape; they appear in the instructor selector as "planned"
@@ -489,6 +489,39 @@ export interface LobbyingConfig {
 /** The module registry as it appears in a resolved Config. All keys are always
  *  present after `resolveConfig` (defaults fill them); a persisted pre-modules
  *  game has `modules` absent entirely, which every accessor treats as all-off. */
+/** MOD-B11 · Facilities (named physical capacity assets). Additive + gated: a built
+ *  facility CAPITALIZES into PP&E (cash→capex through the existing channel, so the
+ *  §7.2 invariants hold), ADDS its capacity_contribution to effective cap (scaled by
+ *  condition), and carries a fixed cost + optional maintenance (opex). With the module
+ *  off, no facilities exist and the engine is identical to the pre-module game. The
+ *  capacity contribution is delivered explicitly (NOT through the cap stock pipeline),
+ *  so there is no double-count with the capex capitalization. See engine/facilities.ts. */
+export interface FacilityTypeConfig {
+  id: string;
+  label: string;
+  capacity_contribution: number; // tank capacity this type adds at full condition
+  base_cost: number; // build cost, capitalized into PP&E
+  fixed_cost: number; // rent + baseline upkeep per round (opex)
+  build_rounds: number; // rounds until operational (0 = immediate)
+  condition_decay: number; // per-round condition loss at zero maintenance
+  maintenance_effect: number; // condition restored per $ of maintenance spend
+}
+export interface FacilitiesConfig {
+  enabled: boolean;
+  max_facilities: number; // cap on owned facilities per firm
+  types: FacilityTypeConfig[];
+}
+/** One owned facility (FirmState.facilities) — named, condition-tracked. */
+export interface Facility {
+  id: string; // unique per firm (e.g. "fac_3_0")
+  type: string; // FacilityTypeConfig.id
+  name: string; // player-assigned display name
+  built_round: number;
+  online_round: number; // round it becomes operational
+  condition: number; // 0..1
+  active: boolean; // false ⇒ mothballed (no capacity, no fixed cost)
+}
+
 export interface ModulesConfig {
   // Tier A
   publicGoods: PublicGoodsConfig;
@@ -510,6 +543,7 @@ export interface ModulesConfig {
   financialInstruments: FinInstrumentsConfig;
   inventory: InventoryConfig; // MOD-B09 — fully implemented (see engine/inventory.ts)
   reputation: ReputationConfig;
+  facilities: FacilitiesConfig; // MOD-B11 — named physical capacity assets (see engine/facilities.ts)
 }
 
 export interface ScoringConfig {
@@ -604,6 +638,8 @@ export interface FirmState {
   vertical_assets: { id: string; acquired_round: number }[];
   // MOD-B03 labor market (empty when off)
   key_hires: { role: string; hired_round: number }[];
+  // MOD-B11 facilities (named physical capacity assets; empty/undefined when off)
+  facilities?: Facility[];
   // MOD-B08 financial instruments (null/0 when off)
   convertible_note: { principal: number; drawn_round: number } | null;
   rbf_outstanding: number; // remaining total obligation (principal + fee)
@@ -741,6 +777,11 @@ export interface FirmDecision {
   buy_vertical?: string[]; // MOD-B06: vertical asset ids to purchase this round
   hire_roles?: string[]; // MOD-B03: key roles to hire this round
   fire_roles?: string[]; // MOD-B03: key roles to let go this round
+  // MOD-B11 facilities (physical capacity assets)
+  build_facilities?: { type: string; name?: string }[]; // facility types to build this round
+  maintain_facilities?: Record<string, number>; // facility id → maintenance $ this round
+  mothball_facilities?: string[]; // facility ids to take offline (stop fixed cost + capacity)
+  reactivate_facilities?: string[]; // mothballed facility ids to bring back online
   draw_convertible?: number; // MOD-B08: convertible-note draw (cash in)
   draw_rbf?: number; // MOD-B08: revenue-based-financing draw (cash in)
   acquisition_bid?: { target: FirmId; price: number } | null; // MOD-B07: bid on a distressed rival

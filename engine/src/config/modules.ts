@@ -131,6 +131,20 @@ export const defaultModules: ModulesConfig = {
   // working-capital-zero path. See engine/inventory.ts.
   inventory: { enabled: false, spoilage_rate: 0.1, max_run_rate: 1.0, holding_cost_per_unit: 0 },
   reputation: { enabled: false, gain_honor: 0.6, loss_defect: 4, depreciation: 0.05, halfsat: 6, spread_reduction_max: 0.02 },
+  // MOD-B11 — named physical capacity assets. OFF by default (additive: no facilities
+  // ⇒ identical to the pre-module game). Capacity contribution adds to effective cap;
+  // build cost capitalizes into PP&E; fixed cost + maintenance are opex. Tunable with
+  // play-test data. See engine/facilities.ts.
+  facilities: {
+    enabled: false,
+    max_facilities: 4,
+    types: [
+      { id: "brewery_small", label: "Nano brewery", capacity_contribution: 120, base_cost: 220, fixed_cost: 14, build_rounds: 1, condition_decay: 0.06, maintenance_effect: 0.004 },
+      { id: "brewery_large", label: "Production brewery", capacity_contribution: 320, base_cost: 520, fixed_cost: 30, build_rounds: 2, condition_decay: 0.05, maintenance_effect: 0.0025 },
+      { id: "taproom", label: "Taproom", capacity_contribution: 40, base_cost: 180, fixed_cost: 12, build_rounds: 1, condition_decay: 0.07, maintenance_effect: 0.005 },
+      { id: "canning_line", label: "Canning line", capacity_contribution: 160, base_cost: 300, fixed_cost: 16, build_rounds: 1, condition_decay: 0.06, maintenance_effect: 0.004 },
+    ],
+  },
 };
 
 /** Catalog metadata for the instructor selector. `implemented` gates whether the
@@ -247,6 +261,12 @@ export const MODULE_REGISTRY: ModuleMeta[] = [
     id: "verticalIntegration", code: "MOD-B06", tier: "B", category: "operations", name: "Vertical integration",
     blurb: "Acquire upstream (suppliers) or downstream (distribution) assets; make-vs-buy with antitrust exposure.",
     pedagogy: "Vertical integration, make-vs-buy, TCE, three-tier dynamics, asset specificity.",
+    deps: [], implemented: true,
+  },
+  {
+    id: "facilities", code: "MOD-B11", tier: "B", category: "operations", name: "Facilities & physical capacity",
+    blurb: "Build and maintain named breweries, taprooms, and lines — capacity lives in assets you own and must keep in repair.",
+    pedagogy: "Capacity strategy, capital investment, asset condition & maintenance, fixed-cost structure.",
     deps: [], implemented: true,
   },
   {

@@ -55,6 +55,56 @@ test("all live modules on together: a full game runs and the §7.2 invariants ho
   assert.equal(rounds, c.game.n_rounds, "the full season resolves with every module engaged");
 });
 
+test("facilities (MOD-B11): a build capitalizes into PP&E, adds capacity, and keeps the §7.2 invariants", () => {
+  const c = loadConfig(modulesOverride(["facilities"]));
+  let w = initGame(c);
+  const builderId = w.firms[0].id;
+  const otherId = w.firms[1].id;
+
+  // Round 0: the builder breaks ground on a production brewery (online next round);
+  // an idle peer is the capitalization control.
+  const decs0 = w.firms.map((f) =>
+    mkDecision(f.id, w, f.id === builderId ? { build_facilities: [{ type: "brewery_large", name: "South Side" }] } : {}),
+  );
+  const r0 = resolveRound(w, decs0, c);
+  w = r0.world;
+
+  const fac = w.firms.find((f) => f.id === builderId)!.facilities ?? [];
+  assert.equal(fac.length, 1, "the build is recorded on the firm");
+  assert.equal(fac[0].name, "South Side", "the player-assigned name sticks");
+
+  // Capitalized, not expensed: the builder's PP&E sits well above the idle peer's.
+  const ppeBuilder = r0.result.firm_results.find((f) => f.firm_id === builderId)!.balance_sheet.ppe;
+  const ppeOther = r0.result.firm_results.find((f) => f.firm_id === otherId)!.balance_sheet.ppe;
+  assert.ok(ppeBuilder > ppeOther + 400, `the build is capitalized into PP&E (builder ${ppeBuilder} vs idle ${ppeOther})`);
+
+  // Run on with maintenance; the §7.2 invariants must hold for every firm-round.
+  for (let i = 0; i < 4; i++) {
+    const decs = w.firms.map((f) =>
+      mkDecision(f.id, w, f.id === builderId ? { maintain_facilities: { [fac[0].id]: 20 } } : {}),
+    );
+    const r = resolveRound(w, decs, c);
+    w = r.world;
+    for (const fr of r.result.firm_results) {
+      const bs = fr.balance_sheet;
+      assert.ok(Math.abs(bs.assets - (bs.debt + bs.equity)) < 1e-3, `balance ${fr.firm_id} r${fr.round}`);
+      assert.ok(Math.abs(bs.assets - (bs.cash + bs.ppe + bs.inventory)) < 1e-3, `assets=cash+ppe+inv ${fr.firm_id} r${fr.round}`);
+    }
+  }
+});
+
+test("facilities all-off parity: enabling the module with no builds changes nothing", () => {
+  const off = loadConfig();
+  const onNoBuild = loadConfig(modulesOverride(["facilities"]));
+  const a = runGame(off, makeProvider(BASELINE_ASSIGNMENT));
+  const b = runGame(onNoBuild, makeProvider(BASELINE_ASSIGNMENT));
+  // The baseline archetype provider never builds facilities, so flipping the flag on
+  // must be inert — capacity/cost/score identical round for round.
+  const fa = a.history.at(-1)!.firm_results.map((f) => f.scorecard_cumulative);
+  const fb = b.history.at(-1)!.firm_results.map((f) => f.scorecard_cumulative);
+  assert.deepEqual(fb, fa, "facilities on but unused must equal facilities off");
+});
+
 test("registry is coherent: ids unique, deps resolve, presets reference real ids", () => {
   const ids = new Set(MODULE_REGISTRY.map((m) => m.id));
   assert.equal(ids.size, MODULE_REGISTRY.length, "module ids must be unique");

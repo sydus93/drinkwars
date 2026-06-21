@@ -19,6 +19,7 @@ import { resolveGeography, updateFxRates } from "./geography.js";
 import { updateReputation, reputationSpread } from "./reputation.js";
 import { resolveRnd, rndFirstMoverBonus } from "./rndrace.js";
 import { resolveAssets, verticalCostReduction, verticalRegRelief } from "./assets.js";
+import { resolveFacilities, facilityCapacity } from "./facilities.js";
 import { resolveMa } from "./ma.js";
 import { buildStatements, firmValuation } from "./finance.js";
 import { invCfg, computeInventory, type InventoryFlow } from "./inventory.js";
@@ -123,7 +124,9 @@ export function resolveRound(prevWorld: WorldState, decisionList: FirmDecision[]
   // departures. Runs after stocks advance so hire bonuses land on current stocks and
   // before unit cost / shocks so integrated assets bite this round.
   const assetsRes = resolveAssets(w, decisions, c, round);
+  const facRes = resolveFacilities(w, decisions, c, round);
   events.push(...assetsRes.events);
+  events.push(...facRes.events);
 
   // Step 4.5: sustainability (MOD-A03) — advance water-efficiency + T_gov goodwill
   // BEFORE shocks, so the water-shock resilience term sees this round's stock.
@@ -214,7 +217,9 @@ export function resolveRound(prevWorld: WorldState, decisionList: FirmDecision[]
     const f = firmsById.get(id)!;
     const restraint = agEff.capacityRestraint.get(id) ?? 0;
     const capMult = shock.perFirm.get(id)?.capacity_multiplier ?? 1;
-    return Math.max(0, f.cap * (1 - restraint) * capMult);
+    // Owned facilities (MOD-B11) add capacity additively, subject to the same shock /
+    // coordination multipliers as the base cap stock.
+    return Math.max(0, (f.cap + facilityCapacity(f, c, round)) * (1 - restraint) * capMult);
   };
   const prodByFirm = new Map<FirmId, number>();
   const sellableByFirm = new Map<FirmId, number>();
@@ -337,9 +342,9 @@ export function resolveRound(prevWorld: WorldState, decisionList: FirmDecision[]
       firm: f, revenue, cogs, spoilage, inventoryValueBegin: invValueBegin, inventoryValueEnd: invValueEnd,
       // Vertical purchases (MOD-B06) are capitalized through the capex channel:
       // cash swaps into PP&E without adding brewing capacity.
-      invest: { Q: d.invest_Q, B: d.invest_B, T_emp: d.invest_T_emp, T_inv: d.invest_T_inv, T_gov: d.invest_T_gov, process: d.invest_process, cap: d.invest_cap + (assetsRes.capexByFirm.get(f.id) ?? 0) },
+      invest: { Q: d.invest_Q, B: d.invest_B, T_emp: d.invest_T_emp, T_inv: d.invest_T_inv, T_gov: d.invest_T_gov, process: d.invest_process, cap: d.invest_cap + (assetsRes.capexByFirm.get(f.id) ?? 0) + (facRes.capexByFirm.get(f.id) ?? 0) },
       financing: { debt_draw: d.debt_draw, debt_repay: d.debt_repay, equity_raise: d.equity_raise, dividend: d.dividend },
-      extraOpex: (agRes.extraOpex.get(f.id) ?? 0) + (d.buy_info ? c.information.cost : 0) + holdingCost + (prRes.costByFirm.get(f.id) ?? 0) + (sustRes.costByFirm.get(f.id) ?? 0) + (pgRes.costByFirm.get(f.id) ?? 0) + (geoOpexByFirm.get(f.id) ?? 0) + (rndRes.costByFirm.get(f.id) ?? 0) + (assetsRes.opexByFirm.get(f.id) ?? 0) + (loRes.costByFirm.get(f.id) ?? 0),
+      extraOpex: (agRes.extraOpex.get(f.id) ?? 0) + (d.buy_info ? c.information.cost : 0) + holdingCost + (prRes.costByFirm.get(f.id) ?? 0) + (sustRes.costByFirm.get(f.id) ?? 0) + (pgRes.costByFirm.get(f.id) ?? 0) + (geoOpexByFirm.get(f.id) ?? 0) + (rndRes.costByFirm.get(f.id) ?? 0) + (assetsRes.opexByFirm.get(f.id) ?? 0) + (loRes.costByFirm.get(f.id) ?? 0) + (facRes.opexByFirm.get(f.id) ?? 0),
       cashHit: shock.perFirm.get(f.id)?.cash_hit ?? 0,
       spreadReduction: reputationSpread(f, c),
       regBurdenReduction: verticalRegRelief(f, c, round),
