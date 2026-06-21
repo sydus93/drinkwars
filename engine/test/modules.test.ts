@@ -6,7 +6,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { initGame, resolveRound, runGame } from "../src/index.js";
+import { initGame, resolveRound, runGame, generateHiringMarket } from "../src/index.js";
 import { loadConfig } from "../src/config/load.js";
 import { MODULE_REGISTRY, PRESETS, moduleEnabled, presetById, modulesOverride } from "../src/config/modules.js";
 import { computeBetaDeltas } from "../src/engine/drift.js";
@@ -103,6 +103,41 @@ test("facilities all-off parity: enabling the module with no builds changes noth
   const fa = a.history.at(-1)!.firm_results.map((f) => f.scorecard_cumulative);
   const fb = b.history.at(-1)!.firm_results.map((f) => f.scorecard_cumulative);
   assert.deepEqual(fb, fa, "facilities on but unused must equal facilities off");
+});
+
+test("employees (MOD-B12): a hire lands a salaried, stock-raising person and keeps the §7.2 invariants", () => {
+  const c = loadConfig(modulesOverride(["employees"]));
+  let w = initGame(c);
+  const hirer = w.firms[0].id;
+  const market = generateHiringMarket(c, w.seed, w.round);
+  assert.ok(market.length > 0, "a candidate market is generated each round");
+  const cand = market[0];
+  const decs0 = w.firms.map((f) => mkDecision(f.id, w, f.id === hirer ? { hire_employees: [cand.id] } : {}));
+  const r0 = resolveRound(w, decs0, c);
+  w = r0.world;
+  const emps = w.firms.find((f) => f.id === hirer)!.employees ?? [];
+  assert.equal(emps.length, 1, "the hire lands on the roster");
+  assert.equal(emps[0].name, cand.name, "the candidate's identity carries through");
+
+  // Run on; the §7.2 invariants must hold for every firm-round (salary is opex, stock
+  // gains never touch the balance sheet).
+  for (let i = 0; i < 4; i++) {
+    const r = resolveRound(w, w.firms.map((f) => mkDecision(f.id, w, {})), c);
+    w = r.world;
+    for (const fr of r.result.firm_results) {
+      const bs = fr.balance_sheet;
+      assert.ok(Math.abs(bs.assets - (bs.debt + bs.equity)) < 1e-3, `balance ${fr.firm_id} r${fr.round}`);
+      assert.ok(Math.abs(bs.assets - (bs.cash + bs.ppe + bs.inventory)) < 1e-3, `assets=cash+ppe+inv ${fr.firm_id} r${fr.round}`);
+    }
+  }
+});
+
+test("employees all-off parity: enabling the module with no hires changes nothing", () => {
+  const a = runGame(loadConfig(), makeProvider(BASELINE_ASSIGNMENT));
+  const b = runGame(loadConfig(modulesOverride(["employees"])), makeProvider(BASELINE_ASSIGNMENT));
+  const fa = a.history.at(-1)!.firm_results.map((f) => f.scorecard_cumulative);
+  const fb = b.history.at(-1)!.firm_results.map((f) => f.scorecard_cumulative);
+  assert.deepEqual(fb, fa, "employees on but unused must equal employees off");
 });
 
 test("registry is coherent: ids unique, deps resolve, presets reference real ids", () => {

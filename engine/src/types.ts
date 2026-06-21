@@ -208,7 +208,7 @@ export type ModuleId =
   | "renegotiation" | "asymmetricStarts" | "consumerDrift" | "lobbying"
   // Tier B — medium lift
   | "geography" | "international" | "laborMarket" | "rndRace" | "teamRoles"
-  | "verticalIntegration" | "ma" | "financialInstruments" | "inventory" | "reputation" | "facilities";
+  | "verticalIntegration" | "ma" | "financialInstruments" | "inventory" | "reputation" | "facilities" | "employees";
 
 /** Minimal module config: a plain on/off flag. Modules whose engine logic isn't
  *  wired yet use this shape; they appear in the instructor selector as "planned"
@@ -522,6 +522,53 @@ export interface Facility {
   active: boolean; // false ⇒ mothballed (no capacity, no fixed cost)
 }
 
+/** MOD-B12 · Employees (named human capital). Additive + gated, like facilities:
+ *  a hire adds a per-round salary (opex) and a skill-scaled per-round gain to one
+ *  stock (Q/B/process/T_*), scaled by satisfaction. Satisfaction drifts with pay vs.
+ *  market, tenure, and firm health; at zero the person quits (a T_emp hit). A fresh
+ *  hiring market of candidates is generated deterministically each round, so the web
+ *  shows exactly what the engine will accept. With the module off, no employees exist
+ *  and the engine is identical to the pre-module game. Stock gains never touch the
+ *  balance sheet and salaries are opex, so the §7.2 invariants are preserved. */
+export type EmployeeStock = "Q" | "B" | "process" | "T_emp" | "T_inv" | "T_gov";
+export interface EmployeeRoleConfig {
+  id: string;
+  label: string;
+  primary_stock: EmployeeStock; // which stock this role raises
+  gain_per_skill: number; // per-round stock gain = skill × this × satisfaction
+  base_salary: number; // market salary for a skill-3 of this role
+}
+export interface EmployeesConfig {
+  enabled: boolean;
+  max_employees: number; // roster cap per firm
+  market_size: number; // candidates offered each round
+  roles: EmployeeRoleConfig[];
+  starting_satisfaction: number; // satisfaction a new hire starts at (0..1)
+  tenure_bump: number; // satisfaction lift at tenure milestones (rounds 3/6/10)
+  poach_base: number; // base per-round chance a dissatisfied hire is poached
+}
+/** A hireable candidate in the round's market (pre-hire; deterministic per round). */
+export interface Candidate {
+  id: string; // stable within the round (e.g. "cand_4_2")
+  name: string;
+  role: string; // EmployeeRoleConfig.id
+  skill: number; // 1..5
+  salary: number; // their ask (skill-correlated, with scouting noise)
+  avatar_seed: string;
+}
+/** One employed person (FirmState.employees). */
+export interface Employee {
+  id: string; // unique per firm (e.g. "emp_4_0")
+  name: string;
+  role: string; // EmployeeRoleConfig.id
+  skill: number; // 1..5
+  salary: number; // per-round cost (opex)
+  satisfaction: number; // 0..1; at 0 they quit
+  tenure_rounds: number;
+  hired_round: number;
+  avatar_seed: string;
+}
+
 export interface ModulesConfig {
   // Tier A
   publicGoods: PublicGoodsConfig;
@@ -544,6 +591,7 @@ export interface ModulesConfig {
   inventory: InventoryConfig; // MOD-B09 — fully implemented (see engine/inventory.ts)
   reputation: ReputationConfig;
   facilities: FacilitiesConfig; // MOD-B11 — named physical capacity assets (see engine/facilities.ts)
+  employees: EmployeesConfig; // MOD-B12 — named human capital (see engine/employees.ts)
 }
 
 export interface ScoringConfig {
@@ -640,6 +688,8 @@ export interface FirmState {
   key_hires: { role: string; hired_round: number }[];
   // MOD-B11 facilities (named physical capacity assets; empty/undefined when off)
   facilities?: Facility[];
+  // MOD-B12 employees (named human capital; empty/undefined when off)
+  employees?: Employee[];
   // MOD-B08 financial instruments (null/0 when off)
   convertible_note: { principal: number; drawn_round: number } | null;
   rbf_outstanding: number; // remaining total obligation (principal + fee)
@@ -782,6 +832,10 @@ export interface FirmDecision {
   maintain_facilities?: Record<string, number>; // facility id → maintenance $ this round
   mothball_facilities?: string[]; // facility ids to take offline (stop fixed cost + capacity)
   reactivate_facilities?: string[]; // mothballed facility ids to bring back online
+  // MOD-B12 employees
+  hire_employees?: string[]; // candidate ids (from this round's market) to hire
+  fire_employees?: string[]; // employee ids to let go this round
+  raise_employees?: Record<string, number>; // employee id → new salary (a raise)
   draw_convertible?: number; // MOD-B08: convertible-note draw (cash in)
   draw_rbf?: number; // MOD-B08: revenue-based-financing draw (cash in)
   acquisition_bid?: { target: FirmId; price: number } | null; // MOD-B07: bid on a distressed rival

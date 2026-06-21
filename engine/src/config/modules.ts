@@ -145,6 +145,26 @@ export const defaultModules: ModulesConfig = {
       { id: "canning_line", label: "Canning line", capacity_contribution: 160, base_cost: 300, fixed_cost: 16, build_rounds: 1, condition_decay: 0.06, maintenance_effect: 0.004 },
     ],
   },
+  // MOD-B12 — named human capital. OFF by default (additive: no employees ⇒ identical
+  // to the pre-module game). Each hire adds a salary (opex) and a skill×satisfaction
+  // per-round gain to one stock; a rolling candidate market is generated deterministically.
+  // Tunable with play-test data. See engine/employees.ts.
+  employees: {
+    enabled: false,
+    max_employees: 6,
+    market_size: 4,
+    roles: [
+      { id: "head_brewer", label: "Head Brewer", primary_stock: "Q", gain_per_skill: 0.9, base_salary: 16 },
+      { id: "brand_manager", label: "Brand Manager", primary_stock: "B", gain_per_skill: 0.8, base_salary: 15 },
+      { id: "operations_manager", label: "Operations Manager", primary_stock: "process", gain_per_skill: 0.7, base_salary: 15 },
+      { id: "taproom_manager", label: "Taproom Manager", primary_stock: "T_emp", gain_per_skill: 0.7, base_salary: 13 },
+      { id: "finance_lead", label: "Finance Lead", primary_stock: "T_inv", gain_per_skill: 0.6, base_salary: 16 },
+      { id: "sales_director", label: "Sales Director", primary_stock: "T_gov", gain_per_skill: 0.6, base_salary: 15 },
+    ],
+    starting_satisfaction: 0.7,
+    tenure_bump: 0.1,
+    poach_base: 0.05,
+  },
 };
 
 /** Catalog metadata for the instructor selector. `implemented` gates whether the
@@ -267,6 +287,12 @@ export const MODULE_REGISTRY: ModuleMeta[] = [
     id: "facilities", code: "MOD-B11", tier: "B", category: "operations", name: "Facilities & physical capacity",
     blurb: "Build and maintain named breweries, taprooms, and lines — capacity lives in assets you own and must keep in repair.",
     pedagogy: "Capacity strategy, capital investment, asset condition & maintenance, fixed-cost structure.",
+    deps: [], implemented: true,
+  },
+  {
+    id: "employees", code: "MOD-B12", tier: "B", category: "people", name: "Employees & human capital",
+    blurb: "Hire named people from a rolling talent market; manage salary, satisfaction, and retention as they raise your stocks.",
+    pedagogy: "Human capital, hiring & selection, compensation, retention, morale.",
     deps: [], implemented: true,
   },
   {

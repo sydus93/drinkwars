@@ -20,6 +20,7 @@ import { updateReputation, reputationSpread } from "./reputation.js";
 import { resolveRnd, rndFirstMoverBonus } from "./rndrace.js";
 import { resolveAssets, verticalCostReduction, verticalRegRelief } from "./assets.js";
 import { resolveFacilities, facilityCapacity } from "./facilities.js";
+import { resolveEmployees } from "./employees.js";
 import { resolveMa } from "./ma.js";
 import { buildStatements, firmValuation } from "./finance.js";
 import { invCfg, computeInventory, type InventoryFlow } from "./inventory.js";
@@ -125,8 +126,10 @@ export function resolveRound(prevWorld: WorldState, decisionList: FirmDecision[]
   // before unit cost / shocks so integrated assets bite this round.
   const assetsRes = resolveAssets(w, decisions, c, round);
   const facRes = resolveFacilities(w, decisions, c, round);
+  const empRes = resolveEmployees(w, decisions, c, round);
   events.push(...assetsRes.events);
   events.push(...facRes.events);
+  events.push(...empRes.events);
 
   // Step 4.5: sustainability (MOD-A03) — advance water-efficiency + T_gov goodwill
   // BEFORE shocks, so the water-shock resilience term sees this round's stock.
@@ -344,7 +347,7 @@ export function resolveRound(prevWorld: WorldState, decisionList: FirmDecision[]
       // cash swaps into PP&E without adding brewing capacity.
       invest: { Q: d.invest_Q, B: d.invest_B, T_emp: d.invest_T_emp, T_inv: d.invest_T_inv, T_gov: d.invest_T_gov, process: d.invest_process, cap: d.invest_cap + (assetsRes.capexByFirm.get(f.id) ?? 0) + (facRes.capexByFirm.get(f.id) ?? 0) },
       financing: { debt_draw: d.debt_draw, debt_repay: d.debt_repay, equity_raise: d.equity_raise, dividend: d.dividend },
-      extraOpex: (agRes.extraOpex.get(f.id) ?? 0) + (d.buy_info ? c.information.cost : 0) + holdingCost + (prRes.costByFirm.get(f.id) ?? 0) + (sustRes.costByFirm.get(f.id) ?? 0) + (pgRes.costByFirm.get(f.id) ?? 0) + (geoOpexByFirm.get(f.id) ?? 0) + (rndRes.costByFirm.get(f.id) ?? 0) + (assetsRes.opexByFirm.get(f.id) ?? 0) + (loRes.costByFirm.get(f.id) ?? 0) + (facRes.opexByFirm.get(f.id) ?? 0),
+      extraOpex: (agRes.extraOpex.get(f.id) ?? 0) + (d.buy_info ? c.information.cost : 0) + holdingCost + (prRes.costByFirm.get(f.id) ?? 0) + (sustRes.costByFirm.get(f.id) ?? 0) + (pgRes.costByFirm.get(f.id) ?? 0) + (geoOpexByFirm.get(f.id) ?? 0) + (rndRes.costByFirm.get(f.id) ?? 0) + (assetsRes.opexByFirm.get(f.id) ?? 0) + (loRes.costByFirm.get(f.id) ?? 0) + (facRes.opexByFirm.get(f.id) ?? 0) + (empRes.opexByFirm.get(f.id) ?? 0),
       cashHit: shock.perFirm.get(f.id)?.cash_hit ?? 0,
       spreadReduction: reputationSpread(f, c),
       regBurdenReduction: verticalRegRelief(f, c, round),
