@@ -162,6 +162,7 @@ function District({ seg, demand, firms, shocks, youId, onInspect }: {
   seg: SegmentId; demand: number; firms: FirmSnapshot[]; shocks: ShockSignal[]; youId: string; onInspect: (firmId: string) => void;
 }) {
   const [hover, setHover] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
   const char = SEG_CHARACTER[seg] ?? { tagline: "", rewards: "", hue: "var(--color-copper)" };
   const here = firms.filter((f) => f.focus.includes(seg) && (f.priceBySeg[seg] ?? 0) > 0);
   const hitBy = shocks.filter((s) => s.target === seg || s.target === "all");
@@ -177,8 +178,16 @@ function District({ seg, demand, firms, shocks, youId, onInspect }: {
 
   return (
     <div className="card overflow-hidden">
-      {/* District header */}
-      <div className="flex flex-wrap items-center gap-3 border-b border-line px-4 py-3" style={{ background: `color-mix(in srgb, ${char.hue} 7%, transparent)` }}>
+      {/* District header — click to expand who's competing here */}
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => setExpanded((v) => !v)}
+        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setExpanded((v) => !v); } }}
+        title={expanded ? "Hide district detail" : "Show who's competing here"}
+        className="flex flex-wrap items-center gap-3 border-b border-line px-4 py-3 text-left transition-colors hover:bg-paper2/40"
+        style={{ background: `color-mix(in srgb, ${char.hue} 7%, transparent)` }}
+      >
         <CategoryCoin seg={seg} size={38} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
@@ -196,6 +205,7 @@ function District({ seg, demand, firms, shocks, youId, onInspect }: {
             </span>
           );
         })}
+        <span className={`ml-1 text-[0.7rem] text-inksoft transition-transform ${expanded ? "rotate-90" : ""}`} aria-hidden="true">▸</span>
       </div>
 
       {/* The street */}
@@ -251,6 +261,25 @@ function District({ seg, demand, firms, shocks, youId, onInspect }: {
           <span>Premium →</span>
         </div>
       </div>
+
+      {expanded && (
+        <div className="border-t border-line px-4 py-3 text-[0.75rem]">
+          <p className="text-inksoft">{char.rewards}</p>
+          {here.length > 0 && (
+            <div className="mt-2 grid gap-1">
+              <div className="text-[0.6rem] uppercase tracking-[0.12em] text-inksoft">Who's competing here</div>
+              {[...here].sort((a, b) => (b.shareBySeg[seg] ?? 0) - (a.shareBySeg[seg] ?? 0)).map((f) => (
+                <div key={f.firm_id} className="flex items-center gap-2">
+                  <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: firmColor(f.firm_id) }} aria-hidden="true" />
+                  <span className={`min-w-0 flex-1 truncate ${f.firm_id === youId ? "font-bold text-copperdeep" : "text-ink"}`}>{f.firm_id === youId ? `${f.name} (you)` : f.name}</span>
+                  <span className="tnum shrink-0 text-inksoft">{fmt.price(f.priceBySeg[seg] ?? 0)}</span>
+                  <span className="tnum w-10 shrink-0 text-right text-inksoft">{fmt.pct(f.shareBySeg[seg] ?? 0)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
