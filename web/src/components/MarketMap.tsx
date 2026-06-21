@@ -5,6 +5,7 @@ import { Card, Eyebrow, Stat, Tag } from "./ui.js";
 import { CategoryCoin } from "./CategoryIcons.js";
 import { firmColor } from "../lib/teamColors.js";
 import { SEG_LABEL, SEG_CHARACTER, SHOCK_META, ROLE_LABEL, ASSET_LABEL, humanizeId, fmt } from "../labels.js";
+import { Avatar } from "./People.js";
 
 /**
  * The Market — the strategic anchor (Cities: Skylines model). Each live consumer
@@ -48,6 +49,8 @@ function BreweryCard({ view }: { view: GameView }) {
   const name = view.names[view.own.id] ?? "Your Brewery";
   const hires = me?.keyHires ?? [];
   const assets = me?.verticalAssets ?? [];
+  const facilities = view.own.facilities ?? [];
+  const employees = view.own.employees ?? [];
 
   return (
     <div className="card p-4">
@@ -67,6 +70,37 @@ function BreweryCard({ view }: { view: GameView }) {
           <Stat label="Cash" value={fmt.money(view.own.cash)} accent={view.own.cash < 300 ? "brick" : "ink"} />
         </div>
       </div>
+      {employees.length > 0 && (
+        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-line pt-3">
+          <span className="eyebrow mr-1">Team</span>
+          {employees.map((e) => {
+            const tone = e.satisfaction > 0.6 ? "var(--color-hop)" : e.satisfaction > 0.35 ? "var(--color-gold)" : "var(--color-brick)";
+            return (
+              <span key={e.id} className="flex items-center gap-1.5 rounded-full border border-line2 bg-paper2/40 py-0.5 pl-0.5 pr-2 text-[0.72rem]" title={`${e.name} · skill ${e.skill}/5 · morale ${Math.round(e.satisfaction * 100)}%`}>
+                <Avatar seed={e.avatar_seed} name={e.name} size={18} />
+                <span className="font-semibold text-ink">{e.name}</span>
+                <span className="h-1.5 w-1.5 rounded-full" style={{ background: tone }} aria-hidden="true" />
+              </span>
+            );
+          })}
+        </div>
+      )}
+      {facilities.length > 0 && (
+        <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-line pt-3">
+          <span className="eyebrow mr-1">Facilities</span>
+          {facilities.map((f) => {
+            const online = view.round >= f.online_round;
+            const tone = !online ? "var(--color-copper)" : !f.active ? "var(--color-inksoft)" : f.condition > 0.6 ? "var(--color-hop)" : f.condition > 0.35 ? "var(--color-gold)" : "var(--color-brick)";
+            return (
+              <span key={f.id} className={`flex items-center gap-1.5 rounded-md border border-line2 bg-paper2/40 px-2 py-1 text-[0.72rem] ${!f.active ? "opacity-60" : ""}`}>
+                <span className="h-2 w-2 rounded-full" style={{ background: tone }} aria-hidden="true" />
+                <span className="font-semibold text-ink">{f.name}</span>
+                <span className="text-inksoft">{!online ? "building" : !f.active ? "mothballed" : `${Math.round(f.condition * 100)}%`}</span>
+              </span>
+            );
+          })}
+        </div>
+      )}
       {(hires.length > 0 || assets.length > 0) && (
         <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-line pt-3">
           <span className="eyebrow mr-1">Roster & assets</span>

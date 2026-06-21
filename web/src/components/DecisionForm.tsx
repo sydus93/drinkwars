@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { FirmDecision, PrPlayType, SegmentId } from "drinkwars-engine";
+import type { Facility, FirmDecision, PrPlayType, SegmentId } from "drinkwars-engine";
 import type { GameView } from "../game/controller.js";
 import { SEG_LABEL, SEG_TAG, STOCK_LABEL, fmt } from "../labels.js";
 import { Button, Card, Eyebrow, Row, Tag } from "./ui.js";
@@ -10,6 +10,7 @@ import { InfoDot } from "./InfoDot.js";
 import { WorldMap } from "./WorldMap.js";
 import { MarketDetail } from "./MarketDetail.js";
 import { Alliances } from "./Alliances.js";
+import { Avatar, SkillStars } from "./People.js";
 
 const PR_PLAYS: { id: PrPlayType; label: string; description: string }[] = [
   { id: "festival", label: "Festival sponsorship", description: "A steady brand lift at a community event." },
@@ -172,8 +173,51 @@ export function DecisionForm({
   const renegCallQueued = (d?.agreement_actions ?? []).some((a) => a.type === "renegotiate");
   const renegCallCost = renegCallQueued ? (mods?.renegotiation?.call_cost ?? 0) : 0;
 
-  const moduleSpend = prSpend + waterSpend + pgSpend + geoEntrySpend + rndSpend + vertSpend + hireSpend + lobSpendEff + renegCallCost;
-  const anyModuleControls = prOn || sustOn || pgOn || rndOn || vertOn || labOn || maOn || lobOn;
+  // MOD-B11 facilities (named physical capacity assets)
+  const facOn = !!mods?.facilities?.enabled;
+  const facTypes = mods?.facilities?.types ?? [];
+  const facMax = mods?.facilities?.max_facilities ?? 0;
+  const facilities = view.own.facilities ?? [];
+  const fbuilds = d?.build_facilities ?? [];
+  const fmaint = d?.maintain_facilities ?? {};
+  const fmothball = new Set(d?.mothball_facilities ?? []);
+  const freactivate = new Set(d?.reactivate_facilities ?? []);
+  const facIsActive = (fac: Facility) => (freactivate.has(fac.id) ? true : fmothball.has(fac.id) ? false : fac.active);
+  const buildCost = facOn ? fbuilds.reduce((s, b) => s + (facTypes.find((t) => t.id === b.type)?.base_cost ?? 0), 0) : 0;
+  const maintCost = facOn ? Object.values(fmaint).reduce((s: number, v) => s + Math.max(0, v), 0) : 0;
+  const facSpend = buildCost + maintCost;
+  const addBuild = (type: string) => set({ build_facilities: [...fbuilds, { type }] });
+  const removeBuild = (i: number) => set({ build_facilities: fbuilds.filter((_, j) => j !== i) });
+  const renameBuild = (i: number, name: string) => set({ build_facilities: fbuilds.map((b, j) => (j === i ? { ...b, name } : b)) });
+  const setMaintain = (id: string, v: number) => set({ maintain_facilities: { ...fmaint, [id]: Math.max(0, v) } });
+  const toggleFacActive = (fac: Facility) => {
+    const m = new Set(fmothball), r = new Set(freactivate);
+    m.delete(fac.id); r.delete(fac.id);
+    if (facIsActive(fac)) { if (fac.active) m.add(fac.id); } // schedule mothball
+    else if (!fac.active) r.add(fac.id); // schedule reactivate
+    set({ mothball_facilities: [...m], reactivate_facilities: [...r] });
+  };
+
+  // MOD-B12 employees (named human capital)
+  const empOn = !!mods?.employees?.enabled;
+  const empRoles = mods?.employees?.roles ?? [];
+  const empMax = mods?.employees?.max_employees ?? 0;
+  const employees = view.own.employees ?? [];
+  const candidates = view.hiringMarket ?? [];
+  const ehiring = new Set(d?.hire_employees ?? []);
+  const efiring = new Set(d?.fire_employees ?? []);
+  const eraises = d?.raise_employees ?? {};
+  const roleLabel = (id: string) => empRoles.find((r) => r.id === id)?.label ?? id;
+  const fairSalary = (roleId: string, skill: number) => { const r = empRoles.find((x) => x.id === roleId); return r ? r.base_salary * (0.55 + 0.15 * skill) : 0; };
+  const hireCost = empOn ? candidates.filter((cnd) => ehiring.has(cnd.id)).reduce((s, cnd) => s + cnd.salary, 0) : 0;
+  const raiseCost = empOn ? employees.reduce((s: number, e) => s + Math.max(0, (eraises[e.id] ?? e.salary) - e.salary), 0) : 0;
+  const empSpend = hireCost + raiseCost;
+  const toggleHireEmp = (id: string) => { const n = new Set(ehiring); n.has(id) ? n.delete(id) : n.add(id); set({ hire_employees: [...n] }); };
+  const toggleFireEmp = (id: string) => { const n = new Set(efiring); n.has(id) ? n.delete(id) : n.add(id); set({ fire_employees: [...n] }); };
+  const setRaise = (id: string, v: number) => set({ raise_employees: { ...eraises, [id]: Math.max(0, v) } });
+
+  const moduleSpend = prSpend + waterSpend + pgSpend + geoEntrySpend + rndSpend + vertSpend + hireSpend + lobSpendEff + renegCallCost + facSpend + empSpend;
+  const anyModuleControls = prOn || sustOn || pgOn || rndOn || vertOn || labOn || maOn || lobOn || facOn || empOn;
   const setContribution = (goodId: string, v: number) => set({ public_good_contributions: { ...contribs, [goodId]: Math.max(0, v) } });
   const prEvent: GameEvent | null = prModal
     ? {
@@ -388,6 +432,189 @@ export function DecisionForm({
         </div>
 
         <div className="grid min-w-0 content-start gap-4">
+
+        {/* Facilities (MOD-B11) — owned physical capacity */}
+        {facOn && (
+          <Card>
+            <div className="mb-2 flex items-center gap-2">
+              <Eyebrow>Facilities</Eyebrow>
+              <InfoDot title="Facilities" align="right">
+                Your capacity lives in the breweries, taprooms, and lines you own. Build them (a capital expense), keep them in repair (upkeep), or mothball what you don't need. A run-down facility brews less — maintenance protects its output.
+              </InfoDot>
+            </div>
+
+            {facilities.length > 0 ? (
+              <div className="grid gap-2">
+                {facilities.map((fac) => {
+                  const t = facTypes.find((x) => x.id === fac.type);
+                  const active = facIsActive(fac);
+                  const online = view.round >= fac.online_round;
+                  const condPct = Math.round(fac.condition * 100);
+                  const condTone = fac.condition > 0.6 ? "var(--color-hop)" : fac.condition > 0.35 ? "var(--color-gold)" : "var(--color-brick)";
+                  const liveCap = t ? Math.round(t.capacity_contribution * (0.5 + 0.5 * fac.condition)) : 0;
+                  return (
+                    <div key={fac.id} className={`rounded-md border p-2.5 ${active ? "border-line2 bg-paper2/30" : "border-line bg-paper2/10 opacity-70"}`}>
+                      <div className="flex items-center gap-2">
+                        <span className="truncate text-sm font-semibold text-ink">{fac.name}</span>
+                        <Tag tone="ink">{t?.label ?? fac.type}</Tag>
+                        {!online ? <Tag tone="copper">Building · r{fac.online_round + 1}</Tag> : !active ? <Tag tone="ink">Mothballed</Tag> : null}
+                        <button type="button" onClick={() => toggleFacActive(fac)} className="ml-auto shrink-0 text-[0.66rem] font-semibold text-inksoft transition-colors hover:text-copperdeep">
+                          {active ? "Mothball" : "Reactivate"}
+                        </button>
+                      </div>
+                      <div className="mt-1.5 flex items-center gap-2">
+                        <span className="w-16 text-[0.6rem] uppercase tracking-[0.1em] text-inksoft">Condition</span>
+                        <div className="h-1.5 flex-1 overflow-hidden rounded-[2px] bg-line">
+                          <div className="h-full" style={{ width: `${condPct}%`, background: condTone }} />
+                        </div>
+                        <span className="tnum w-9 text-right text-[0.66rem] text-inksoft">{condPct}%</span>
+                      </div>
+                      <div className="mt-1 flex items-center justify-between gap-2 text-[0.66rem] text-inksoft">
+                        <span>{online ? `+${fmt.int(liveCap)} tanks` : "online soon"} · {fmt.money(t?.fixed_cost ?? 0)}/round</span>
+                        {active && online && (
+                          <label className="flex items-center gap-1">
+                            <span>Upkeep $</span>
+                            <input type="number" min={0} value={fmaint[fac.id] || ""} onChange={(e) => setMaintain(fac.id, +e.target.value)} placeholder="0"
+                              className="tnum w-14 rounded border border-line bg-paper px-1 py-0.5 text-right text-[0.7rem]" />
+                          </label>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="text-[0.74rem] text-inksoft">No facilities yet — build one below to add brewing capacity.</div>
+            )}
+
+            {fbuilds.map((b, i) => {
+              const t = facTypes.find((x) => x.id === b.type);
+              return (
+                <div key={`build-${i}`} className="mt-1.5 flex items-center gap-2 rounded-md border border-copper/40 bg-copper/[0.06] px-2 py-1.5">
+                  <span className="shrink-0 text-[0.7rem] font-semibold text-copperdeep">Building</span>
+                  <input value={b.name ?? ""} onChange={(e) => renameBuild(i, e.target.value)} placeholder={t?.label ?? "Name it"}
+                    className="min-w-0 flex-1 rounded border border-line bg-paper px-1.5 py-0.5 text-[0.72rem]" />
+                  <span className="tnum shrink-0 text-[0.7rem] text-copperdeep">{fmt.money(t?.base_cost ?? 0)}</span>
+                  <button type="button" onClick={() => removeBuild(i)} className="shrink-0 text-inksoft transition-colors hover:text-brick">✕</button>
+                </div>
+              );
+            })}
+
+            {facilities.length + fbuilds.length < facMax ? (
+              <div className="mt-3 border-t border-line pt-2">
+                <div className="mb-1.5 text-[0.6rem] uppercase tracking-[0.12em] text-inksoft">Break ground</div>
+                <div className="grid gap-1.5">
+                  {facTypes.map((t) => (
+                    <button key={t.id} type="button" onClick={() => addBuild(t.id)} disabled={cash < t.base_cost}
+                      className="flex items-center gap-2 rounded-md border border-line p-2 text-left transition-colors hover:border-copper disabled:cursor-not-allowed disabled:opacity-40">
+                      <span className="text-sm font-semibold text-ink">{t.label}</span>
+                      <span className="text-[0.64rem] text-inksoft">+{fmt.int(t.capacity_contribution)} tanks · {t.build_rounds}r · {fmt.money(t.fixed_cost)}/rd</span>
+                      <span className="tnum ml-auto text-[0.72rem] text-copperdeep">{fmt.money(t.base_cost)}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="mt-2 text-[0.64rem] text-inksoft">At the facility limit ({facMax}).</div>
+            )}
+
+            {facSpend > 0 && (
+              <div className="mt-2 flex items-center justify-between border-t border-line pt-1.5 text-[0.72rem]">
+                <span className="text-inksoft">This round</span>
+                <span className="tnum text-ink">
+                  {buildCost > 0 && `Build ${fmt.money(buildCost)}`}
+                  {buildCost > 0 && maintCost > 0 && " · "}
+                  {maintCost > 0 && `Upkeep ${fmt.money(maintCost)}`}
+                </span>
+              </div>
+            )}
+          </Card>
+        )}
+
+        {/* Team (MOD-B12) — named human capital */}
+        {empOn && (
+          <Card>
+            <div className="mb-2 flex items-center gap-2">
+              <Eyebrow>Team</Eyebrow>
+              <InfoDot title="Your team" align="right">
+                Hire named people from the talent market. Each raises one of your stocks by their skill — but only while they're satisfied. Pay below market or hit hard times and morale slips; at zero they walk, and rivals poach the unhappy. A raise buys loyalty.
+              </InfoDot>
+            </div>
+
+            {employees.length > 0 ? (
+              <div className="grid gap-2">
+                {employees.map((e) => {
+                  const firingThis = efiring.has(e.id);
+                  const satPct = Math.round(e.satisfaction * 100);
+                  const satTone = e.satisfaction > 0.6 ? "var(--color-hop)" : e.satisfaction > 0.35 ? "var(--color-gold)" : "var(--color-brick)";
+                  return (
+                    <div key={e.id} className={`rounded-md border p-2.5 ${firingThis ? "border-brick/50 bg-brick/[0.06] opacity-70" : "border-line2 bg-paper2/30"}`}>
+                      <div className="flex items-center gap-2">
+                        <Avatar seed={e.avatar_seed} name={e.name} size={26} />
+                        <span className="truncate text-sm font-semibold text-ink">{e.name}</span>
+                        <SkillStars n={e.skill} />
+                        <button type="button" onClick={() => toggleFireEmp(e.id)} className={`ml-auto shrink-0 text-[0.66rem] font-semibold transition-colors ${firingThis ? "text-copperdeep" : "text-inksoft hover:text-brick"}`}>
+                          {firingThis ? "Keep" : "Let go"}
+                        </button>
+                      </div>
+                      <div className="mt-0.5 text-[0.64rem] text-inksoft">{roleLabel(e.role)} · {e.tenure_rounds}r tenure · {fmt.money(e.salary)}/round</div>
+                      <div className="mt-1.5 flex items-center gap-2">
+                        <span className="w-16 text-[0.6rem] uppercase tracking-[0.1em] text-inksoft">Morale</span>
+                        <div className="h-1.5 flex-1 overflow-hidden rounded-[2px] bg-line"><div className="h-full" style={{ width: `${satPct}%`, background: satTone }} /></div>
+                        <span className="tnum w-9 text-right text-[0.66rem] text-inksoft">{satPct}%</span>
+                      </div>
+                      {!firingThis && (
+                        <label className="mt-1 flex items-center justify-end gap-1 text-[0.64rem] text-inksoft">
+                          <span>Raise to $</span>
+                          <input type="number" min={e.salary} value={eraises[e.id] ?? ""} onChange={(ev) => setRaise(e.id, +ev.target.value)} placeholder={String(e.salary)}
+                            className="tnum w-14 rounded border border-line bg-paper px-1 py-0.5 text-right text-[0.7rem]" />
+                        </label>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="text-[0.74rem] text-inksoft">No employees yet — hire from the talent market below.</div>
+            )}
+
+            {employees.length < empMax && candidates.length > 0 && (
+              <div className="mt-3 border-t border-line pt-2">
+                <div className="mb-1.5 flex items-center justify-between text-[0.6rem] uppercase tracking-[0.12em] text-inksoft">
+                  <span>Talent market</span>
+                  <span>{employees.length}/{empMax} on staff</span>
+                </div>
+                <div className="grid gap-1.5">
+                  {candidates.map((cnd) => {
+                    const picked = ehiring.has(cnd.id);
+                    const fair = fairSalary(cnd.role, cnd.skill);
+                    const deal = cnd.salary <= fair * 0.95 ? "underpriced" : cnd.salary >= fair * 1.1 ? "pricey" : "fair";
+                    const full = !picked && (cash < cnd.salary || employees.length + ehiring.size >= empMax);
+                    return (
+                      <button key={cnd.id} type="button" onClick={() => toggleHireEmp(cnd.id)} disabled={full}
+                        className={`flex items-center gap-2 rounded-md border p-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${picked ? "border-copper bg-copper/[0.06]" : "border-line hover:border-copper"}`}>
+                        <Avatar seed={cnd.avatar_seed} name={cnd.name} size={24} />
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5"><span className="truncate text-sm font-semibold text-ink">{cnd.name}</span><SkillStars n={cnd.skill} /></div>
+                          <div className="text-[0.62rem] text-inksoft">{roleLabel(cnd.role)} · <span className={deal === "underpriced" ? "text-hop" : deal === "pricey" ? "text-brick" : ""}>{deal}</span></div>
+                        </div>
+                        <span className="tnum ml-auto shrink-0 text-[0.72rem] text-copperdeep">{fmt.money(cnd.salary)}/rd</span>
+                        <span className="shrink-0 text-[0.66rem] font-semibold text-copperdeep">{picked ? "✓" : "Hire"}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {empSpend > 0 && (
+              <div className="mt-2 flex items-center justify-between border-t border-line pt-1.5 text-[0.72rem]">
+                <span className="text-inksoft">New payroll this round</span>
+                <span className="tnum text-ink">{fmt.money(empSpend)}</span>
+              </div>
+            )}
+          </Card>
+        )}
 
         {/* Markets / worldview (MOD-B01 geography, MOD-B02 international) */}
         {geoOn && markets.length > 1 && (

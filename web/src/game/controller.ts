@@ -5,8 +5,8 @@
  * adaptive best-response bots from the engine. This is app-spec §9 step 0.
  */
 import { GameOrchestrator, InMemoryAdapter, randomBreweryNames, renameFirms } from "drinkwars-server";
-import { resolveConfig, decideAdaptive, ADAPTIVE_LEANS, inventoryEnabled, roleBriefings, firmValuation, summarizeAgreementsFor, summarizeLobbying } from "drinkwars-engine";
-import type { RoleBriefing, AllianceSummary, LobbySummary } from "drinkwars-engine";
+import { resolveConfig, decideAdaptive, ADAPTIVE_LEANS, inventoryEnabled, roleBriefings, firmValuation, summarizeAgreementsFor, summarizeLobbying, generateHiringMarket } from "drinkwars-engine";
+import type { RoleBriefing, AllianceSummary, LobbySummary, Candidate } from "drinkwars-engine";
 import type { Config, ConfigOverride, FirmDecision, FirmId, FirmRoundResult, FirmState, Lean, ModulesConfig, RoundResult, SegmentId, WorldState } from "drinkwars-engine";
 
 export type Difficulty = "relaxed" | "competitive" | "cutthroat";
@@ -113,6 +113,7 @@ export interface GameView {
   agreements: AllianceSummary[]; // MOD-A05/A06 active pacts you're party to (empty when off)
   lobbyInitiatives: LobbySummary[]; // MOD-A09 regulation initiatives + progress (empty when off)
   shocks: ShockSignal[]; // active + foreseeable upcoming shocks, for the map/header
+  hiringMarket: Candidate[]; // MOD-B12 this round's hireable candidates (empty when off)
 }
 
 const median = (xs: number[]): number => {
@@ -279,6 +280,7 @@ export class SinglePlayerGame {
       agreements: summarizeAgreementsFor(world, this.humanFirmId, (id) => this.nameOf(id)),
       lobbyInitiatives: summarizeLobbying(this.config, world),
       shocks,
+      hiringMarket: generateHiringMarket(this.config, world.seed, game.current_round),
     };
   }
 
@@ -314,7 +316,11 @@ export class SinglePlayerGame {
       return {
         ...this.lastHuman, firm_id: this.humanFirmId, price, presence,
         debt_draw: 0, debt_repay: 0, equity_raise: 0, dividend: 0,
-        buy_info: false, agreement_actions: [], exit_action: null, beliefs: {}, reflection: "",
+        buy_info: false, agreement_actions: [], exit_action: null,
+        // Facility + employee actions are one-shot — clear them so a build/hire doesn't re-fire every round.
+        build_facilities: [], maintain_facilities: {}, mothball_facilities: [], reactivate_facilities: [],
+        hire_employees: [], fire_employees: [], raise_employees: {},
+        beliefs: {}, reflection: "",
       };
     }
 
