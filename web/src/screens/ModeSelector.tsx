@@ -67,7 +67,7 @@ export function ModeSelector({ onChange }: { onChange: (modules: ModuleSelection
         <div className="mb-1 flex items-center gap-1.5 text-sm text-inksoft">
           <span>Mode preset</span>
           <InfoDot title="Modes are presets">
-            A mode is a named set of expansion flags tuned for a course. Pick one as a starting point, then toggle individual modules below. Everything off is the standard v1 game.
+            A mode is a named set of expansion packs tuned for a course. Pick one as a starting point, then toggle individual packs below. Everything off is the standard game.
           </InfoDot>
         </div>
         <div className="flex flex-wrap gap-1.5">
@@ -137,7 +137,6 @@ export function ModeSelector({ onChange }: { onChange: (modules: ModuleSelection
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-1.5">
                             <span className="text-sm font-semibold text-ink">{m.name}</span>
-                            <span className="font-mono text-[0.56rem] uppercase tracking-[0.1em] text-inksoft">{m.code}</span>
                             <span className="rounded-full border border-line2 px-1.5 py-px text-[0.56rem] uppercase tracking-[0.1em] text-inksoft" title={DEPTH[m.tier].hint}>
                               {DEPTH[m.tier].label}
                             </span>

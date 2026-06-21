@@ -142,7 +142,7 @@ function OverviewPanel({ d }: { d: Derived }) {
       <Card>
         <Eyebrow>Class snapshot · through round {d.latestRound + 1}</Eyebrow>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-          <Stat label="Round" value={`${d.data.meta.currentRound + (d.data.meta.lifecycle === "complete" ? 0 : 1)}/${d.data.meta.nRounds}`} sub={d.data.meta.lifecycle} accent="copper" />
+          <Stat label="Round" value={`${d.data.meta.currentRound + (d.data.meta.lifecycle === "complete" ? 0 : 1)}/${d.data.meta.nRounds}`} sub={({ open: "Lobby open", locked: "In progress", complete: "Complete" } as Record<string, string>)[d.data.meta.lifecycle] ?? d.data.meta.lifecycle} accent="copper" />
           <Stat label="Active" value={active} accent="hop" />
           <Stat label="Bankrupt / exited" value={`${bankrupt} / ${exited}`} accent={bankrupt ? "brick" : "ink"} />
           <Stat label="Top score" value={fscore(top)} />

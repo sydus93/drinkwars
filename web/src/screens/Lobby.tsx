@@ -31,10 +31,10 @@ export function Lobby({ onPick }: { onPick: (s: "solo" | "join" | "instructor") 
             </button>
           ))}
         </div>
-        <p className="mt-6 font-mono text-[0.68rem] tracking-wide text-inksoft">
+        <p className="mt-6 max-w-xl text-[0.82rem] leading-relaxed text-inksoft">
           {MP_ENABLED
-            ? "Solo runs in your browser; live multiplayer needs the local game server (npm run serve)."
-            : "Live multiplayer (instructor-run classroom games with join codes) is coming to this page soon."}
+            ? "Solo play runs entirely in your browser — no sign-in. To play with a class, join a live game with a code from your instructor, or set up your own session."
+            : "Solo play runs entirely in your browser — no sign-in, no setup."}
         </p>
       </div>
     </div>

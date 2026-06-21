@@ -1,5 +1,6 @@
 import type { GameView } from "../game/controller.js";
 import { Card, Eyebrow, Tag } from "./ui.js";
+import { firmColor } from "../lib/teamColors.js";
 
 const STATUS_TONE: Record<string, "ink" | "hop" | "brick" | "copper"> = {
   active: "hop",
@@ -7,6 +8,14 @@ const STATUS_TONE: Record<string, "ink" | "hop" | "brick" | "copper"> = {
   exited_banked: "ink",
   exited_invested: "copper",
   exited_rebuilt: "copper",
+};
+
+const STATUS_LABEL: Record<string, string> = {
+  bankrupt: "Bankrupt",
+  exited_banked: "Cashed out",
+  exited_invested: "Turned investor",
+  exited_rebuilt: "Rebuilt",
+  acquired: "Acquired",
 };
 
 export function Standings({ view, onSelect }: { view: GameView; onSelect?: (firmId: string) => void }) {
@@ -32,11 +41,12 @@ export function Standings({ view, onSelect }: { view: GameView; onSelect?: (firm
           const Inner = (
             <>
               <span className="tnum w-5 text-right text-sm text-inksoft">{i + 1}</span>
+              <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: firmColor(s.firm_id) }} aria-hidden="true" />
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <span className={`truncate text-sm ${s.isYou ? "font-bold text-copperdeep" : ""}`}>{s.name}</span>
                   {s.isYou && <Tag tone="copper">You</Tag>}
-                  {s.status !== "active" && <Tag tone={STATUS_TONE[s.status] ?? "ink"}>{s.status.replace("exited_", "")}</Tag>}
+                  {s.status !== "active" && <Tag tone={STATUS_TONE[s.status] ?? "ink"}>{STATUS_LABEL[s.status] ?? s.status}</Tag>}
                 </div>
                 <div className="mt-0.5 h-1.5 w-full overflow-hidden rounded-[2px] bg-line">
                   <div className="h-full" style={{ width: `${((s.score - lo) / span) * 100}%`, background: s.isYou ? "var(--color-copper)" : "var(--color-inksoft)" }} />

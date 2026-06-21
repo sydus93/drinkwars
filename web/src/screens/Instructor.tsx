@@ -100,7 +100,7 @@ export function Instructor({ onExit }: { onExit: () => void }) {
           <div className="mt-6 grid gap-4">
             <label className="grid gap-1">
               <span className="text-sm text-inksoft">Instructor passcode</span>
-              <input type="password" value={pass} onChange={(e) => setPass(e.target.value)} placeholder="set by whoever runs the server" />
+              <input type="password" value={pass} onChange={(e) => setPass(e.target.value)} placeholder="Enter your instructor passcode" />
             </label>
             <div className="grid grid-cols-2 gap-3">
               <label className="grid gap-1">
@@ -136,7 +136,9 @@ export function Instructor({ onExit }: { onExit: () => void }) {
     );
   }
 
-  const lc = status?.lifecycle ?? "open";
+  const LIFECYCLE_LABEL: Record<string, string> = { open: "Lobby open", locked: "Round in progress", complete: "Season complete" };
+  const lcRaw = status?.lifecycle ?? "open";
+  const lc = LIFECYCLE_LABEL[lcRaw] ?? lcRaw;
   const joined = status?.teams.filter((t) => t.joined).length ?? 0;
   const slots = status?.teams.length ?? nFirms;
 

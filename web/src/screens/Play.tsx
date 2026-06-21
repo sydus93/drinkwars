@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { FirmDecision } from "drinkwars-engine";
 import type { GameView } from "../game/controller.js";
-import { SEG_TAG, fmt } from "../labels.js";
+import { SEG_TAG, SHOCK_META, fmt } from "../labels.js";
 import { Button, Card, Eyebrow, Stat, Tag } from "../components/ui.js";
 import { DecisionForm } from "../components/DecisionForm.js";
 import { Diagnostics } from "../components/Diagnostics.js";
@@ -15,8 +15,9 @@ import { Boardroom } from "../components/Boardroom.js";
 import { Sparkline } from "../components/Sparkline.js";
 import { Trends } from "../components/Trends.js";
 import { Field } from "../components/Field.js";
+import { MarketMap } from "../components/MarketMap.js";
 
-type Tab = "decision" | "last" | "trends" | "field";
+type Tab = "decision" | "market" | "last" | "trends" | "field";
 
 export function Play({
   view,
@@ -73,6 +74,7 @@ export function Play({
 
   const tabs: { id: Tab; label: string; disabled?: boolean }[] = [
     { id: "decision", label: view.complete ? "Season over" : `Decide R${view.round + 1}` },
+    { id: "market", label: "The Market" },
     { id: "last", label: "Last round", disabled: !view.ownResult },
     { id: "trends", label: "Trends", disabled: !hasHistory },
     { id: "field", label: "Field & intel", disabled: !hasHistory },
@@ -103,6 +105,24 @@ export function Play({
               <Tag key={s.id} tone="copper">{SEG_TAG[s.id] ?? s.id}</Tag>
             ))}
           </div>
+          {view.shocks.length > 0 && (
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              {view.shocks.map((s, i) => {
+                const m = SHOCK_META[s.typeId] ?? { label: s.typeId, icon: "⚠", note: "" };
+                return (
+                  <button
+                    key={i}
+                    onClick={() => setTab("market")}
+                    title="See it on the market map"
+                    className="flex items-center gap-1 rounded-full border px-2 py-0.5 text-[0.62rem] font-semibold transition-colors hover:bg-panel2"
+                    style={{ borderColor: s.active ? "var(--color-brick)" : "var(--color-gold)", color: s.active ? "var(--color-brick)" : "var(--color-copperdeep)" }}
+                  >
+                    {m.icon} {m.label} · {s.active ? "now" : `~${Math.max(s.roundsAway, 0)}r`}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
         <div className="flex gap-6">
           <Stat label="Cash" value={fmt.money(view.own.cash)} accent={view.own.cash < 300 ? "brick" : "ink"} />
@@ -161,6 +181,7 @@ export function Play({
             </div>
           )}
 
+          {tab === "market" && <MarketMap view={view} onInspect={setDetailFirm} />}
           {tab === "trends" && <Trends view={view} />}
           {tab === "field" && <Field view={view} infoActive={infoActive} onInspect={setDetailFirm} />}
         </div>

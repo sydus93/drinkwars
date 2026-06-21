@@ -152,6 +152,7 @@ export class StudentClient {
       fx: v.fx ?? {},
       agreements: v.agreements ?? [],
       lobbyInitiatives: v.lobbyInitiatives ?? [],
+      shocks: (v as { shocks?: GameView["shocks"] }).shocks ?? [], // transport doesn't project shocks yet → none
     };
   }
 

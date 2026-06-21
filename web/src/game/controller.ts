@@ -65,6 +65,7 @@ export interface FirmSnapshot {
   leverage: number;
   netIncome: number;
   priceBySeg: Record<SegmentId, number>;
+  shareBySeg: Record<SegmentId, number>; // market share within each segment (0–1)
   focus: SegmentId[];
   cash: number;
   debt: number;
@@ -72,6 +73,19 @@ export interface FirmSnapshot {
   distressRounds: number; // consecutive rounds below solvency health (M&A target gate)
   keyHires: string[]; // MOD-B03 roles currently on staff
   verticalAssets: string[]; // MOD-B06 owned assets
+}
+
+/** A shock the player is allowed to know about: either active right now, or an
+ *  upcoming one that carries a forewarning (`signaled_noisy`). Unannounced shocks
+ *  are NOT surfaced before they fire — seeing them coming would break the game. */
+export interface ShockSignal {
+  typeId: string; // "water" | "harvest" | "co2"
+  kind: string; // cost_spike | capacity_hit | …
+  target: SegmentId | "all";
+  round: number; // absolute firing round
+  roundsAway: number; // round − currentRound (≤0 ⇒ active now)
+  active: boolean; // currently in effect
+  signaled: boolean; // had a forewarning
 }
 
 export interface GameView {
@@ -98,6 +112,7 @@ export interface GameView {
   fx: Record<string, number>; // MOD-B02 export exchange rates (empty when off)
   agreements: AllianceSummary[]; // MOD-A05/A06 active pacts you're party to (empty when off)
   lobbyInitiatives: LobbySummary[]; // MOD-A09 regulation initiatives + progress (empty when off)
+  shocks: ShockSignal[]; // active + foreseeable upcoming shocks, for the map/header
 }
 
 const median = (xs: number[]): number => {
@@ -194,10 +209,12 @@ export class SinglePlayerGame {
     const firms: FirmSnapshot[] = world.firms.map((f) => {
       const fr = lastByFirm.get(f.id);
       const priceBySeg: Record<SegmentId, number> = {};
+      const shareBySeg: Record<SegmentId, number> = {};
       const focus: SegmentId[] = [];
       if (fr) {
         for (const [seg, r] of Object.entries(fr.segments)) {
           priceBySeg[seg] = r.price;
+          shareBySeg[seg] = r.share;
           if (r.share > 0.01) focus.push(seg);
         }
       }
@@ -209,7 +226,7 @@ export class SinglePlayerGame {
         T_emp: f.T_emp, T_inv: f.T_inv, T_gov: f.T_gov,
         leverage: f.debt / Math.max(f.paid_in_capital + f.retained_earnings, 1e-6),
         netIncome: fr?.pnl.net_income ?? 0,
-        priceBySeg, focus,
+        priceBySeg, shareBySeg, focus,
         cash: f.cash, debt: f.debt,
         valuation: firmValuation(f, this.config),
         distressRounds: f.rounds_below_health ?? 0,
@@ -223,6 +240,19 @@ export class SinglePlayerGame {
     const names = Object.fromEntries(this.nameByFirm);
     const briefings = roleBriefings(world, this.config, this.humanFirmId)
       .map((b) => ({ ...b, lines: b.lines.map((l) => renameFirms(l, names)) }));
+
+    // Shock visibility: reveal what's currently in effect, plus upcoming shocks that
+    // carry a forewarning (signaled_noisy, e.g. water). Unannounced shocks stay hidden
+    // until they fire. The timeline is pre-rolled at init, so the warning is honest.
+    const cur = game.current_round;
+    const shocks: ShockSignal[] = [];
+    for (const s of world.shock_timeline) {
+      const active = s.fired && s.round <= cur && cur < s.round + s.duration;
+      const upcomingSignaled = !s.fired && s.signaling === "signaled_noisy" && s.round >= cur && s.round <= cur + 3;
+      if (!active && !upcomingSignaled) continue;
+      shocks.push({ typeId: s.type_id, kind: s.kind, target: s.target, round: s.round, roundsAway: s.round - cur, active, signaled: s.signaling === "signaled_noisy" });
+    }
+    shocks.sort((a, b) => Number(b.active) - Number(a.active) || a.roundsAway - b.roundsAway);
 
     return {
       round: game.current_round,
@@ -248,6 +278,7 @@ export class SinglePlayerGame {
       fx: world.fx_rates ?? {},
       agreements: summarizeAgreementsFor(world, this.humanFirmId, (id) => this.nameOf(id)),
       lobbyInitiatives: summarizeLobbying(this.config, world),
+      shocks,
     };
   }
 

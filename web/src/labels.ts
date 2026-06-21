@@ -6,6 +6,50 @@ export const SEG_LABEL: Record<string, string> = {
 };
 export const SEG_TAG: Record<string, string> = { mass: "Mass", niche: "Niche", frontier: "New category" };
 
+/** District character for the market map — plain-language "what wins here," so a
+ *  player reads the landscape without seeing engine sensitivity coefficients. */
+export const SEG_CHARACTER: Record<string, { tagline: string; rewards: string; hue: string }> = {
+  mass: {
+    tagline: "High-volume, price-led. Thin margins, big tanks.",
+    rewards: "Shoppers here chase price. Win on cost and scale, not polish.",
+    hue: "var(--color-copper)",
+  },
+  niche: {
+    tagline: "Premium craft. Quality and brand command the markup.",
+    rewards: "Drinkers pay up for quality and a brand they trust. Execution matters.",
+    hue: "var(--color-hop)",
+  },
+  frontier: {
+    tagline: "The new category. First movers set the terms.",
+    rewards: "An emerging non-alc / functional scene — early quality builds the lead.",
+    hue: "var(--color-aero)",
+  },
+};
+
+/** Friendly names for the labor-market roles (MOD-B03) and vertical assets (MOD-B06)
+ *  a firm can own. Fallback title-cases any id not listed. Presentation only. */
+export const ROLE_LABEL: Record<string, string> = {
+  head_brewer: "Head Brewer",
+  sales_director: "Sales Director",
+  ops_manager: "Operations Manager",
+  taproom_manager: "Taproom Manager",
+  finance_lead: "Finance Lead",
+  brand_manager: "Brand Manager",
+  sustainability_lead: "Sustainability Lead",
+};
+export const ASSET_LABEL: Record<string, string> = {
+  hop_supplier: "Hop & Grain Supplier",
+  distributor: "Regional Distributor",
+};
+export const humanizeId = (id: string): string => id.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
+/** Map/feed metadata for each shock type (presentation only — engine ids stay generic). */
+export const SHOCK_META: Record<string, { label: string; icon: string; note: string }> = {
+  water: { label: "Water shortage", icon: "💧", note: "drives up input costs" },
+  harvest: { label: "Harvest failure", icon: "🌾", note: "drives up input costs" },
+  co2: { label: "CO₂ & packaging squeeze", icon: "📦", note: "constrains capacity" },
+};
+
 export const STOCK_LABEL = {
   Q: "Recipe quality",
   B: "Brand",
