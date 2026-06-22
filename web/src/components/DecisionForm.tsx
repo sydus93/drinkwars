@@ -12,6 +12,8 @@ import { MarketDetail } from "./MarketDetail.js";
 import { Alliances } from "./Alliances.js";
 import { Avatar, SkillStars } from "./People.js";
 import { firmColor } from "../lib/teamColors.js";
+import { EmployeeDetail } from "./EmployeeDetail.js";
+import { FacilityDetail } from "./FacilityDetail.js";
 
 const PR_PLAYS: { id: PrPlayType; label: string; description: string }[] = [
   { id: "festival", label: "Festival sponsorship", description: "A steady brand lift at a community event." },
@@ -58,6 +60,8 @@ export function DecisionForm({
   const [d, setD] = useState<FirmDecision | null>(null);
   const [prModal, setPrModal] = useState(false);
   const [marketDetail, setMarketDetail] = useState<string | null>(null);
+  const [detailEmp, setDetailEmp] = useState<string | null>(null);
+  const [detailFac, setDetailFac] = useState<string | null>(null);
   const activeSegs = view.segments.filter((s) => s.active).map((s) => s.id);
 
   useEffect(() => {
@@ -259,6 +263,20 @@ export function DecisionForm({
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
       <EventModal event={prEvent} onChoose={onPrChoose} onClose={() => setPrModal(false)} />
+      {detailEmp != null && (() => {
+        const emp = employees.find((x) => x.id === detailEmp);
+        return emp ? (
+          <EmployeeDetail employee={emp} role={empRoles.find((r) => r.id === emp.role)} roleLabel={roleLabel(emp.role)} raiseValue={eraises[emp.id]}
+            onRaise={(s) => { setRaise(emp.id, s); setDetailEmp(null); }} onFire={() => toggleFireEmp(emp.id)} firing={efiring.has(emp.id)} onClose={() => setDetailEmp(null)} />
+        ) : null;
+      })()}
+      {detailFac != null && (() => {
+        const fac = facilities.find((x) => x.id === detailFac);
+        return fac ? (
+          <FacilityDetail facility={fac} type={facTypes.find((x) => x.id === fac.type)} round={view.round} maintainValue={fmaint[fac.id]}
+            onMaintain={(s) => { setMaintain(fac.id, s); setDetailFac(null); }} active={facIsActive(fac)} onToggleActive={() => toggleFacActive(fac)} onClose={() => setDetailFac(null)} />
+        ) : null;
+      })()}
       {marketDetail && (() => {
         const m = markets.find((x) => x.id === marketDetail);
         if (!m) return null;
@@ -461,7 +479,7 @@ export function DecisionForm({
                   return (
                     <div key={fac.id} className={`rounded-md border p-2.5 ${active ? "border-line2 bg-paper2/30" : "border-line bg-paper2/10 opacity-70"}`}>
                       <div className="flex items-center gap-2">
-                        <span className="truncate text-sm font-semibold text-ink">{fac.name}</span>
+                        <button type="button" onClick={() => setDetailFac(fac.id)} className="truncate text-left text-sm font-semibold text-ink transition-colors hover:text-copperdeep" title="Facility details">{fac.name}</button>
                         <Tag tone="ink">{t?.label ?? fac.type}</Tag>
                         {!online ? <Tag tone="copper">Building · r{fac.online_round + 1}</Tag> : !active ? <Tag tone="ink">Mothballed</Tag> : null}
                         <button type="button" onClick={() => toggleFacActive(fac)} className="ml-auto shrink-0 text-[0.66rem] font-semibold text-inksoft transition-colors hover:text-copperdeep">
@@ -557,7 +575,7 @@ export function DecisionForm({
                     <div key={e.id} className={`rounded-md border p-2.5 ${firingThis ? "border-brick/50 bg-brick/[0.06] opacity-70" : "border-line2 bg-paper2/30"}`}>
                       <div className="flex items-center gap-2">
                         <Avatar seed={e.avatar_seed} name={e.name} size={26} />
-                        <span className="truncate text-sm font-semibold text-ink">{e.name}</span>
+                        <button type="button" onClick={() => setDetailEmp(e.id)} className="truncate text-left text-sm font-semibold text-ink transition-colors hover:text-copperdeep" title="Employee details">{e.name}</button>
                         <SkillStars n={e.skill} />
                         <button type="button" onClick={() => toggleFireEmp(e.id)} className={`ml-auto shrink-0 text-[0.66rem] font-semibold transition-colors ${firingThis ? "text-copperdeep" : "text-inksoft hover:text-brick"}`}>
                           {firingThis ? "Keep" : "Let go"}
