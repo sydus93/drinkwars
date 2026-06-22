@@ -130,6 +130,14 @@ export function resolveRound(prevWorld: WorldState, decisionList: FirmDecision[]
   events.push(...assetsRes.events);
   events.push(...facRes.events);
   events.push(...empRes.events);
+  // District brand draw (MOD-B11): facilities in high-visibility districts lift the
+  // Brand stock each round. Applied here (after stocks advance, before demand reads B)
+  // so it bites this round; it's a capability-stock bump, never a balance-sheet entry,
+  // so the §7.2 finance invariants are untouched.
+  for (const f of w.firms) {
+    const b = facRes.brandByFirm.get(f.id);
+    if (b && f.status === "active") f.B += b;
+  }
 
   // Step 4.5: sustainability (MOD-A03) — advance water-efficiency + T_gov goodwill
   // BEFORE shocks, so the water-shock resilience term sees this round's stock.

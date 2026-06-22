@@ -15,6 +15,7 @@
 import type { Config, FirmDecision, FirmState, PrPlayType, SegmentId, WorldState } from "../types.js";
 import { invCfg } from "../engine/inventory.js";
 import { firmValuation } from "../engine/finance.js";
+import { generateHiringMarket } from "../engine/employees.js";
 
 export interface Lean {
   id: string;
@@ -31,11 +32,6 @@ function estUnit(f: FirmState, c: Config): number {
 }
 function maintenanceCapex(f: FirmState, c: Config): number {
   return (c.capacity.depreciation * f.cap) / Math.max(c.capacity.gain, 1e-6);
-}
-
-/** Count signaled shocks scheduled within the next `horizon` rounds (the readable signal). */
-function upcomingSignaledShocks(world: WorldState, horizon = 2): number {
-  return world.shock_timeline.filter((s) => s.signaling === "signaled_noisy" && s.round >= world.round && s.round <= world.round + horizon).length;
 }
 
 export function decideAdaptive(lean: Lean, f: FirmState, world: WorldState, c: Config): FirmDecision {
@@ -109,9 +105,11 @@ export function decideAdaptive(lean: Lean, f: FirmState, world: WorldState, c: C
   const qualityWeight = chosen.filter((p) => QUALITY_SEGS.has(p.seg)).reduce((a, p) => a + presence[p.seg], 0) / totalPresence;
   const costWeight = 1 - qualityWeight;
 
-  // Resilience funding scaled by readable upcoming shocks (the §9.4 signal lesson).
-  const shockSignal = upcomingSignaledShocks(world);
-  const resilienceBoost = shockSignal > 0 ? 40 + 20 * shockSignal : 10;
+  // Shocks now strike unannounced, so prudent rivals keep a STANDING resilience
+  // posture once the mid-game shock window opens (~round 5+) rather than reacting
+  // to a countdown — the §9.4 preparedness lesson without a telegraph to game.
+  const shockSeason = world.round >= 5;
+  const resilienceBoost = shockSeason ? 30 : 10;
 
   // ---- Expansion-module levers (each gated on its module; lean-differentiated so
   // the field stays heterogeneous: brand bots play PR, cost bots integrate upstream,
@@ -137,19 +135,20 @@ export function decideAdaptive(lean: Lean, f: FirmState, world: WorldState, c: C
     }
   }
 
-  // Water efficiency — ops/stakeholder bots arm against the signaled drought.
+  // Water efficiency — ops/stakeholder bots keep the drought hedge funded through
+  // the shock season (an unpredictable drought rewards standing efficiency).
   let waterInvest = 0;
-  if (mods?.sustainability?.enabled && shockSignal > 0 && (lean.bias.process >= 1.2 || lean.bias.T_emp >= 1.4) && commit(50)) {
-    waterInvest = 50;
+  if (mods?.sustainability?.enabled && shockSeason && (lean.bias.process >= 1.2 || lean.bias.T_emp >= 1.4) && commit(40)) {
+    waterInvest = 40;
   }
 
   // Public goods — civic leans contribute; aggressive leans free-ride (the lesson).
   const contributions: Record<string, number> = {};
   if (mods?.publicGoods?.enabled && lean.bias.T_gov >= 0.8 && lean.cashGuard <= 0.45 && f.cash > 400) {
-    const want = 15 + (shockSignal > 0 ? 20 : 0);
+    const want = 15 + (shockSeason ? 20 : 0);
     if (commit(want)) {
       contributions.regional_marketing = 15;
-      if (shockSignal > 0) contributions.water_commons = 20;
+      if (shockSeason) contributions.water_commons = 20;
     }
   }
 
@@ -202,6 +201,50 @@ export function decideAdaptive(lean: Lean, f: FirmState, world: WorldState, c: C
     const role = mods.laborMarket.roles.find((r) => r.id === pref);
     if (role && !staffed.has(role.id) && commit(role.signing_bonus + role.salary)) {
       hireRoles.push(role.id);
+    }
+  }
+
+  // Employees (MOD-B12) — rivals staff a small named crew from this round's market so
+  // there's real talent to scout and poach in solo play. Cheap, role-matched to the
+  // lean, staged to a modest target (the shared market is a menu, not a fixed pool, so
+  // this never starves the human's hiring options).
+  const hireEmployees: string[] = [];
+  if (mods?.employees?.enabled && f.cash > 250) {
+    const have = (f.employees ?? []).length;
+    const target = Math.min(lean.debtDraw >= 160 ? 3 : 2, mods.employees.max_employees);
+    if (have < target) {
+      const prefStock = lean.bias.Q >= Math.max(lean.bias.B, lean.bias.process) ? "Q" : lean.bias.B >= lean.bias.process ? "B" : "process";
+      const market = generateHiringMarket(c, world.seed, world.round).filter((cnd) => cnd.salary <= 0.2 * Math.max(0, f.cash));
+      const byRole = market.filter((cnd) => mods.employees!.roles.find((r) => r.id === cnd.role)?.primary_stock === prefStock);
+      const pick = byRole[0] ?? [...market].sort((a, b) => a.salary - b.salary)[0];
+      if (pick && commit(pick.salary)) hireEmployees.push(pick.id);
+    }
+  }
+
+  // Facilities (MOD-B11) — rivals put real assets on the city map: a cheap high-output
+  // brewery in the industrial district first, then brand-leaning rivals add a downtown
+  // taproom for the brand draw. Capex (reserved from the budget so it doesn't overcommit).
+  const buildFacilities: { type: string; location?: string }[] = [];
+  if (mods?.facilities?.enabled) {
+    const have = (f.facilities ?? []).length;
+    const districts = mods.facilities.districts ?? [];
+    const typeById = (id: string) => mods.facilities!.types.find((t) => t.id === id);
+    const distByKind = (k: string) => districts.find((d) => d.kind === k)?.id ?? districts[0]?.id;
+    if (have === 0 && world.round >= 1) {
+      // First footprint: a cheap nano brewery in the cheap industrial district, so
+      // rivals reliably appear on the city map early (modest buffer).
+      const small = typeById("brewery_small") ?? mods.facilities.types.find((t) => /brewery/.test(t.id));
+      if (small && f.cash > small.base_cost + 200) { buildFacilities.push({ type: small.id, location: distByKind("industrial") }); moduleCash += small.base_cost; }
+    } else if (have === 1 && world.round >= 3) {
+      // Second site reflects the lean: brand bots open a downtown taproom (brand draw),
+      // cost/scale bots add a production brewery in the industrial yards.
+      if (lean.bias.B >= 1.2) {
+        const tap = typeById("taproom");
+        if (tap && f.cash > tap.base_cost + 350) { buildFacilities.push({ type: tap.id, location: distByKind("downtown") }); moduleCash += tap.base_cost; }
+      } else {
+        const big = typeById("brewery_large");
+        if (big && f.cash > big.base_cost + 400) { buildFacilities.push({ type: big.id, location: distByKind("industrial") }); moduleCash += big.base_cost; }
+      }
     }
   }
 
@@ -276,7 +319,7 @@ export function decideAdaptive(lean: Lean, f: FirmState, world: WorldState, c: C
     debt_repay: 0,
     equity_raise: 0,
     dividend: 0,
-    buy_info: shockSignal > 0,
+    buy_info: shockSeason,
     agreement_actions: [],
     exit_action: null,
     // Expansion-module levers (undefined/empty when the module is off).
@@ -287,6 +330,8 @@ export function decideAdaptive(lean: Lean, f: FirmState, world: WorldState, c: C
     market_presence: marketPresence,
     buy_vertical: buyVertical,
     hire_roles: hireRoles,
+    hire_employees: hireEmployees,
+    build_facilities: buildFacilities,
     draw_rbf: drawRbf,
     acquisition_bid: acquisitionBid,
     lobby_spend: lobbySpend,

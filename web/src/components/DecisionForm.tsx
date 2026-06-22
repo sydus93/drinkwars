@@ -47,6 +47,8 @@ export function DecisionForm({
   onInfoChange,
   submitLabel,
   footerNote,
+  poaches: externalPoaches,
+  onPoach,
 }: {
   view: GameView;
   defaultDecision: () => Promise<FirmDecision>;
@@ -56,6 +58,10 @@ export function DecisionForm({
   onInfoChange?: (bought: boolean) => void;
   submitLabel?: string;
   footerNote?: string;
+  // Talent raids, lifted to the screen so they can be made from a rival's dossier.
+  // Optional: when absent (e.g. multiplayer) the form manages its own poach list.
+  poaches?: { firm: string; employee: string; offer: number }[];
+  onPoach?: (firm: string, employee: string, offer: number) => void;
 }) {
   const [d, setD] = useState<FirmDecision | null>(null);
   const [prModal, setPrModal] = useState(false);
@@ -218,15 +224,19 @@ export function DecisionForm({
   const fairSalary = (roleId: string, skill: number) => { const r = empRoles.find((x) => x.id === roleId); return r ? r.base_salary * (0.55 + 0.15 * skill) : 0; };
   const hireCost = empOn ? candidates.filter((cnd) => ehiring.has(cnd.id)).reduce((s, cnd) => s + cnd.salary, 0) : 0;
   const raiseCost = empOn ? employees.reduce((s: number, e) => s + Math.max(0, (eraises[e.id] ?? e.salary) - e.salary), 0) : 0;
-  const poaches = d?.poach_employees ?? [];
+  // Talent raids: use the lifted list when provided (poaching happens in rival dossiers),
+  // otherwise manage them locally. Either way they're injected into the decision at submit.
+  const setPoach = onPoach ?? ((firm: string, employee: string, offer: number) => {
+    const rest = (d?.poach_employees ?? []).filter((x) => x.employee !== employee);
+    set({ poach_employees: offer > 0 ? [...rest, { firm, employee, offer }] : rest });
+  });
+  const poaches = externalPoaches ?? (d?.poach_employees ?? []);
   const poachSpend = empOn ? poaches.reduce((s: number, x) => s + Math.max(0, x.offer), 0) : 0;
   const empSpend = hireCost + raiseCost + poachSpend;
   const toggleHireEmp = (id: string) => { const n = new Set(ehiring); n.has(id) ? n.delete(id) : n.add(id); set({ hire_employees: [...n] }); };
   const toggleFireEmp = (id: string) => { const n = new Set(efiring); n.has(id) ? n.delete(id) : n.add(id); set({ fire_employees: [...n] }); };
   const setRaise = (id: string, v: number) => set({ raise_employees: { ...eraises, [id]: Math.max(0, v) } });
-  const rivalsWithStaff = empOn ? view.firms.filter((f) => !f.isYou && f.status === "active" && f.employees.length > 0) : [];
-  const poachOf = (empId: string) => poaches.find((x) => x.employee === empId);
-  const setPoach = (firm: string, employee: string, offer: number) => { const rest = poaches.filter((x) => x.employee !== employee); set({ poach_employees: offer > 0 ? [...rest, { firm, employee, offer }] : rest }); };
+  const empName = (firm: string, empId: string) => view.firms.find((f) => f.firm_id === firm)?.employees.find((e) => e.id === empId)?.name ?? empId;
 
   const moduleSpend = prSpend + waterSpend + pgSpend + geoEntrySpend + rndSpend + vertSpend + hireSpend + lobSpendEff + renegCallCost + facSpend + empSpend;
   const anyModuleControls = prOn || sustOn || pgOn || rndOn || vertOn || labOn || maOn || lobOn || facOn || empOn;
@@ -643,39 +653,28 @@ export function DecisionForm({
               </div>
             )}
 
-            {rivalsWithStaff.length > 0 && (
-              <div className="mt-3 border-t border-line pt-2">
-                <div className="mb-1.5 flex items-center gap-1.5 text-[0.6rem] uppercase tracking-[0.12em] text-inksoft">
-                  <span>Raid rival talent</span>
-                  <InfoDot title="Poaching" align="right">
-                    Offer above a rival's current pay to lure them over. The unhappier they are and the bigger your raise, the likelier they jump — but a successful poach costs a one-time signing premium on top of the new salary. Buy market research to see their morale and pay.
-                  </InfoDot>
-                </div>
-                <div className="grid gap-2">
-                  {rivalsWithStaff.map((rv) => (
-                    <div key={rv.firm_id}>
-                      <div className="mb-1 flex items-center gap-1.5 text-[0.7rem] font-semibold">
-                        <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: firmColor(rv.firm_id) }} aria-hidden="true" />
-                        <span className="truncate text-ink">{rv.name}</span>
-                      </div>
-                      <div className="grid gap-1">
-                        {rv.employees.map((e) => (
-                          <div key={e.id} className="flex items-center gap-2 rounded border border-line bg-paper2/20 px-2 py-1 text-[0.7rem]">
-                            <Avatar seed={`${rv.firm_id}_${e.id}`} name={e.name} size={20} />
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center gap-1"><span className="truncate font-semibold text-ink">{e.name}</span><SkillStars n={e.skill} /></div>
-                              <div className="text-[0.6rem] text-inksoft">{roleLabel(e.role)}{researched ? ` · ${fmt.money(e.salary)}/rd · morale ${Math.round(e.satisfaction * 100)}%` : " · pay & morale hidden"}</div>
-                            </div>
-                            <input type="number" min={0} value={poachOf(e.id)?.offer || ""} onChange={(ev) => setPoach(rv.firm_id, e.id, Math.max(0, +ev.target.value))} placeholder="offer $"
-                              title="Your salary offer — must beat their current pay" className="tnum w-16 shrink-0 rounded border border-line bg-paper px-1 py-0.5 text-right text-[0.68rem]" />
-                          </div>
-                        ))}
-                      </div>
+            <div className="mt-3 border-t border-line pt-2">
+              <div className="mb-1 flex items-center gap-1.5 text-[0.6rem] uppercase tracking-[0.12em] text-inksoft">
+                <span>Raid rival talent</span>
+                <InfoDot title="Poaching" align="right">
+                  Scout a rival from their <b>dossier</b> — click their brewery on the Market map or Field tab. With <b>market research</b> bought this round you'll see their crew's pay and morale and can make an offer. Beat their current pay to lure them over; the unhappier they are and the bigger your raise, the likelier they jump — a successful poach costs a one-time signing premium on top of the new salary.
+                </InfoDot>
+              </div>
+              {poaches.length > 0 ? (
+                <div className="grid gap-1">
+                  {poaches.map((p) => (
+                    <div key={p.employee} className="flex items-center gap-2 rounded border border-copper/40 bg-copper/[0.05] px-2 py-1 text-[0.72rem]">
+                      <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: firmColor(p.firm) }} aria-hidden="true" />
+                      <span className="min-w-0 flex-1 truncate text-ink">{empName(p.firm, p.employee)} <span className="text-inksoft">· {view.names[p.firm] ?? p.firm}</span></span>
+                      <span className="tnum shrink-0 text-copperdeep">{fmt.money(p.offer)}/rd</span>
+                      <button type="button" onClick={() => setPoach(p.firm, p.employee, 0)} className="shrink-0 text-inksoft transition-colors hover:text-brick" title="Cancel this offer" aria-label="Cancel offer">✕</button>
                     </div>
                   ))}
                 </div>
-              </div>
-            )}
+              ) : (
+                <div className="text-[0.7rem] leading-snug text-inksoft">No raids queued. Open a rival's dossier (click them on the <span className="font-semibold text-copperdeep">Market</span> map or <span className="font-semibold text-copperdeep">Field</span> tab) to scout and poach their people.</div>
+              )}
+            </div>
 
             {empSpend > 0 && (
               <div className="mt-2 flex items-center justify-between border-t border-line pt-1.5 text-[0.72rem]">
@@ -1024,7 +1023,7 @@ export function DecisionForm({
           {lastCov != null && <Row label="Interest coverage (last)" value={lastCov > 900 ? "—" : `${lastCov.toFixed(1)}×`} />}
           {overcommit && <div className="mt-2 text-[0.72rem] text-brick">You'd run negative before any sales come in — revenue may cover it, but you risk forced exit.</div>}
         </Card>
-        <Button variant="go" onClick={() => onPlay(d)} disabled={busy} className="w-full py-3 text-base">
+        <Button variant="go" onClick={() => onPlay({ ...d, poach_employees: poaches })} disabled={busy} className="w-full py-3 text-base">
           {busy ? "Working…" : submitLabel ?? `Brew & Resolve Round ${view.round + 1}`}
         </Button>
         <div className="text-center text-[0.68rem] text-inksoft">{footerNote ?? "7 rival breweries (adaptive AI) brew at the same time."}</div>

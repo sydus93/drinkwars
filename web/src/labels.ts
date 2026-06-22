@@ -43,6 +43,16 @@ export const ASSET_LABEL: Record<string, string> = {
 };
 export const humanizeId = (id: string): string => id.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 
+/** District character for the city map — a one-line "what to build here," so the
+ *  siting tradeoff reads at a glance (exact rent/capacity/brand numbers come from
+ *  config). Falls back to the district blurb for any id not listed. */
+export const DISTRICT_BEST: Record<string, string> = {
+  downtown: "Best for a taproom — visibility & foot traffic",
+  riverside: "Balanced — a steady brand draw",
+  southside: "Best for production — cheapest, most output",
+  suburbs: "Roomy & affordable — a little extra output, quiet trade",
+};
+
 /** Map/feed metadata for each shock type (presentation only — engine ids stay generic). */
 export const SHOCK_META: Record<string, { label: string; icon: string; note: string }> = {
   water: { label: "Water shortage", icon: "💧", note: "drives up input costs" },

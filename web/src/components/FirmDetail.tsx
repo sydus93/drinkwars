@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import type { GameView, FirmSnapshot } from "../game/controller.js";
 import { SEG_LABEL, STOCK_LABEL, fmt } from "../labels.js";
 import { Row, Tag } from "./ui.js";
+import { Avatar, SkillStars } from "./People.js";
 
 const STATUS_LABEL: Record<string, string> = {
   active: "Trading", acquired: "Acquired", bankrupt: "Bankrupt",
@@ -32,11 +33,15 @@ export function FirmDetail({
   firm,
   view,
   infoActive,
+  poaches = [],
+  onPoach,
   onClose,
 }: {
   firm: FirmSnapshot;
   view: GameView;
   infoActive: boolean;
+  poaches?: { firm: string; employee: string; offer: number }[];
+  onPoach?: (firm: string, employee: string, offer: number) => void;
   onClose: () => void;
 }) {
   useEffect(() => {
@@ -57,6 +62,10 @@ export function FirmDetail({
   const vertOn = !!view.modules?.verticalIntegration?.enabled;
   const roleLabel = (id: string) => view.modules?.laborMarket?.roles.find((r) => r.id === id)?.label ?? id.replace(/_/g, " ");
   const assetLabel = (id: string) => view.modules?.verticalIntegration?.assets.find((a) => a.id === id)?.label ?? id.replace(/_/g, " ");
+  // MOD-B12 employees: scoutable, poachable crew (rivals only, gated on market research).
+  const empOn = !!view.modules?.employees?.enabled;
+  const empRoleLabel = (id: string) => view.modules?.employees?.roles.find((r) => r.id === id)?.label ?? id.replace(/_/g, " ");
+  const canPoach = empOn && !firm.isYou && firm.status === "active" && firm.employees.length > 0;
 
   const distressed = firm.distressRounds >= 1;
   const acquirable = maOn && maCfg && firm.distressRounds >= maCfg.min_distress_rounds && firm.status === "active";
@@ -146,8 +155,50 @@ export function FirmDetail({
                 <Row label="Fair value" value="$████" />
               </div>
               <p className="mt-2 text-[0.72rem] leading-snug text-inksoft">
-                Tick <span className="font-semibold text-copperdeep">Buy market research</span> in your decision to reveal exact quality, brand, pricing, cost, leverage{maOn ? ", fair value," : ""} and roster.
+                Tick <span className="font-semibold text-copperdeep">Buy market research</span> in your decision to reveal exact quality, brand, pricing, cost, leverage{maOn ? ", fair value," : ""} and their crew.
               </p>
+            </div>
+          )}
+
+          {/* Their crew — scout & poach (rivals only; the roster itself is research-gated) */}
+          {canPoach && (
+            <div className="mt-4">
+              <div className="mb-1.5 flex items-center gap-2">
+                <div className="text-[0.6rem] font-semibold uppercase tracking-[0.14em] text-inksoft">Their crew · talent raid</div>
+                {!infoActive && <Tag tone="ink">locked</Tag>}
+              </div>
+              {infoActive ? (
+                <div className="grid gap-1.5">
+                  {firm.employees.map((e) => {
+                    const queued = poaches.find((p) => p.employee === e.id);
+                    const satTone = e.satisfaction > 0.6 ? "text-hop" : e.satisfaction > 0.35 ? "text-copperdeep" : "text-brick";
+                    return (
+                      <div key={e.id} className={`flex items-center gap-2 rounded-md border px-2 py-1.5 text-[0.72rem] ${queued ? "border-copper bg-copper/[0.06]" : "border-line bg-paper2/30"}`}>
+                        <Avatar seed={`${firm.firm_id}_${e.id}`} name={e.name} size={24} />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5"><span className="truncate font-semibold text-ink">{e.name}</span><SkillStars n={e.skill} /></div>
+                          <div className="text-[0.62rem] text-inksoft">{empRoleLabel(e.role)} · {fmt.money(e.salary)}/rd · morale <span className={satTone}>{Math.round(e.satisfaction * 100)}%</span></div>
+                        </div>
+                        {onPoach && (
+                          <input
+                            type="number" min={0} value={queued?.offer || ""}
+                            onChange={(ev) => onPoach(firm.firm_id, e.id, Math.max(0, +ev.target.value))}
+                            placeholder="offer $" title="Your salary offer — beat their current pay to lure them over"
+                            className="tnum w-20 shrink-0 rounded border border-line bg-paper px-1.5 py-1 text-right text-[0.72rem]"
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
+                  <p className="mt-0.5 text-[0.64rem] leading-snug text-inksoft">
+                    Offer above their current pay to lure them across. The unhappier they are and the bigger your raise, the likelier they jump — a successful raid adds a one-time signing premium. Queued offers settle when you brew the round.
+                  </p>
+                </div>
+              ) : (
+                <div className="rounded-md border border-line bg-paper2/30 p-3 text-[0.72rem] leading-snug text-inksoft">
+                  {firm.name} employs <span className="font-semibold text-ink">{firm.employees.length}</span> specialist{firm.employees.length === 1 ? "" : "s"}. Tick <span className="font-semibold text-copperdeep">Buy market research</span> in your decision to see who they are — names, pay, and morale — and to make a poaching offer.
+                </div>
+              )}
             </div>
           )}
         </div>

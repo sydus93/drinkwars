@@ -19,15 +19,22 @@ import type { Config, FacilityTypeConfig, FirmDecision, FirmId, FirmState, World
 export interface FacilitiesOutcome {
   capexByFirm: Map<FirmId, number>; // builds (capitalized into PP&E)
   opexByFirm: Map<FirmId, number>; // fixed cost + maintenance (expensed)
+  brandByFirm: Map<FirmId, number>; // district brand draw (added to the B stock this round)
   events: string[];
 }
 
 const typeOf = (c: Config, id: string): FacilityTypeConfig | undefined =>
   c.modules?.facilities?.types.find((t) => t.id === id);
 
+const districtOf = (c: Config, locationId?: string) =>
+  locationId ? c.modules?.facilities?.districts?.find((d) => d.id === locationId) : undefined;
+
 /** Rent multiplier on fixed cost from the facility's district (1 when none/unset). */
-const rentMult = (c: Config, locationId?: string): number =>
-  (locationId && c.modules?.facilities?.districts?.find((d) => d.id === locationId)?.rent_mult) || 1;
+const rentMult = (c: Config, locationId?: string): number => districtOf(c, locationId)?.rent_mult ?? 1;
+
+/** Capacity multiplier from the facility's district (1 when none/unset) — industrial
+ *  yards run hot, cramped downtown space delivers less. */
+const capacityMult = (c: Config, locationId?: string): number => districtOf(c, locationId)?.capacity_mult ?? 1;
 
 /** How condition scales delivered capacity: a derelict facility still runs at half,
  *  a pristine one at full. Keeps a neglected asset a drag, not a cliff. */
@@ -40,13 +47,13 @@ export function facilityCapacity(f: FirmState, c: Config, round: number): number
   for (const fac of f.facilities ?? []) {
     if (!fac.active || round < fac.online_round) continue;
     const t = typeOf(c, fac.type);
-    if (t) cap += t.capacity_contribution * conditionFactor(fac.condition);
+    if (t) cap += t.capacity_contribution * conditionFactor(fac.condition) * capacityMult(c, fac.location_id);
   }
   return cap;
 }
 
 export function resolveFacilities(world: WorldState, decisions: Map<FirmId, FirmDecision>, c: Config, round: number): FacilitiesOutcome {
-  const out: FacilitiesOutcome = { capexByFirm: new Map(), opexByFirm: new Map(), events: [] };
+  const out: FacilitiesOutcome = { capexByFirm: new Map(), opexByFirm: new Map(), brandByFirm: new Map(), events: [] };
   const cfg = c.modules?.facilities;
   if (!cfg?.enabled) return out;
 
@@ -56,6 +63,7 @@ export function resolveFacilities(world: WorldState, decisions: Map<FirmId, Firm
     const d = decisions.get(f.id);
     let capex = 0;
     let opex = 0;
+    let brand = 0;
 
     // ---- Build (capitalized; comes online after build_rounds) ----
     for (const b of d?.build_facilities ?? []) {
@@ -83,9 +91,9 @@ export function resolveFacilities(world: WorldState, decisions: Map<FirmId, Firm
       if (fac) fac.active = true;
     }
 
-    // ---- Per-facility upkeep: fixed cost + maintenance + condition ----
+    // ---- Per-facility upkeep: fixed cost + maintenance + condition + brand draw ----
     for (const fac of f.facilities) {
-      if (!fac.active) continue; // mothballed: no cost, condition holds
+      if (!fac.active) continue; // mothballed: no cost, no brand draw, condition holds
       const t = typeOf(c, fac.type);
       if (!t) continue;
       opex += Math.round(t.fixed_cost * rentMult(c, fac.location_id));
@@ -93,10 +101,14 @@ export function resolveFacilities(world: WorldState, decisions: Map<FirmId, Firm
       opex += spend;
       // Condition: decays by the type rate, restored by maintenance; clamped to [0,1].
       fac.condition = Math.max(0, Math.min(1, fac.condition - t.condition_decay + spend * t.maintenance_effect));
+      // District brand draw (foot traffic + visibility): only once the facility is online,
+      // scaled by condition so a derelict storefront pulls less.
+      if (round >= fac.online_round) brand += (districtOf(c, fac.location_id)?.brand_boost ?? 0) * conditionFactor(fac.condition);
     }
 
     if (capex > 0) out.capexByFirm.set(f.id, capex);
     if (opex > 0) out.opexByFirm.set(f.id, opex);
+    if (brand > 0) out.brandByFirm.set(f.id, brand);
   }
   return out;
 }

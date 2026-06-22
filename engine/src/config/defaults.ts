@@ -163,7 +163,10 @@ export const defaultConfig: Config = {
   shocks: {
     types: [
       {
-        // Water scarcity / drought — slow-burn resilience shock (signaled).
+        // Water scarcity / drought — an unannounced resilience shock. It strikes
+        // without a multi-round telegraph (a drought isn't on the calendar), so the
+        // lesson is standing preparedness — water-efficiency + process/community
+        // resilience built BEFORE trouble, not a reaction to a countdown.
         id: "water",
         kind: "cost_spike",
         target: "all",
@@ -172,7 +175,7 @@ export const defaultConfig: Config = {
         prob_per_round: 0.35,
         earliest_round: 6,
         latest_round: 14,
-        signaling: "signaled_noisy",
+        signaling: "unannounced",
         resilience_mitigated: true,
         duration: 2,
       },

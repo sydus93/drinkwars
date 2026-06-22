@@ -4,7 +4,7 @@ import type { GameView, FirmSnapshot, ShockSignal } from "../game/controller.js"
 import { Card, Eyebrow, Stat, Tag } from "./ui.js";
 import { CategoryCoin } from "./CategoryIcons.js";
 import { firmColor } from "../lib/teamColors.js";
-import { SEG_LABEL, SEG_CHARACTER, SHOCK_META, ROLE_LABEL, ASSET_LABEL, humanizeId, fmt } from "../labels.js";
+import { SEG_LABEL, SEG_CHARACTER, SHOCK_META, ROLE_LABEL, ASSET_LABEL, DISTRICT_BEST, humanizeId, fmt } from "../labels.js";
 import { Avatar } from "./People.js";
 
 /**
@@ -25,53 +25,78 @@ export function MarketMap({ view, onInspect }: { view: GameView; onInspect: (fir
       <BreweryCard view={view} />
       <ShockBanner shocks={view.shocks} />
 
-      {active.length === 0 ? (
-        <Card><Eyebrow>The Market</Eyebrow><div className="text-sm text-inksoft">The market opens once the season begins.</div></Card>
-      ) : (
-        active.map((seg) => (
-          <District key={seg.id} seg={seg.id} demand={seg.D} firms={live} shocks={view.shocks} youId={view.own.id} onInspect={onInspect} />
-        ))
-      )}
+      <div>
+        <div className="mb-2 flex items-baseline gap-2">
+          <h2 className="display text-lg leading-none">The Market</h2>
+          <span className="text-[0.72rem] text-inksoft">who buys what, and who's winning each kind of drinker</span>
+        </div>
+        {active.length === 0 ? (
+          <Card><div className="text-sm text-inksoft">The market opens once the season begins.</div></Card>
+        ) : (
+          <div className="grid gap-4">
+            {active.map((seg) => (
+              <District key={seg.id} seg={seg.id} demand={seg.D} firms={live} shocks={view.shocks} youId={view.own.id} onInspect={onInspect} />
+            ))}
+          </div>
+        )}
+      </div>
 
-      {view.modules?.facilities?.enabled && <FootprintMap view={view} />}
+      {view.modules?.facilities?.enabled && <TheCity view={view} onInspect={onInspect} />}
 
       <Legend firms={view.firms} />
     </div>
   );
 }
 
-/** Geographic footprint: the districts you can site in, your facilities placed in
- *  each (your color), and rival presence as colored dots — the spec's competitor pins. */
-function FootprintMap({ view }: { view: GameView }) {
+/** The City — the SUPPLY-side map (distinct from The Market above, which is demand).
+ *  Each district is a real siting tradeoff: rent, output, and brand draw shown as plain
+ *  chips, your facilities placed in it, and rival presence as CLICKABLE pins (→ dossier,
+ *  where you can scout and poach their crew). Answers "where is everyone, and why build
+ *  here?" at a glance. */
+function TheCity({ view, onInspect }: { view: GameView; onInspect: (firmId: string) => void }) {
   const districts = view.modules?.facilities?.districts ?? [];
   if (!districts.length) return null;
   const youId = view.own.id;
   const yourFac = view.own.facilities ?? [];
   const facLabel = (id: string) => view.modules?.facilities?.types.find((t) => t.id === id)?.label ?? id;
-  const rivalsByDistrict = new Map<string, { firm: string; type: string }[]>();
+  // Rival facilities grouped by district, then by firm (one clickable pin per firm).
+  const rivalsByDistrict = new Map<string, Map<string, number>>();
   for (const f of view.firms) {
     if (f.isYou) continue;
     for (const fac of f.facilities) {
       if (!fac.active || !fac.location_id) continue;
-      const arr = rivalsByDistrict.get(fac.location_id) ?? [];
-      arr.push({ firm: f.firm_id, type: fac.type });
-      rivalsByDistrict.set(fac.location_id, arr);
+      const m = rivalsByDistrict.get(fac.location_id) ?? new Map<string, number>();
+      m.set(f.firm_id, (m.get(f.firm_id) ?? 0) + 1);
+      rivalsByDistrict.set(fac.location_id, m);
     }
   }
   return (
-    <Card>
-      <Eyebrow>Your footprint</Eyebrow>
+    <div>
+      <div className="mb-2 flex items-baseline gap-2">
+        <h2 className="display text-lg leading-none">The City</h2>
+        <span className="text-[0.72rem] text-inksoft">where you build — each district is a different tradeoff. Click a rival pin to scout them.</span>
+      </div>
       <div className="grid gap-2 sm:grid-cols-2">
         {districts.map((dd) => {
           const mine = yourFac.filter((f) => (f.location_id ?? districts[0].id) === dd.id);
-          const rivals = rivalsByDistrict.get(dd.id) ?? [];
+          const rivals = [...(rivalsByDistrict.get(dd.id) ?? new Map()).entries()];
+          const capMult = dd.capacity_mult ?? 1;
+          const rentTone = dd.rent_mult > 1.05 ? "text-brick" : dd.rent_mult < 0.95 ? "text-hop" : "text-inksoft";
+          const capTone = capMult > 1.02 ? "text-hop" : capMult < 0.98 ? "text-brick" : "text-inksoft";
           return (
             <div key={dd.id} className="rounded-md border border-line2 bg-paper2/30 p-3">
-              <div className="flex items-center justify-between">
+              <div className="flex items-baseline justify-between gap-2">
                 <span className="text-sm font-semibold text-ink">{dd.label}</span>
-                <span className="text-[0.6rem] uppercase tracking-[0.08em] text-inksoft">rent ×{dd.rent_mult}</span>
+                <span className="text-[0.6rem] font-semibold uppercase tracking-[0.06em] text-copperdeep">{DISTRICT_BEST[dd.id] ?? ""}</span>
               </div>
-              <div className="mt-0.5 text-[0.66rem] leading-snug text-inksoft">{dd.blurb}</div>
+              {/* The three levers, legible at a glance */}
+              <div className="mt-1.5 flex flex-wrap gap-1">
+                <span className={`rounded border border-line bg-paper px-1.5 py-0.5 text-[0.62rem] ${rentTone}`}>Rent ×{dd.rent_mult}</span>
+                <span className={`rounded border border-line bg-paper px-1.5 py-0.5 text-[0.62rem] ${capTone}`}>Output ×{capMult}</span>
+                <span className={`rounded border border-line bg-paper px-1.5 py-0.5 text-[0.62rem] ${dd.brand_boost ? "text-aero" : "text-inksoft"}`}>
+                  {dd.brand_boost ? `Brand +${dd.brand_boost}/rd` : "No brand draw"}
+                </span>
+              </div>
               {mine.length > 0 ? (
                 <div className="mt-2 grid gap-1">
                   {mine.map((f) => (
@@ -87,9 +112,18 @@ function FootprintMap({ view }: { view: GameView }) {
               )}
               {rivals.length > 0 && (
                 <div className="mt-2 flex flex-wrap items-center gap-1 border-t border-line pt-1.5">
-                  <span className="mr-1 text-[0.58rem] uppercase tracking-[0.1em] text-inksoft">Rivals</span>
-                  {rivals.map((r, i) => (
-                    <span key={i} className="h-2 w-2 rounded-full" style={{ background: firmColor(r.firm) }} title={`${view.names[r.firm] ?? r.firm}: ${facLabel(r.type)}`} aria-hidden="true" />
+                  <span className="mr-0.5 text-[0.58rem] uppercase tracking-[0.1em] text-inksoft">Rivals here</span>
+                  {rivals.map(([firmId, count]) => (
+                    <button
+                      key={firmId}
+                      onClick={() => onInspect(firmId)}
+                      title={`${view.names[firmId] ?? firmId} — open dossier to scout & poach`}
+                      className="flex items-center gap-1 rounded-full border border-line bg-paper py-0.5 pl-1 pr-1.5 text-[0.62rem] text-ink transition-colors hover:border-copper"
+                    >
+                      <span className="h-2 w-2 rounded-full" style={{ background: firmColor(firmId) }} aria-hidden="true" />
+                      <span className="max-w-[7rem] truncate">{view.names[firmId] ?? firmId}</span>
+                      {count > 1 && <span className="text-inksoft">×{count}</span>}
+                    </button>
                   ))}
                 </div>
               )}
@@ -97,7 +131,7 @@ function FootprintMap({ view }: { view: GameView }) {
           );
         })}
       </div>
-    </Card>
+    </div>
   );
 }
 
@@ -228,6 +262,7 @@ function District({ seg, demand, firms, shocks, youId, onInspect }: {
   const [expanded, setExpanded] = useState(false);
   const char = SEG_CHARACTER[seg] ?? { tagline: "", rewards: "", hue: "var(--color-copper)" };
   const here = firms.filter((f) => f.focus.includes(seg) && (f.priceBySeg[seg] ?? 0) > 0);
+  const leader = here.length ? [...here].sort((a, b) => (b.shareBySeg[seg] ?? 0) - (a.shareBySeg[seg] ?? 0))[0] : null;
   const hitBy = shocks.filter((s) => s.target === seg || s.target === "all");
   const activeHit = hitBy.find((s) => s.active);
 
@@ -253,9 +288,15 @@ function District({ seg, demand, firms, shocks, youId, onInspect }: {
       >
         <CategoryCoin seg={seg} size={38} />
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="display text-lg leading-none">{SEG_LABEL[seg] ?? seg}</span>
             <Tag tone="ink">{fmt.int(demand)} demand</Tag>
+            {leader && (
+              <span className="flex items-center gap-1 text-[0.66rem] text-inksoft">
+                <span className="h-2 w-2 rounded-full" style={{ background: firmColor(leader.firm_id) }} aria-hidden="true" />
+                Leader: <span className="font-semibold text-ink">{leader.firm_id === youId ? "You" : leader.name}</span> <span className="tnum">{fmt.pct(leader.shareBySeg[seg] ?? 0)}</span>
+              </span>
+            )}
           </div>
           <div className="mt-0.5 text-[0.72rem] leading-snug text-inksoft">{char.tagline}</div>
         </div>

@@ -253,9 +253,11 @@ export class SinglePlayerGame {
     const briefings = roleBriefings(world, this.config, this.humanFirmId)
       .map((b) => ({ ...b, lines: b.lines.map((l) => renameFirms(l, names)) }));
 
-    // Shock visibility: reveal what's currently in effect, plus upcoming shocks that
-    // carry a forewarning (signaled_noisy, e.g. water). Unannounced shocks stay hidden
-    // until they fire. The timeline is pre-rolled at init, so the warning is honest.
+    // Shock visibility: reveal what's currently in effect. Upcoming shocks stay hidden
+    // until they fire — by default every shock (water, harvest, CO₂) is unannounced, so
+    // disruption is a genuine surprise and the lesson is standing preparedness, not
+    // gaming a countdown. (The signaled_noisy path below still honors any shock an
+    // instructor explicitly marks as telegraphed; none are by default.)
     const cur = game.current_round;
     const shocks: ShockSignal[] = [];
     for (const s of world.shock_timeline) {

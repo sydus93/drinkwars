@@ -40,15 +40,25 @@ export function Play({
   // ONE categorized outline (RoundReport) before settling into the rail.
   const [report, setReport] = useState<{ round: number; events: GameEvent[] } | null>(null);
   const [detailFirm, setDetailFirm] = useState<string | null>(null);
+  // Talent raids are lifted here so they can be made from a rival's dossier (the
+  // FirmDetail pop-up) AND reviewed in the decision form — both write the same list,
+  // which is injected into the decision at submit. Cleared each round.
+  const [poaches, setPoaches] = useState<{ firm: string; employee: string; offer: number }[]>([]);
+  const queuePoach = (firm: string, employee: string, offer: number) =>
+    setPoaches((prev) => {
+      const rest = prev.filter((p) => p.employee !== employee);
+      return offer > 0 ? [...rest, { firm, employee, offer }] : rest;
+    });
   const seenRound = useRef<number | null>(null);
 
   // New game (no results yet) → start on the decision tab.
   useEffect(() => {
     if (!view.result) setTab("decision");
   }, [view.result]);
-  // Reset the live intel preview each new round.
+  // Reset the live intel preview + queued talent raids each new round.
   useEffect(() => {
     setInfoPreview(false);
+    setPoaches([]);
   }, [view.round]);
   // Surface this round's events on each resolution (not on first mount / replays).
   // Keyed on resolved-round COUNT, not the round pointer — the pointer stops
@@ -91,7 +101,7 @@ export function Play({
         />
       )}
       {detailSnapshot && (
-        <FirmDetail firm={detailSnapshot} view={view} infoActive={infoActive} onClose={() => setDetailFirm(null)} />
+        <FirmDetail firm={detailSnapshot} view={view} infoActive={infoActive} poaches={poaches} onPoach={queuePoach} onClose={() => setDetailFirm(null)} />
       )}
       <header className="mb-4 flex flex-wrap items-end justify-between gap-4 border-b border-line2 pb-4">
         <div>
@@ -155,7 +165,7 @@ export function Play({
       <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
         <div className="min-w-0">
           {tab === "decision" && view.ownActive && !view.complete && (
-            <DecisionForm view={view} defaultDecision={defaultDecision} onPlay={handlePlay} busy={busy} infoCost={infoCost} onInfoChange={setInfoPreview} />
+            <DecisionForm view={view} defaultDecision={defaultDecision} onPlay={handlePlay} busy={busy} infoCost={infoCost} onInfoChange={setInfoPreview} poaches={poaches} onPoach={queuePoach} />
           )}
           {tab === "decision" && !view.ownActive && !view.complete && (
             <Card>

@@ -7,6 +7,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { initGame, resolveRound, runGame, generateHiringMarket } from "../src/index.js";
+import { facilityCapacity } from "../src/engine/facilities.js";
 import { loadConfig } from "../src/config/load.js";
 import { MODULE_REGISTRY, PRESETS, moduleEnabled, presetById, modulesOverride } from "../src/config/modules.js";
 import { computeBetaDeltas } from "../src/engine/drift.js";
@@ -103,6 +104,39 @@ test("facilities all-off parity: enabling the module with no builds changes noth
   const fa = a.history.at(-1)!.firm_results.map((f) => f.scorecard_cumulative);
   const fb = b.history.at(-1)!.firm_results.map((f) => f.scorecard_cumulative);
   assert.deepEqual(fb, fa, "facilities on but unused must equal facilities off");
+});
+
+test("facilities districts: siting is a real tradeoff — South Side out-produces, Downtown draws brand", () => {
+  const c = loadConfig(modulesOverride(["facilities"]));
+  let w = initGame(c);
+  const dtId = w.firms[0].id; // sites downtown (pricey, cramped, brand halo)
+  const ssId = w.firms[1].id; // sites South Side (cheap, high output, no halo)
+
+  // Both build the SAME facility type (online next round); only the district differs,
+  // and mkDecision invests nothing — so any divergence is purely the location levers.
+  const decs0 = w.firms.map((f) =>
+    mkDecision(f.id, w,
+      f.id === dtId ? { build_facilities: [{ type: "brewery_small", location: "downtown" }] } :
+      f.id === ssId ? { build_facilities: [{ type: "brewery_small", location: "southside" }] } : {}));
+  w = resolveRound(w, decs0, c).world; // built; comes online next round
+
+  const r1 = resolveRound(w, w.firms.map((f) => mkDecision(f.id, w, {})), c); // online → effects bite
+  w = r1.world;
+  const dt = w.firms.find((f) => f.id === dtId)!;
+  const ss = w.firms.find((f) => f.id === ssId)!;
+
+  // Same facility type → South Side (×1.2) delivers more capacity than Downtown (×0.85).
+  assert.ok(facilityCapacity(ss, c, w.round) > facilityCapacity(dt, c, w.round) + 10,
+    `south side out-produces downtown per facility (${facilityCapacity(ss, c, w.round)} vs ${facilityCapacity(dt, c, w.round)})`);
+  // Downtown's foot-traffic brand draw lifts B above the industrial site (no draw).
+  assert.ok(dt.B > ss.B, `downtown brand draw lifts B (${dt.B}) over an industrial site (${ss.B})`);
+
+  // Invariants hold with the district levers live.
+  for (const fr of r1.result.firm_results) {
+    const bs = fr.balance_sheet;
+    assert.ok(Math.abs(bs.assets - (bs.debt + bs.equity)) < 1e-3, `balance ${fr.firm_id}`);
+    assert.ok(Math.abs(bs.assets - (bs.cash + bs.ppe + bs.inventory)) < 1e-3, `assets=cash+ppe+inv ${fr.firm_id}`);
+  }
 });
 
 test("employees (MOD-B12): a hire lands a salaried, stock-raising person and keeps the §7.2 invariants", () => {

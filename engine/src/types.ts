@@ -506,13 +506,19 @@ export interface FacilityTypeConfig {
   condition_decay: number; // per-round condition loss at zero maintenance
   maintenance_effect: number; // condition restored per $ of maintenance spend
 }
-/** A geographic district facilities can be sited in. Rent scales a facility's fixed
- *  cost (cheap industrial vs. pricey downtown). Absent ⇒ no location mechanic. */
+/** A geographic district facilities can be sited in — a real siting tradeoff, not just
+ *  flavor. Three legible levers: rent scales fixed cost (cheap industrial vs. pricey
+ *  downtown); capacity_mult scales the output a facility here delivers (roomy industrial
+ *  yards run hot, cramped downtown space less so); brand_boost is a per-round Brand lift
+ *  per active facility here (foot traffic + visibility downtown/riverside; none in an
+ *  industrial park). capacity_mult/brand_boost are optional (absent ⇒ 1 / 0). */
 export interface DistrictConfig {
   id: string;
   label: string;
   kind: "downtown" | "industrial" | "riverside" | "suburban";
   rent_mult: number; // multiplier on facility fixed cost sited here
+  capacity_mult?: number; // multiplier on delivered capacity for facilities here (default 1)
+  brand_boost?: number; // Brand (B) added per round per active, online facility here (default 0)
   blurb: string;
 }
 export interface FacilitiesConfig {
