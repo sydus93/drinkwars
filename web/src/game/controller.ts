@@ -73,6 +73,7 @@ export interface FirmSnapshot {
   distressRounds: number; // consecutive rounds below solvency health (M&A target gate)
   keyHires: string[]; // MOD-B03 roles currently on staff
   verticalAssets: string[]; // MOD-B06 owned assets
+  employees: { id: string; name: string; role: string; skill: number; satisfaction: number; salary: number }[]; // MOD-B12 roster (for scouting/poaching)
 }
 
 /** A shock the player is allowed to know about: either active right now, or an
@@ -240,6 +241,7 @@ export class SinglePlayerGame {
         distressRounds: f.rounds_below_health ?? 0,
         keyHires: (f.key_hires ?? []).map((h) => h.role),
         verticalAssets: (f.vertical_assets ?? []).map((a) => a.id),
+        employees: (f.employees ?? []).map((e) => ({ id: e.id, name: e.name, role: e.role, skill: e.skill, satisfaction: e.satisfaction, salary: e.salary })),
       };
     });
 
@@ -327,7 +329,7 @@ export class SinglePlayerGame {
         buy_info: false, agreement_actions: [], exit_action: null,
         // Facility + employee actions are one-shot — clear them so a build/hire doesn't re-fire every round.
         build_facilities: [], maintain_facilities: {}, mothball_facilities: [], reactivate_facilities: [],
-        hire_employees: [], fire_employees: [], raise_employees: {},
+        hire_employees: [], fire_employees: [], raise_employees: {}, poach_employees: [],
         beliefs: {}, reflection: "",
       };
     }

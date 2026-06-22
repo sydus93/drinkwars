@@ -11,6 +11,7 @@ import { WorldMap } from "./WorldMap.js";
 import { MarketDetail } from "./MarketDetail.js";
 import { Alliances } from "./Alliances.js";
 import { Avatar, SkillStars } from "./People.js";
+import { firmColor } from "../lib/teamColors.js";
 
 const PR_PLAYS: { id: PrPlayType; label: string; description: string }[] = [
   { id: "festival", label: "Festival sponsorship", description: "A steady brand lift at a community event." },
@@ -211,10 +212,15 @@ export function DecisionForm({
   const fairSalary = (roleId: string, skill: number) => { const r = empRoles.find((x) => x.id === roleId); return r ? r.base_salary * (0.55 + 0.15 * skill) : 0; };
   const hireCost = empOn ? candidates.filter((cnd) => ehiring.has(cnd.id)).reduce((s, cnd) => s + cnd.salary, 0) : 0;
   const raiseCost = empOn ? employees.reduce((s: number, e) => s + Math.max(0, (eraises[e.id] ?? e.salary) - e.salary), 0) : 0;
-  const empSpend = hireCost + raiseCost;
+  const poaches = d?.poach_employees ?? [];
+  const poachSpend = empOn ? poaches.reduce((s: number, x) => s + Math.max(0, x.offer), 0) : 0;
+  const empSpend = hireCost + raiseCost + poachSpend;
   const toggleHireEmp = (id: string) => { const n = new Set(ehiring); n.has(id) ? n.delete(id) : n.add(id); set({ hire_employees: [...n] }); };
   const toggleFireEmp = (id: string) => { const n = new Set(efiring); n.has(id) ? n.delete(id) : n.add(id); set({ fire_employees: [...n] }); };
   const setRaise = (id: string, v: number) => set({ raise_employees: { ...eraises, [id]: Math.max(0, v) } });
+  const rivalsWithStaff = empOn ? view.firms.filter((f) => !f.isYou && f.status === "active" && f.employees.length > 0) : [];
+  const poachOf = (empId: string) => poaches.find((x) => x.employee === empId);
+  const setPoach = (firm: string, employee: string, offer: number) => { const rest = poaches.filter((x) => x.employee !== employee); set({ poach_employees: offer > 0 ? [...rest, { firm, employee, offer }] : rest }); };
 
   const moduleSpend = prSpend + waterSpend + pgSpend + geoEntrySpend + rndSpend + vertSpend + hireSpend + lobSpendEff + renegCallCost + facSpend + empSpend;
   const anyModuleControls = prOn || sustOn || pgOn || rndOn || vertOn || labOn || maOn || lobOn || facOn || empOn;
@@ -607,9 +613,43 @@ export function DecisionForm({
               </div>
             )}
 
+            {rivalsWithStaff.length > 0 && (
+              <div className="mt-3 border-t border-line pt-2">
+                <div className="mb-1.5 flex items-center gap-1.5 text-[0.6rem] uppercase tracking-[0.12em] text-inksoft">
+                  <span>Raid rival talent</span>
+                  <InfoDot title="Poaching" align="right">
+                    Offer above a rival's current pay to lure them over. The unhappier they are and the bigger your raise, the likelier they jump — but a successful poach costs a one-time signing premium on top of the new salary. Buy market research to see their morale and pay.
+                  </InfoDot>
+                </div>
+                <div className="grid gap-2">
+                  {rivalsWithStaff.map((rv) => (
+                    <div key={rv.firm_id}>
+                      <div className="mb-1 flex items-center gap-1.5 text-[0.7rem] font-semibold">
+                        <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: firmColor(rv.firm_id) }} aria-hidden="true" />
+                        <span className="truncate text-ink">{rv.name}</span>
+                      </div>
+                      <div className="grid gap-1">
+                        {rv.employees.map((e) => (
+                          <div key={e.id} className="flex items-center gap-2 rounded border border-line bg-paper2/20 px-2 py-1 text-[0.7rem]">
+                            <Avatar seed={`${rv.firm_id}_${e.id}`} name={e.name} size={20} />
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1"><span className="truncate font-semibold text-ink">{e.name}</span><SkillStars n={e.skill} /></div>
+                              <div className="text-[0.6rem] text-inksoft">{roleLabel(e.role)}{researched ? ` · ${fmt.money(e.salary)}/rd · morale ${Math.round(e.satisfaction * 100)}%` : " · pay & morale hidden"}</div>
+                            </div>
+                            <input type="number" min={0} value={poachOf(e.id)?.offer || ""} onChange={(ev) => setPoach(rv.firm_id, e.id, Math.max(0, +ev.target.value))} placeholder="offer $"
+                              title="Your salary offer — must beat their current pay" className="tnum w-16 shrink-0 rounded border border-line bg-paper px-1 py-0.5 text-right text-[0.68rem]" />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {empSpend > 0 && (
               <div className="mt-2 flex items-center justify-between border-t border-line pt-1.5 text-[0.72rem]">
-                <span className="text-inksoft">New payroll this round</span>
+                <span className="text-inksoft">New payroll & offers this round</span>
                 <span className="tnum text-ink">{fmt.money(empSpend)}</span>
               </div>
             )}

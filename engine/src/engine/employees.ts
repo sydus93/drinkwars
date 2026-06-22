@@ -50,6 +50,38 @@ export function resolveEmployees(world: WorldState, decisions: Map<FirmId, FirmD
   const roleById = new Map(cfg.roles.map((r) => [r.id, r]));
   const rng = new RNG(deriveSeed(world.seed, round, 422));
 
+  // ---- Poaching pass: a firm can lure a rival's employee with a better offer.
+  // Resolved first so a poached person contributes to their new firm this round.
+  // Acceptance rises with the size of the raise and with the target's discontent;
+  // the offer must at least beat their current pay. The poacher pays the offer as a
+  // one-time signing premium (opex) plus the new salary going forward. ----
+  for (const poacher of world.firms) {
+    if (poacher.status !== "active") continue;
+    for (const p of decisions.get(poacher.id)?.poach_employees ?? []) {
+      if (p.firm === poacher.id) continue;
+      const target = world.firms.find((x) => x.id === p.firm);
+      if (!target?.employees) continue;
+      poacher.employees ??= [];
+      if (poacher.employees.length >= cfg.max_employees) continue;
+      const idx = target.employees.findIndex((e) => e.id === p.employee);
+      if (idx < 0) continue;
+      const e = target.employees[idx];
+      const offer = Math.round(Math.max(0, p.offer));
+      if (offer <= e.salary) continue; // must beat current pay to tempt them
+      const raiseFactor = (offer - e.salary) / Math.max(1, e.salary);
+      const pAccept = Math.min(0.95, (1 - e.satisfaction) * 0.6 + Math.min(0.6, raiseFactor));
+      if (!rng.bool(pAccept)) {
+        out.events.push(`POACH REBUFFED: ${e.name} spurns ${poacher.id} and stays with ${p.firm}`);
+        continue;
+      }
+      target.employees.splice(idx, 1);
+      target.T_emp = Math.max(0, target.T_emp - 1);
+      poacher.employees.push({ ...e, salary: offer, satisfaction: 0.6, tenure_rounds: 0, hired_round: round });
+      out.opexByFirm.set(poacher.id, (out.opexByFirm.get(poacher.id) ?? 0) + offer); // signing premium
+      out.events.push(`POACHED: ${poacher.id} lures ${e.name} away from ${p.firm}`);
+    }
+  }
+
   for (const f of world.firms) {
     if (f.status !== "active") continue;
     f.employees ??= [];
@@ -116,7 +148,7 @@ export function resolveEmployees(world: WorldState, decisions: Map<FirmId, FirmD
       }
     }
 
-    if (opex > 0) out.opexByFirm.set(f.id, opex);
+    if (opex > 0) out.opexByFirm.set(f.id, (out.opexByFirm.get(f.id) ?? 0) + opex); // add — poaching may have set a signing premium
   }
   return out;
 }

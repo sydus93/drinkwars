@@ -836,6 +836,7 @@ export interface FirmDecision {
   hire_employees?: string[]; // candidate ids (from this round's market) to hire
   fire_employees?: string[]; // employee ids to let go this round
   raise_employees?: Record<string, number>; // employee id → new salary (a raise)
+  poach_employees?: { firm: string; employee: string; offer: number }[]; // lure a rival's employee with an offer
   draw_convertible?: number; // MOD-B08: convertible-note draw (cash in)
   draw_rbf?: number; // MOD-B08: revenue-based-financing draw (cash in)
   acquisition_bid?: { target: FirmId; price: number } | null; // MOD-B07: bid on a distressed rival

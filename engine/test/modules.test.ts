@@ -132,6 +132,33 @@ test("employees (MOD-B12): a hire lands a salaried, stock-raising person and kee
   }
 });
 
+test("employees poaching: a strong offer can lure a rival's hire across, and invariants hold", () => {
+  const c = loadConfig(modulesOverride(["employees"]));
+  let w = initGame(c);
+  const a = w.firms[0].id;
+  const bb = w.firms[1].id;
+  const market = generateHiringMarket(c, w.seed, w.round);
+  // Firm A hires the first candidate.
+  let r = resolveRound(w, w.firms.map((f) => mkDecision(f.id, w, f.id === a ? { hire_employees: [market[0].id] } : {})), c);
+  w = r.world;
+  const hire = (w.firms.find((f) => f.id === a)!.employees ?? [])[0];
+  assert.ok(hire, "firm A has a hire to poach");
+  // Firm B over-offers repeatedly (poaching is probabilistic); the §7.2 invariants hold each round.
+  let moved = false;
+  for (let i = 0; i < 10 && !moved; i++) {
+    r = resolveRound(w, w.firms.map((f) => mkDecision(f.id, w, f.id === bb ? { poach_employees: [{ firm: a, employee: hire.id, offer: hire.salary * 4 }] } : {})), c);
+    w = r.world;
+    moved = (w.firms.find((f) => f.id === bb)!.employees ?? []).some((e) => e.id === hire.id);
+    for (const fr of r.result.firm_results) {
+      const bs = fr.balance_sheet;
+      assert.ok(Math.abs(bs.assets - (bs.debt + bs.equity)) < 1e-3, `balance ${fr.firm_id} r${fr.round}`);
+      assert.ok(Math.abs(bs.assets - (bs.cash + bs.ppe + bs.inventory)) < 1e-3, `assets ${fr.firm_id} r${fr.round}`);
+    }
+  }
+  assert.ok(moved, "a large offer eventually poaches the employee");
+  assert.ok(!(w.firms.find((f) => f.id === a)!.employees ?? []).some((e) => e.id === hire.id), "the original firm lost them");
+});
+
 test("employees all-off parity: enabling the module with no hires changes nothing", () => {
   const a = runGame(loadConfig(), makeProvider(BASELINE_ASSIGNMENT));
   const b = runGame(loadConfig(modulesOverride(["employees"])), makeProvider(BASELINE_ASSIGNMENT));
