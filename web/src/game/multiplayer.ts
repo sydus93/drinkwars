@@ -154,6 +154,7 @@ export class StudentClient {
       lobbyInitiatives: v.lobbyInitiatives ?? [],
       shocks: (v as { shocks?: GameView["shocks"] }).shocks ?? [], // transport doesn't project shocks yet → none
       hiringMarket: (v as { hiringMarket?: GameView["hiringMarket"] }).hiringMarket ?? [],
+      ownTagline: "",
     };
   }
 

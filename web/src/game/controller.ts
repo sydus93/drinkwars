@@ -114,6 +114,7 @@ export interface GameView {
   lobbyInitiatives: LobbySummary[]; // MOD-A09 regulation initiatives + progress (empty when off)
   shocks: ShockSignal[]; // active + foreseeable upcoming shocks, for the map/header
   hiringMarket: Candidate[]; // MOD-B12 this round's hireable candidates (empty when off)
+  ownTagline: string; // firm-builder tagline (cosmetic)
 }
 
 const median = (xs: number[]): number => {
@@ -136,10 +137,16 @@ export class SinglePlayerGame {
   private investScale = 1;
   private lastHuman: FirmDecision | null = null;
   private lastInfoBought = false;
+  private tagline = "";
+  // Firm-builder founding choices, pre-filled into the round-0 decision (so starting
+  // facilities/hires flow through the normal pipeline rather than mutating append-only state).
+  private founding: { facilities: string[]; hires: string[] } | null = null;
 
-  async start(opts: { breweryName?: string; difficulty?: Difficulty; override?: ConfigOverride } = {}): Promise<void> {
+  async start(opts: { breweryName?: string; difficulty?: Difficulty; override?: ConfigOverride; tagline?: string; founding?: { facilities: string[]; hires: string[] } } = {}): Promise<void> {
     this.config = resolveConfig(opts.override);
     this.difficulty = opts.difficulty ?? "competitive";
+    this.tagline = opts.tagline ?? "";
+    this.founding = opts.founding ?? null;
     const roster = ROSTERS[this.difficulty];
     this.investScale = roster.investScale;
     const N = this.config.game.n_firms;
@@ -281,6 +288,7 @@ export class SinglePlayerGame {
       lobbyInitiatives: summarizeLobbying(this.config, world),
       shocks,
       hiringMarket: generateHiringMarket(this.config, world.seed, game.current_round),
+      ownTagline: this.tagline,
     };
   }
 
@@ -342,6 +350,9 @@ export class SinglePlayerGame {
       invest_T_inv: 0, invest_T_gov: 0,
       debt_draw: 0, debt_repay: 0, equity_raise: 0, dividend: 0,
       buy_info: false, agreement_actions: [], exit_action: null, beliefs: {}, reflection: "",
+      // Founding choices from the firm builder seed the opening round (then never repeat).
+      build_facilities: (this.founding?.facilities ?? []).map((t) => ({ type: t })),
+      hire_employees: this.founding?.hires ?? [],
     };
   }
 

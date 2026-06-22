@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useGame } from "./game/useGame.js";
-import { Setup } from "./screens/Setup.js";
+import { FirmBuilder } from "./screens/FirmBuilder.js";
+import { setPlayerColor } from "./lib/teamColors.js";
 import { Play } from "./screens/Play.js";
 import { Lobby } from "./screens/Lobby.js";
 import { Join } from "./screens/Join.js";
@@ -45,7 +46,16 @@ function ModeToggle() {
 /** Single-player: the full stack runs in the browser (engine + orchestration + NPCs). */
 function Solo() {
   const { view, busy, start, play, defaultDecision, infoCost, reset } = useGame();
-  if (!view) return <Setup onStart={(name, difficulty, modules) => start({ breweryName: name, difficulty, override: Object.keys(modules).length ? ({ modules } as never) : undefined })} busy={busy} />;
+  if (!view)
+    return (
+      <FirmBuilder
+        busy={busy}
+        onStart={(c) => {
+          setPlayerColor(c.color);
+          start({ breweryName: c.name, difficulty: c.difficulty, tagline: c.tagline, founding: c.founding, override: Object.keys(c.modules).length ? ({ modules: c.modules } as never) : undefined });
+        }}
+      />
+    );
   return <Play view={view} busy={busy} infoCost={infoCost()} onPlay={play} defaultDecision={defaultDecision} onReset={reset} />;
 }
 
