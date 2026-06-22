@@ -144,6 +144,12 @@ export const defaultModules: ModulesConfig = {
       { id: "taproom", label: "Taproom", capacity_contribution: 40, base_cost: 180, fixed_cost: 12, build_rounds: 1, condition_decay: 0.07, maintenance_effect: 0.005 },
       { id: "canning_line", label: "Canning line", capacity_contribution: 160, base_cost: 300, fixed_cost: 16, build_rounds: 1, condition_decay: 0.06, maintenance_effect: 0.004 },
     ],
+    districts: [
+      { id: "downtown", label: "Downtown", kind: "downtown", rent_mult: 1.35, blurb: "High foot traffic, premium rent." },
+      { id: "riverside", label: "Riverside", kind: "riverside", rent_mult: 1.1, blurb: "Characterful and walkable — a taproom draw, moderate rent." },
+      { id: "southside", label: "South Side", kind: "industrial", rent_mult: 0.75, blurb: "Cheap industrial space with easy logistics." },
+      { id: "suburbs", label: "The Suburbs", kind: "suburban", rent_mult: 0.95, blurb: "Roomy and affordable, quieter trade." },
+    ],
   },
   // MOD-B12 — named human capital. OFF by default (additive: no employees ⇒ identical
   // to the pre-module game). Each hire adds a salary (opex) and a skill×satisfaction

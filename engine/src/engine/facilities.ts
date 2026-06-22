@@ -25,6 +25,10 @@ export interface FacilitiesOutcome {
 const typeOf = (c: Config, id: string): FacilityTypeConfig | undefined =>
   c.modules?.facilities?.types.find((t) => t.id === id);
 
+/** Rent multiplier on fixed cost from the facility's district (1 when none/unset). */
+const rentMult = (c: Config, locationId?: string): number =>
+  (locationId && c.modules?.facilities?.districts?.find((d) => d.id === locationId)?.rent_mult) || 1;
+
 /** How condition scales delivered capacity: a derelict facility still runs at half,
  *  a pristine one at full. Keeps a neglected asset a drag, not a cliff. */
 const conditionFactor = (cond: number): number => 0.5 + 0.5 * Math.max(0, Math.min(1, cond));
@@ -59,10 +63,11 @@ export function resolveFacilities(world: WorldState, decisions: Map<FirmId, Firm
       if (!t || f.facilities.length >= cfg.max_facilities) continue;
       if (f.cash < t.base_cost) continue; // can't finance the build this round
       const id = `fac_${round}_${f.facilities.length}`;
+      const location_id = b.location ?? cfg.districts?.[0]?.id;
       f.facilities.push({
         id, type: t.id, name: (b.name ?? "").trim() || t.label,
         built_round: round, online_round: round + t.build_rounds,
-        condition: 1, active: true,
+        condition: 1, active: true, location_id,
       });
       capex += t.base_cost;
       out.events.push(`FACILITY BUILT: ${f.id} breaks ground on a ${t.label.toLowerCase()} (online in ${t.build_rounds} round${t.build_rounds === 1 ? "" : "s"})`);
@@ -83,7 +88,7 @@ export function resolveFacilities(world: WorldState, decisions: Map<FirmId, Firm
       if (!fac.active) continue; // mothballed: no cost, condition holds
       const t = typeOf(c, fac.type);
       if (!t) continue;
-      opex += t.fixed_cost;
+      opex += Math.round(t.fixed_cost * rentMult(c, fac.location_id));
       const spend = Math.max(0, d?.maintain_facilities?.[fac.id] ?? 0);
       opex += spend;
       // Condition: decays by the type rate, restored by maintenance; clamped to [0,1].

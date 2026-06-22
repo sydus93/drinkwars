@@ -74,6 +74,7 @@ export interface FirmSnapshot {
   keyHires: string[]; // MOD-B03 roles currently on staff
   verticalAssets: string[]; // MOD-B06 owned assets
   employees: { id: string; name: string; role: string; skill: number; satisfaction: number; salary: number }[]; // MOD-B12 roster (for scouting/poaching)
+  facilities: { type: string; location_id?: string; active: boolean }[]; // MOD-B11 sited facilities (for competitor pins)
 }
 
 /** A shock the player is allowed to know about: either active right now, or an
@@ -242,6 +243,7 @@ export class SinglePlayerGame {
         keyHires: (f.key_hires ?? []).map((h) => h.role),
         verticalAssets: (f.vertical_assets ?? []).map((a) => a.id),
         employees: (f.employees ?? []).map((e) => ({ id: e.id, name: e.name, role: e.role, skill: e.skill, satisfaction: e.satisfaction, salary: e.salary })),
+        facilities: (f.facilities ?? []).map((x) => ({ type: x.type, location_id: x.location_id, active: x.active })),
       };
     });
 

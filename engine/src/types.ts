@@ -506,10 +506,20 @@ export interface FacilityTypeConfig {
   condition_decay: number; // per-round condition loss at zero maintenance
   maintenance_effect: number; // condition restored per $ of maintenance spend
 }
+/** A geographic district facilities can be sited in. Rent scales a facility's fixed
+ *  cost (cheap industrial vs. pricey downtown). Absent ⇒ no location mechanic. */
+export interface DistrictConfig {
+  id: string;
+  label: string;
+  kind: "downtown" | "industrial" | "riverside" | "suburban";
+  rent_mult: number; // multiplier on facility fixed cost sited here
+  blurb: string;
+}
 export interface FacilitiesConfig {
   enabled: boolean;
   max_facilities: number; // cap on owned facilities per firm
   types: FacilityTypeConfig[];
+  districts?: DistrictConfig[]; // siting options (optional)
 }
 /** One owned facility (FirmState.facilities) — named, condition-tracked. */
 export interface Facility {
@@ -520,6 +530,7 @@ export interface Facility {
   online_round: number; // round it becomes operational
   condition: number; // 0..1
   active: boolean; // false ⇒ mothballed (no capacity, no fixed cost)
+  location_id?: string; // DistrictConfig.id it's sited in (optional)
 }
 
 /** MOD-B12 · Employees (named human capital). Additive + gated, like facilities:
@@ -828,7 +839,7 @@ export interface FirmDecision {
   hire_roles?: string[]; // MOD-B03: key roles to hire this round
   fire_roles?: string[]; // MOD-B03: key roles to let go this round
   // MOD-B11 facilities (physical capacity assets)
-  build_facilities?: { type: string; name?: string }[]; // facility types to build this round
+  build_facilities?: { type: string; name?: string; location?: string }[]; // facility types to build this round
   maintain_facilities?: Record<string, number>; // facility id → maintenance $ this round
   mothball_facilities?: string[]; // facility ids to take offline (stop fixed cost + capacity)
   reactivate_facilities?: string[]; // mothballed facility ids to bring back online

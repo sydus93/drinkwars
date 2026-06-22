@@ -33,8 +33,71 @@ export function MarketMap({ view, onInspect }: { view: GameView; onInspect: (fir
         ))
       )}
 
+      {view.modules?.facilities?.enabled && <FootprintMap view={view} />}
+
       <Legend firms={view.firms} />
     </div>
+  );
+}
+
+/** Geographic footprint: the districts you can site in, your facilities placed in
+ *  each (your color), and rival presence as colored dots — the spec's competitor pins. */
+function FootprintMap({ view }: { view: GameView }) {
+  const districts = view.modules?.facilities?.districts ?? [];
+  if (!districts.length) return null;
+  const youId = view.own.id;
+  const yourFac = view.own.facilities ?? [];
+  const facLabel = (id: string) => view.modules?.facilities?.types.find((t) => t.id === id)?.label ?? id;
+  const rivalsByDistrict = new Map<string, { firm: string; type: string }[]>();
+  for (const f of view.firms) {
+    if (f.isYou) continue;
+    for (const fac of f.facilities) {
+      if (!fac.active || !fac.location_id) continue;
+      const arr = rivalsByDistrict.get(fac.location_id) ?? [];
+      arr.push({ firm: f.firm_id, type: fac.type });
+      rivalsByDistrict.set(fac.location_id, arr);
+    }
+  }
+  return (
+    <Card>
+      <Eyebrow>Your footprint</Eyebrow>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {districts.map((dd) => {
+          const mine = yourFac.filter((f) => (f.location_id ?? districts[0].id) === dd.id);
+          const rivals = rivalsByDistrict.get(dd.id) ?? [];
+          return (
+            <div key={dd.id} className="rounded-md border border-line2 bg-paper2/30 p-3">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-semibold text-ink">{dd.label}</span>
+                <span className="text-[0.6rem] uppercase tracking-[0.08em] text-inksoft">rent ×{dd.rent_mult}</span>
+              </div>
+              <div className="mt-0.5 text-[0.66rem] leading-snug text-inksoft">{dd.blurb}</div>
+              {mine.length > 0 ? (
+                <div className="mt-2 grid gap-1">
+                  {mine.map((f) => (
+                    <div key={f.id} className="flex items-center gap-1.5 text-[0.72rem]">
+                      <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: firmColor(youId), opacity: f.active ? 1 : 0.4 }} aria-hidden="true" />
+                      <span className="truncate font-semibold text-ink">{f.name}</span>
+                      <span className="shrink-0 text-inksoft">· {facLabel(f.type)}{f.active ? "" : " · mothballed"}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="mt-2 text-[0.68rem] text-inksoft">No presence here yet.</div>
+              )}
+              {rivals.length > 0 && (
+                <div className="mt-2 flex flex-wrap items-center gap-1 border-t border-line pt-1.5">
+                  <span className="mr-1 text-[0.58rem] uppercase tracking-[0.1em] text-inksoft">Rivals</span>
+                  {rivals.map((r, i) => (
+                    <span key={i} className="h-2 w-2 rounded-full" style={{ background: firmColor(r.firm) }} title={`${view.names[r.firm] ?? r.firm}: ${facLabel(r.type)}`} aria-hidden="true" />
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </Card>
   );
 }
 

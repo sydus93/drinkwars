@@ -62,6 +62,7 @@ export function DecisionForm({
   const [marketDetail, setMarketDetail] = useState<string | null>(null);
   const [detailEmp, setDetailEmp] = useState<string | null>(null);
   const [detailFac, setDetailFac] = useState<string | null>(null);
+  const [siteDistrict, setSiteDistrict] = useState<string>("");
   const activeSegs = view.segments.filter((s) => s.active).map((s) => s.id);
 
   useEffect(() => {
@@ -181,6 +182,7 @@ export function DecisionForm({
   // MOD-B11 facilities (named physical capacity assets)
   const facOn = !!mods?.facilities?.enabled;
   const facTypes = mods?.facilities?.types ?? [];
+  const facDistricts = mods?.facilities?.districts ?? [];
   const facMax = mods?.facilities?.max_facilities ?? 0;
   const facilities = view.own.facilities ?? [];
   const fbuilds = d?.build_facilities ?? [];
@@ -191,7 +193,7 @@ export function DecisionForm({
   const buildCost = facOn ? fbuilds.reduce((s, b) => s + (facTypes.find((t) => t.id === b.type)?.base_cost ?? 0), 0) : 0;
   const maintCost = facOn ? Object.values(fmaint).reduce((s: number, v) => s + Math.max(0, v), 0) : 0;
   const facSpend = buildCost + maintCost;
-  const addBuild = (type: string) => set({ build_facilities: [...fbuilds, { type }] });
+  const addBuild = (type: string) => set({ build_facilities: [...fbuilds, { type, location: siteDistrict || facDistricts[0]?.id }] });
   const removeBuild = (i: number) => set({ build_facilities: fbuilds.filter((_, j) => j !== i) });
   const renameBuild = (i: number, name: string) => set({ build_facilities: fbuilds.map((b, j) => (j === i ? { ...b, name } : b)) });
   const setMaintain = (id: string, v: number) => set({ maintain_facilities: { ...fmaint, [id]: Math.max(0, v) } });
@@ -526,7 +528,17 @@ export function DecisionForm({
 
             {facilities.length + fbuilds.length < facMax ? (
               <div className="mt-3 border-t border-line pt-2">
-                <div className="mb-1.5 text-[0.6rem] uppercase tracking-[0.12em] text-inksoft">Break ground</div>
+                <div className="mb-1.5 flex flex-wrap items-center justify-between gap-1 text-[0.6rem] uppercase tracking-[0.12em] text-inksoft">
+                  <span>Break ground</span>
+                  {facDistricts.length > 0 && (
+                    <label className="flex items-center gap-1 normal-case tracking-normal">
+                      <span>in</span>
+                      <select value={siteDistrict || facDistricts[0].id} onChange={(e) => setSiteDistrict(e.target.value)} className="rounded border border-line bg-paper px-1 py-0.5 text-[0.68rem] text-ink">
+                        {facDistricts.map((dd) => <option key={dd.id} value={dd.id}>{dd.label} · rent ×{dd.rent_mult}</option>)}
+                      </select>
+                    </label>
+                  )}
+                </div>
                 <div className="grid gap-1.5">
                   {facTypes.map((t) => (
                     <button key={t.id} type="button" onClick={() => addBuild(t.id)} disabled={cash < t.base_cost}
