@@ -23,16 +23,22 @@ export interface GeoOutcome {
   qSoldByFirm: Map<FirmId, number>;
   distCostByFirm: Map<FirmId, number>; // distribution + tariff (→ opex)
   entryCostByFirm: Map<FirmId, number>; // one-time market-entry cost (→ opex)
-  marketBreakdown: Map<FirmId, Record<string, { revenue: number; q_sold: number; entered: boolean }>>;
+  marketBreakdown: Map<FirmId, Record<string, { revenue: number; q_sold: number; entered: boolean; bySeg: Record<SegmentId, { q_sold: number; share: number; price: number }> }>>;
   events: string[];
 }
 
-/** Markets active this round: home + domestic always; export only with international on. */
-export function activeMarkets(c: Config): MarketConfig[] {
+/** Markets active this round: home + domestic always; export only with international on
+ *  AND once the unlock round is reached. Passing `round` enforces the round-gate; omitting
+ *  it (round === undefined) lists every market international *would* open (no round gate). */
+export function activeMarkets(c: Config, round?: number): MarketConfig[] {
   const geo = c.modules?.geography;
   if (!geo?.enabled) return [];
-  const intl = !!c.modules?.international?.enabled;
-  return geo.markets.filter((m) => m.kind !== "export" || intl);
+  const intl = c.modules?.international;
+  // Export ("international") markets surface only when international is enabled AND we've
+  // reached export_unlock_round. So they never interfere with single-market / domestic-only
+  // games, and don't appear in the interface before the "go global" phase opens.
+  const exportsOpen = !!intl?.enabled && (round === undefined || round >= (intl.export_unlock_round ?? 0));
+  return geo.markets.filter((m) => m.kind !== "export" || exportsOpen);
 }
 
 /** Advance the FX rates for export markets (mean-reverting, deterministic). Mutates
@@ -42,7 +48,7 @@ export function updateFxRates(world: WorldState, c: Config): void {
   if (!intl?.enabled) return;
   world.fx_rates ??= {};
   const rng = new RNG(deriveSeed(world.seed, world.round, 444));
-  for (const m of activeMarkets(c)) {
+  for (const m of activeMarkets(c, world.round)) {
     if (m.kind !== "export") continue;
     const prev = world.fx_rates[m.id] ?? intl.fx_mean;
     const drift = intl.fx_speed * (intl.fx_mean - prev);
@@ -67,7 +73,7 @@ export function resolveGeography(
   sellableByFirm: Map<FirmId, number>,
   mod: DemandModifiers,
 ): GeoOutcome {
-  const markets = activeMarkets(c);
+  const markets = activeMarkets(c, world.round);
   const home = markets.find((m) => m.kind === "home") ?? markets[0];
   const activeFirms = world.firms.filter((f) => f.status === "active");
   const out: GeoOutcome = {
@@ -129,9 +135,13 @@ export function resolveGeography(
       let mRevenueLocal = 0;
       let mQ = 0;
       const agg = out.perFirm.get(f.id)!;
+      const bySeg: Record<SegmentId, { q_sold: number; share: number; price: number }> = {};
       for (const [segId, r] of Object.entries(segs)) {
         mRevenueLocal += r.revenue;
         mQ += r.q_sold;
+        // Within-market per-segment standing (for the City View "who leads each segment here" panel).
+        const segTot = res.segmentTotals.get(segId) ?? 0;
+        bySeg[segId] = { q_sold: r.q_sold, share: segTot > 1e-9 ? r.q_sold / segTot : 0, price: r.price };
         // Aggregate this market's per-segment result into the firm's combined view.
         const prev = agg[segId];
         if (!prev) agg[segId] = { ...r, revenue: r.revenue * fx };
@@ -147,7 +157,7 @@ export function resolveGeography(
       out.revenueByFirm.set(f.id, (out.revenueByFirm.get(f.id) ?? 0) + mRevenue);
       out.qSoldByFirm.set(f.id, (out.qSoldByFirm.get(f.id) ?? 0) + mQ);
       out.distCostByFirm.set(f.id, (out.distCostByFirm.get(f.id) ?? 0) + tariff + distribution);
-      out.marketBreakdown.get(f.id)![m.id] = { revenue: mRevenue, q_sold: mQ, entered: m.kind === "home" || f.markets_entered.includes(m.id) };
+      out.marketBreakdown.get(f.id)![m.id] = { revenue: mRevenue, q_sold: mQ, entered: m.kind === "home" || f.markets_entered.includes(m.id), bySeg };
     }
   }
 

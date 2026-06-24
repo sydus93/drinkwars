@@ -336,6 +336,7 @@ export interface InternationalConfig {
   enabled: boolean;
   fx_mean: number; // long-run FX level (home$ per unit local revenue)
   fx_speed: number; // mean-reversion speed per round
+  export_unlock_round?: number; // export markets stay hidden until this round (default 0 = open as soon as international is on). Gates the "go global" phase.
 }
 
 export type PublicGoodBenefit = "demand" | "water_resilience" | "quality";
@@ -537,6 +538,7 @@ export interface Facility {
   condition: number; // 0..1
   active: boolean; // false ⇒ mothballed (no capacity, no fixed cost)
   location_id?: string; // DistrictConfig.id it's sited in (optional)
+  market_id?: string; // MOD-B01 market/city this facility belongs to (optional; "home" when geography on and unset). Siting/display tag.
 }
 
 /** MOD-B12 · Employees (named human capital). Additive + gated, like facilities:
@@ -845,7 +847,7 @@ export interface FirmDecision {
   hire_roles?: string[]; // MOD-B03: key roles to hire this round
   fire_roles?: string[]; // MOD-B03: key roles to let go this round
   // MOD-B11 facilities (physical capacity assets)
-  build_facilities?: { type: string; name?: string; location?: string }[]; // facility types to build this round
+  build_facilities?: { type: string; name?: string; location?: string; market?: string }[]; // facility types to build this round (location = district id; market = MOD-B01 market/city id)
   maintain_facilities?: Record<string, number>; // facility id → maintenance $ this round
   mothball_facilities?: string[]; // facility ids to take offline (stop fixed cost + capacity)
   reactivate_facilities?: string[]; // mothballed facility ids to bring back online
@@ -958,8 +960,9 @@ export interface FirmRoundResult {
   };
   // Inventory flow this round (null in legacy / disabled mode). turnover = sold / avg-on-hand.
   inventory: { begin: number; produced: number; sold: number; spoiled: number; end: number; turnover: number } | null;
-  // Per-market performance (null unless geography is on). Drives the world-map UI.
-  markets: Record<string, { revenue: number; q_sold: number; entered: boolean }> | null;
+  // Per-market performance (null unless geography is on). Drives the world-map / City View UI.
+  // bySeg carries within-market per-segment standings (q_sold, within-market share, local price) for the per-city demand panel.
+  markets: Record<string, { revenue: number; q_sold: number; entered: boolean; bySeg?: Record<SegmentId, { q_sold: number; share: number; price: number }> }> | null;
   scorecard_raw: { financial: number; market: number; intangible: number; stakeholder: number };
   scorecard_norm: { financial: number; market: number; intangible: number; stakeholder: number };
   scorecard_cumulative: number;

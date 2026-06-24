@@ -72,10 +72,13 @@ export function resolveFacilities(world: WorldState, decisions: Map<FirmId, Firm
       if (f.cash < t.base_cost) continue; // can't finance the build this round
       const id = `fac_${round}_${f.facilities.length}`;
       const location_id = b.location ?? cfg.districts?.[0]?.id;
+      // Tag the facility with the market/city it's sited in (MOD-B01). Defaults to "home"
+      // when geography is on so home-only builds still place correctly on the City View.
+      const market_id = b.market ?? (c.modules?.geography?.enabled ? "home" : undefined);
       f.facilities.push({
         id, type: t.id, name: (b.name ?? "").trim() || t.label,
         built_round: round, online_round: round + t.build_rounds,
-        condition: 1, active: true, location_id,
+        condition: 1, active: true, location_id, market_id,
       });
       capex += t.base_cost;
       out.events.push(`FACILITY BUILT: ${f.id} breaks ground on a ${t.label.toLowerCase()} (online in ${t.build_rounds} round${t.build_rounds === 1 ? "" : "s"})`);

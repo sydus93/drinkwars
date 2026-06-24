@@ -94,7 +94,7 @@ export const defaultModules: ModulesConfig = {
       { id: "export_asia", label: "Asia-Pacific export", kind: "export", demand_mult: 1.2, beta_p_mult: 1.1, beta_q_mult: 1.0, beta_b_mult: 1.2, brand_transfer: 0.4, entry_cost: 450, distribution_cost_per_unit: 0.7, tariff_rate: 0.08, fx_volatility: 0.08 },
     ],
   },
-  international: { enabled: false, fx_mean: 1.0, fx_speed: 0.2 },
+  international: { enabled: false, fx_mean: 1.0, fx_speed: 0.2, export_unlock_round: 4 },
   laborMarket: {
     enabled: false,
     roles: [

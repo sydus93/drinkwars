@@ -15,7 +15,7 @@ import { computeBetaDeltas, zeroBetaDelta } from "./drift.js";
 import { resolvePrEvents } from "./pr.js";
 import { resolveSustainability } from "./sustainability.js";
 import { resolvePublicGoods } from "./publicgoods.js";
-import { resolveGeography, updateFxRates } from "./geography.js";
+import { resolveGeography, updateFxRates, type GeoOutcome } from "./geography.js";
 import { updateReputation, reputationSpread } from "./reputation.js";
 import { resolveRnd, rndFirstMoverBonus } from "./rndrace.js";
 import { resolveAssets, verticalCostReduction, verticalRegRelief } from "./assets.js";
@@ -289,7 +289,7 @@ export function resolveRound(prevWorld: WorldState, decisionList: FirmDecision[]
   const geoOpexByFirm = new Map<FirmId, number>(); // distribution + tariff + entry (→ opex)
   let perFirmSegs: Map<FirmId, Record<SegmentId, SegmentResult>>;
   let segTotals: Map<SegmentId, number>;
-  let marketBreakdown: Map<FirmId, Record<string, { revenue: number; q_sold: number; entered: boolean }>> | null = null;
+  let marketBreakdown: GeoOutcome["marketBreakdown"] | null = null;
   if (geoOn) {
     const geo = resolveGeography(w, decisions, c, sellableByFirm, mods);
     events.push(...geo.events);

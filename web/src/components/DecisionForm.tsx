@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Facility, FirmDecision, PrPlayType, SegmentId } from "drinkwars-engine";
 import type { GameView } from "../game/controller.js";
+import { marketPresenceFrom, type CityActions } from "../game/cityActions.js";
 import { SEG_LABEL, SEG_TAG, STOCK_LABEL, fmt } from "../labels.js";
 import { Button, Card, Eyebrow, Row, Tag } from "./ui.js";
 import { AllocationBar } from "./AllocationBar.js";
@@ -49,6 +50,7 @@ export function DecisionForm({
   footerNote,
   poaches: externalPoaches,
   onPoach,
+  cityActions,
 }: {
   view: GameView;
   defaultDecision: () => Promise<FirmDecision>;
@@ -62,6 +64,9 @@ export function DecisionForm({
   // Optional: when absent (e.g. multiplayer) the form manages its own poach list.
   poaches?: { firm: string; employee: string; offer: number }[];
   onPoach?: (firm: string, employee: string, offer: number) => void;
+  // City View actions (builds, market commitments, upkeep), merged into the round decision
+  // at submit. When geography is on, the City View tab owns markets + facilities.
+  cityActions?: CityActions;
 }) {
   const [d, setD] = useState<FirmDecision | null>(null);
   const [prModal, setPrModal] = useState(false);
@@ -187,6 +192,9 @@ export function DecisionForm({
 
   // MOD-B11 facilities (named physical capacity assets)
   const facOn = !!mods?.facilities?.enabled;
+  // With geography on AND a City View available (single-player), markets + facility siting
+  // are managed on the City View tab — the form defers to it and merges its actions at submit.
+  const cityManaged = geoOn && !!cityActions;
   const facTypes = mods?.facilities?.types ?? [];
   const facDistricts = mods?.facilities?.districts ?? [];
   const facMax = mods?.facilities?.max_facilities ?? 0;
@@ -469,8 +477,16 @@ export function DecisionForm({
 
         <div className="grid min-w-0 content-start gap-4">
 
+        {/* With geography on, the City View tab owns markets + facility siting — point there. */}
+        {facOn && cityManaged && (
+          <Card>
+            <Eyebrow>Facilities &amp; markets</Eyebrow>
+            <p className="mt-1 text-sm text-inksoft">Your cities, districts, and facility siting now live on the <b className="text-ink">City View</b> tab — build, enter new markets, and route capacity there. Everything you queue is committed with this round when you brew.</p>
+          </Card>
+        )}
+
         {/* Facilities (MOD-B11) — owned physical capacity */}
-        {facOn && (
+        {facOn && !cityManaged && (
           <Card>
             <div className="mb-2 flex items-center gap-2">
               <Eyebrow>Facilities</Eyebrow>
@@ -685,8 +701,9 @@ export function DecisionForm({
           </Card>
         )}
 
-        {/* Markets / worldview (MOD-B01 geography, MOD-B02 international) */}
-        {geoOn && markets.length > 1 && (
+        {/* Markets / worldview (MOD-B01 geography, MOD-B02 international). Hidden when the
+            City View tab owns markets (single-player); still shown for multiplayer. */}
+        {geoOn && markets.length > 1 && !cityManaged && (
           <Card>
             <div className="flex items-center gap-1.5">
               <Eyebrow>Markets</Eyebrow>
@@ -1023,7 +1040,29 @@ export function DecisionForm({
           {lastCov != null && <Row label="Interest coverage (last)" value={lastCov > 900 ? "—" : `${lastCov.toFixed(1)}×`} />}
           {overcommit && <div className="mt-2 text-[0.72rem] text-brick">You'd run negative before any sales come in — revenue may cover it, but you risk forced exit.</div>}
         </Card>
-        <Button variant="go" onClick={() => onPlay({ ...d, poach_employees: poaches })} disabled={busy} className="w-full py-3 text-base">
+        <Button
+          variant="go"
+          onClick={() => {
+            const base = { ...d, poach_employees: poaches } as FirmDecision;
+            // Fold City View actions into the round: market_presence is authoritative from the
+            // committed-markets set (entering a new market here triggers the engine entry cost);
+            // builds and upkeep are appended (founding builds on round 0 are preserved).
+            onPlay(
+              cityActions
+                ? {
+                    ...base,
+                    build_facilities: [...(base.build_facilities ?? []), ...cityActions.builds],
+                    market_presence: marketPresenceFrom(view, cityActions.markets),
+                    mothball_facilities: [...(base.mothball_facilities ?? []), ...cityActions.mothballs],
+                    reactivate_facilities: [...(base.reactivate_facilities ?? []), ...cityActions.reactivations],
+                    maintain_facilities: { ...(base.maintain_facilities ?? {}), ...cityActions.maintain },
+                  }
+                : base,
+            );
+          }}
+          disabled={busy}
+          className="w-full py-3 text-base"
+        >
           {busy ? "Working…" : submitLabel ?? `Brew & Resolve Round ${view.round + 1}`}
         </Button>
         <div className="text-center text-[0.68rem] text-inksoft">{footerNote ?? "7 rival breweries (adaptive AI) brew at the same time."}</div>

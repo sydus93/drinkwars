@@ -16,8 +16,10 @@ import { Sparkline } from "../components/Sparkline.js";
 import { Trends } from "../components/Trends.js";
 import { Field } from "../components/Field.js";
 import { MarketMap } from "../components/MarketMap.js";
+import { CityView } from "../components/CityView.js";
+import { emptyCityActions, type CityActions } from "../game/cityActions.js";
 
-type Tab = "decision" | "market" | "last" | "trends" | "field";
+type Tab = "decision" | "market" | "city" | "last" | "trends" | "field";
 
 export function Play({
   view,
@@ -49,6 +51,9 @@ export function Play({
       const rest = prev.filter((p) => p.employee !== employee);
       return offer > 0 ? [...rest, { firm, employee, offer }] : rest;
     });
+  // City View actions (facility builds, market commitments, upkeep) are lifted here so the
+  // City View tab and the decision form edit ONE round decision — merged in at submit.
+  const [cityActions, setCityActions] = useState<CityActions>(() => emptyCityActions(view));
   const seenRound = useRef<number | null>(null);
 
   // New game (no results yet) → start on the decision tab.
@@ -59,6 +64,7 @@ export function Play({
   useEffect(() => {
     setInfoPreview(false);
     setPoaches([]);
+    setCityActions(emptyCityActions(view));
   }, [view.round]);
   // Surface this round's events on each resolution (not on first mount / replays).
   // Keyed on resolved-round COUNT, not the round pointer — the pointer stops
@@ -74,6 +80,8 @@ export function Play({
 
   const myRank = view.standings.findIndex((s) => s.isYou) + 1;
   const hasHistory = view.history.length > 0;
+  // City View appears only with geography in play — so single-market games are untouched.
+  const cityEnabled = !!view.modules?.geography?.enabled && view.markets.length > 0;
   const infoActive = view.infoActive || infoPreview;
   const detailSnapshot = detailFirm ? view.firms.find((f) => f.firm_id === detailFirm) ?? null : null;
 
@@ -85,6 +93,7 @@ export function Play({
   const tabs: { id: Tab; label: string; disabled?: boolean }[] = [
     { id: "decision", label: view.complete ? "Season over" : `Decide R${view.round + 1}` },
     { id: "market", label: "The Market" },
+    ...(cityEnabled ? [{ id: "city" as Tab, label: "City View" }] : []),
     { id: "last", label: "Last round", disabled: !view.ownResult },
     { id: "trends", label: "Trends", disabled: !hasHistory },
     { id: "field", label: "Field & intel", disabled: !hasHistory },
@@ -162,10 +171,13 @@ export function Play({
         ))}
       </div>
 
+      {tab === "city" && cityEnabled ? (
+        <CityView view={view} actions={cityActions} setActions={setCityActions} onInspect={setDetailFirm} />
+      ) : (
       <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
         <div className="min-w-0">
           {tab === "decision" && view.ownActive && !view.complete && (
-            <DecisionForm view={view} defaultDecision={defaultDecision} onPlay={handlePlay} busy={busy} infoCost={infoCost} onInfoChange={setInfoPreview} poaches={poaches} onPoach={queuePoach} />
+            <DecisionForm view={view} defaultDecision={defaultDecision} onPlay={handlePlay} busy={busy} infoCost={infoCost} onInfoChange={setInfoPreview} poaches={poaches} onPoach={queuePoach} cityActions={cityActions} />
           )}
           {tab === "decision" && !view.ownActive && !view.complete && (
             <Card>
@@ -222,6 +234,7 @@ export function Play({
           <Events events={view.events} />
         </div>
       </div>
+      )}
     </div>
   );
 }

@@ -5,7 +5,7 @@
  * adaptive best-response bots from the engine. This is app-spec §9 step 0.
  */
 import { GameOrchestrator, InMemoryAdapter, randomBreweryNames, renameFirms } from "drinkwars-server";
-import { resolveConfig, decideAdaptive, ADAPTIVE_LEANS, inventoryEnabled, roleBriefings, firmValuation, summarizeAgreementsFor, summarizeLobbying, generateHiringMarket } from "drinkwars-engine";
+import { resolveConfig, decideAdaptive, ADAPTIVE_LEANS, inventoryEnabled, roleBriefings, firmValuation, summarizeAgreementsFor, summarizeLobbying, generateHiringMarket, activeMarkets } from "drinkwars-engine";
 import type { RoleBriefing, AllianceSummary, LobbySummary, Candidate } from "drinkwars-engine";
 import type { Config, ConfigOverride, FirmDecision, FirmId, FirmRoundResult, FirmState, Lean, ModulesConfig, RoundResult, SegmentId, WorldState } from "drinkwars-engine";
 
@@ -74,7 +74,7 @@ export interface FirmSnapshot {
   keyHires: string[]; // MOD-B03 roles currently on staff
   verticalAssets: string[]; // MOD-B06 owned assets
   employees: { id: string; name: string; role: string; skill: number; satisfaction: number; salary: number }[]; // MOD-B12 roster (for scouting/poaching)
-  facilities: { type: string; location_id?: string; active: boolean }[]; // MOD-B11 sited facilities (for competitor pins)
+  facilities: { type: string; location_id?: string; market_id?: string; active: boolean }[]; // MOD-B11 sited facilities (for competitor pins)
 }
 
 /** A shock the player is allowed to know about: either active right now, or an
@@ -88,6 +88,39 @@ export interface ShockSignal {
   roundsAway: number; // round − currentRound (≤0 ⇒ active now)
   active: boolean; // currently in effect
   signaled: boolean; // had a forewarning
+}
+
+/** Within-market standing for one segment — drives the City View "who leads each
+ *  segment here" demand panel. Shares are within-market (0–1). */
+export interface MarketSegmentStanding {
+  id: SegmentId;
+  size: number; // addressable demand in this market (base D × market demand_mult)
+  leader: FirmId | null; // firm with the largest within-market share of this segment
+  leaderShare: number;
+  yourShare: number;
+}
+export interface MarketSite {
+  id: string; // facility id (for mothball/maintain/detail)
+  firmId: FirmId;
+  name: string;
+  type: string; // FacilityTypeConfig.id
+  location_id?: string; // district id
+  active: boolean;
+}
+/** One market/city for the City View (MOD-B01). Gated like the engine: home + domestic
+ *  always; export ("international") cities only once international is on AND past the
+ *  unlock round — so single-market games see nothing and exports stay hidden until then. */
+export interface MarketView {
+  id: string;
+  label: string;
+  kind: "home" | "domestic" | "export";
+  entered: boolean; // you operate here
+  entryCost: number;
+  fx: number; // export FX (1 for home/domestic)
+  yourShare: number; // your overall within-market share by units sold (0–1)
+  segments: MarketSegmentStanding[];
+  yourSites: MarketSite[];
+  rivalSites: MarketSite[];
 }
 
 export interface GameView {
@@ -112,6 +145,7 @@ export interface GameView {
   modules?: ModulesConfig; // resolved expansion-module config (gates the module decision controls)
   briefings: RoleBriefing[]; // MOD-B05 role intel (empty when off)
   fx: Record<string, number>; // MOD-B02 export exchange rates (empty when off)
+  markets: MarketView[]; // MOD-B01 per-market ("city") view for the City View (empty when geography off)
   agreements: AllianceSummary[]; // MOD-A05/A06 active pacts you're party to (empty when off)
   lobbyInitiatives: LobbySummary[]; // MOD-A09 regulation initiatives + progress (empty when off)
   shocks: ShockSignal[]; // active + foreseeable upcoming shocks, for the map/header
@@ -243,7 +277,7 @@ export class SinglePlayerGame {
         keyHires: (f.key_hires ?? []).map((h) => h.role),
         verticalAssets: (f.vertical_assets ?? []).map((a) => a.id),
         employees: (f.employees ?? []).map((e) => ({ id: e.id, name: e.name, role: e.role, skill: e.skill, satisfaction: e.satisfaction, salary: e.salary })),
-        facilities: (f.facilities ?? []).map((x) => ({ type: x.type, location_id: x.location_id, active: x.active })),
+        facilities: (f.facilities ?? []).map((x) => ({ type: x.type, location_id: x.location_id, market_id: x.market_id, active: x.active })),
       };
     });
 
@@ -268,6 +302,54 @@ export class SinglePlayerGame {
     }
     shocks.sort((a, b) => Number(b.active) - Number(a.active) || a.roundsAway - b.roundsAway);
 
+    // Per-market ("city") view data — gated identically to the engine via activeMarkets:
+    // home + domestic always; export cities only with international on AND past the unlock
+    // round, so single-market games stay untouched and exports hide until the go-global phase.
+    const geoMarkets = activeMarkets(this.config, game.current_round);
+    const ownEntered = new Set(own.markets_entered ?? ["home"]);
+    const homeMarketId = geoMarkets.find((m) => m.kind === "home")?.id ?? "home";
+    const lastFr = last?.result.firm_results ?? [];
+    const markets: MarketView[] = geoMarkets.map((m) => {
+      const segments: MarketSegmentStanding[] = world.segments
+        .filter((s) => s.active)
+        .map((s) => {
+          let leader: FirmId | null = null;
+          let leaderShare = 0;
+          let yourShare = 0;
+          for (const fr of lastFr) {
+            const bs = fr.markets?.[m.id]?.bySeg?.[s.id];
+            if (!bs) continue;
+            if (fr.firm_id === this.humanFirmId) yourShare = bs.share;
+            if (bs.share > leaderShare) { leaderShare = bs.share; leader = fr.firm_id; }
+          }
+          return { id: s.id, size: Math.round(s.D * m.demand_mult), leader, leaderShare, yourShare };
+        });
+      let totalQ = 0;
+      let yourQ = 0;
+      for (const fr of lastFr) {
+        const q = fr.markets?.[m.id]?.q_sold ?? 0;
+        totalQ += q;
+        if (fr.firm_id === this.humanFirmId) yourQ = q;
+      }
+      // A facility belongs to a city by its market_id; untagged (legacy/home-only) sit at home.
+      const sitesOf = (f: FirmState): MarketSite[] =>
+        (f.facilities ?? [])
+          .filter((x) => (x.market_id ?? homeMarketId) === m.id)
+          .map((x) => ({ id: x.id, firmId: f.id, name: this.nameOf(f.id), type: x.type, location_id: x.location_id, active: x.active }));
+      return {
+        id: m.id,
+        label: m.label,
+        kind: m.kind,
+        entered: m.kind === "home" || ownEntered.has(m.id),
+        entryCost: m.entry_cost,
+        fx: world.fx_rates?.[m.id] ?? 1,
+        yourShare: totalQ > 1e-9 ? yourQ / totalQ : 0,
+        segments,
+        yourSites: sitesOf(own),
+        rivalSites: world.firms.filter((f) => f.id !== this.humanFirmId && f.status === "active").flatMap(sitesOf),
+      };
+    });
+
     return {
       round: game.current_round,
       nRounds: game.n_rounds,
@@ -290,6 +372,7 @@ export class SinglePlayerGame {
       modules: this.config.modules,
       briefings,
       fx: world.fx_rates ?? {},
+      markets,
       agreements: summarizeAgreementsFor(world, this.humanFirmId, (id) => this.nameOf(id)),
       lobbyInitiatives: summarizeLobbying(this.config, world),
       shocks,

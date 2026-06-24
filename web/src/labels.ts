@@ -82,3 +82,40 @@ export const fmt = {
   num: (n: number, d = 1) => n.toFixed(d),
   signed: (n: number) => (n >= 0 ? `+${money0.format(Math.round(n))}` : `-$${money0.format(Math.abs(Math.round(n)))}`),
 };
+
+/** City/market presentation for the City View — a fictional city name, region, globe
+ *  coordinates [lon, lat], coastline (for the procedural map), and a stable layout seed.
+ *  Keyed by the engine market id; falls back to the engine label for any unlisted id. */
+export const MARKET_META: Record<string, { city: string; region: string; geo: [number, number]; coast: "right" | "bottom" | null; seed: number }> = {
+  home: { city: "Front Range", region: "Mountain West", geo: [-105.3, 39.7], coast: null, seed: 7 },
+  heartland: { city: "Cedar Falls", region: "Upper Midwest", geo: [-92.5, 41.6], coast: null, seed: 21 },
+  coastal: { city: "Harbor City", region: "Eastern Seaboard", geo: [-74.0, 40.6], coast: "right", seed: 39 },
+  export_eu: { city: "London", region: "Northwest Europe", geo: [-0.1, 51.5], coast: "right", seed: 88 },
+  export_asia: { city: "Shanghai", region: "East Asia", geo: [121.5, 31.2], coast: "right", seed: 103 },
+};
+
+/** Zoning per district kind — which facility types its land use permits (City View siting
+ *  guidance). Reinforces each district's economics: production breweries belong in the
+ *  industrial yards, taprooms on commercial/retail streets. */
+export const ZONE_OF: Record<string, { zone: string; allow: string[] }> = {
+  downtown: { zone: "Commercial", allow: ["taproom", "canning_line"] },
+  riverside: { zone: "Mixed-use", allow: ["taproom", "brewery_small", "canning_line"] },
+  industrial: { zone: "Industrial", allow: ["brewery_large", "brewery_small", "canning_line"] },
+  suburban: { zone: "Residential", allow: ["brewery_small", "taproom", "canning_line"] },
+};
+export const ZONE_TONE: Record<string, string> = {
+  Commercial: "var(--color-copper)",
+  Industrial: "var(--color-plum)",
+  Residential: "var(--color-hop)",
+  "Mixed-use": "var(--color-gold)",
+  Waterfront: "var(--color-aero)",
+};
+
+/** Single-letter tags + a one-line role note for each facility type (City View pins/cards). */
+export const FAC_TAG: Record<string, string> = { brewery_small: "n", brewery_large: "B", taproom: "T", canning_line: "C" };
+export const FAC_NOTE: Record<string, string> = {
+  brewery_small: "A small, flexible base of output — a cheap first footprint.",
+  brewery_large: "Heavy output for the cost-and-scale game. Wants cheap industrial land.",
+  taproom: "Little output, but a brand magnet — best where foot traffic runs high.",
+  canning_line: "Solid packaged output that travels — fits most districts.",
+};

@@ -318,6 +318,8 @@ test("MOD-B01 geography: entering a region costs entry, splits capacity, balance
   assert.ok(res1.markets, "geography emits a per-market breakdown");
   assert.ok((res1.markets!.coastal?.q_sold ?? 0) > 0, "firm_1 sells in coastal");
   assert.ok((res1.markets!.home?.q_sold ?? 0) > 0, "firm_1 still sells at home");
+  // Per-market per-segment standings (drives the City View "who leads each segment here" panel).
+  assert.ok(res1.markets!.coastal?.bySeg && Object.keys(res1.markets!.coastal.bySeg!).length > 0, "coastal carries per-segment standings");
   // Entry cost shows up as opex (firm_1 paid the coastal entry fee).
   for (const fr of r.result.firm_results) {
     const bs = fr.balance_sheet;
@@ -327,6 +329,7 @@ test("MOD-B01 geography: entering a region costs entry, splits capacity, balance
 
 test("MOD-B02 international: export markets activate + FX moves, deterministically", () => {
   const c = loadConfig(modulesOverride(["geography", "international"]));
+  c.modules!.international!.export_unlock_round = 0; // isolate FX/activation from the round-gate (tested separately)
   const w = initGame(c);
   const r1 = resolveRound(w, [
     mkDecision("firm_1", w, { market_presence: { home: 1, export_eu: 1 } }),
@@ -346,6 +349,24 @@ test("MOD-B02 international: export markets activate + FX moves, deterministical
   const rg = resolveRound(initGame(geoOnly), [mkDecision("firm_1", w, { market_presence: { home: 1, export_eu: 1 } }), mkDecision("firm_2", w)], geoOnly);
   const rgRes = rg.result.firm_results.find((f) => f.firm_id === "firm_1")!;
   assert.ok(rgRes.markets && rgRes.markets.export_eu === undefined, "export markets need international enabled");
+});
+
+test("MOD-B02 international: export markets are round-gated by export_unlock_round", () => {
+  const c = loadConfig(modulesOverride(["geography", "international"]));
+  c.modules!.international!.export_unlock_round = 2; // exports open at round 2
+  const pres = { market_presence: { home: 1, export_eu: 1 } };
+  const w0 = initGame(c);
+  const r0 = resolveRound(w0, [mkDecision("firm_1", w0, pres), mkDecision("firm_2", w0)], c); // round 0
+  const g0 = r0.result.firm_results.find((f) => f.firm_id === "firm_1")!;
+  assert.ok(g0.markets && g0.markets.export_eu === undefined, "exports hidden before unlock (round 0)");
+  assert.ok(!r0.world.firms.find((f) => f.id === "firm_1")!.markets_entered.includes("export_eu"), "no entry before unlock");
+  const r1 = resolveRound(r0.world, [mkDecision("firm_1", r0.world, pres), mkDecision("firm_2", r0.world)], c); // round 1
+  const g1 = r1.result.firm_results.find((f) => f.firm_id === "firm_1")!;
+  assert.ok(g1.markets && g1.markets.export_eu === undefined, "exports still hidden at round 1");
+  const r2 = resolveRound(r1.world, [mkDecision("firm_1", r1.world, pres), mkDecision("firm_2", r1.world)], c); // round 2 — open
+  const g2 = r2.result.firm_results.find((f) => f.firm_id === "firm_1")!;
+  assert.ok(g2.markets!.export_eu !== undefined, "exports open at the unlock round");
+  assert.ok(r2.world.fx_rates && typeof r2.world.fx_rates.export_eu === "number", "FX engaged once exports open");
 });
 
 test("MOD-B10 reputation: signatories that honor deals build it; defection cuts it; off ⇒ none", () => {

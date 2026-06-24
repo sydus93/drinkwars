@@ -224,26 +224,32 @@ export function decideAdaptive(lean: Lean, f: FirmState, world: WorldState, c: C
   // Facilities (MOD-B11) — rivals put real assets on the city map: a cheap high-output
   // brewery in the industrial district first, then brand-leaning rivals add a downtown
   // taproom for the brand draw. Capex (reserved from the budget so it doesn't overcommit).
-  const buildFacilities: { type: string; location?: string }[] = [];
+  const buildFacilities: { type: string; location?: string; market?: string }[] = [];
   if (mods?.facilities?.enabled) {
     const have = (f.facilities ?? []).length;
     const districts = mods.facilities.districts ?? [];
     const typeById = (id: string) => mods.facilities!.types.find((t) => t.id === id);
     const distByKind = (k: string) => districts.find((d) => d.kind === k)?.id ?? districts[0]?.id;
+    // Which market/city these facilities sit in — a bot's expansion region if it has one,
+    // else home — so rival pins spread across the City View instead of all landing on home.
+    const facMarket: string | undefined = !mods.geography?.enabled ? undefined
+      : (marketPresence
+          ? (Object.entries(marketPresence).filter(([id, w]) => id !== "home" && w > 0).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "home")
+          : ((f.markets_entered ?? ["home"]).find((m) => m !== "home") ?? "home"));
     if (have === 0 && world.round >= 1) {
       // First footprint: a cheap nano brewery in the cheap industrial district, so
       // rivals reliably appear on the city map early (modest buffer).
       const small = typeById("brewery_small") ?? mods.facilities.types.find((t) => /brewery/.test(t.id));
-      if (small && f.cash > small.base_cost + 200) { buildFacilities.push({ type: small.id, location: distByKind("industrial") }); moduleCash += small.base_cost; }
+      if (small && f.cash > small.base_cost + 200) { buildFacilities.push({ type: small.id, location: distByKind("industrial"), market: facMarket }); moduleCash += small.base_cost; }
     } else if (have === 1 && world.round >= 3) {
       // Second site reflects the lean: brand bots open a downtown taproom (brand draw),
       // cost/scale bots add a production brewery in the industrial yards.
       if (lean.bias.B >= 1.2) {
         const tap = typeById("taproom");
-        if (tap && f.cash > tap.base_cost + 350) { buildFacilities.push({ type: tap.id, location: distByKind("downtown") }); moduleCash += tap.base_cost; }
+        if (tap && f.cash > tap.base_cost + 350) { buildFacilities.push({ type: tap.id, location: distByKind("downtown"), market: facMarket }); moduleCash += tap.base_cost; }
       } else {
         const big = typeById("brewery_large");
-        if (big && f.cash > big.base_cost + 400) { buildFacilities.push({ type: big.id, location: distByKind("industrial") }); moduleCash += big.base_cost; }
+        if (big && f.cash > big.base_cost + 400) { buildFacilities.push({ type: big.id, location: distByKind("industrial"), market: facMarket }); moduleCash += big.base_cost; }
       }
     }
   }
