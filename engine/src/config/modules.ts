@@ -11,7 +11,25 @@
  *     and toggles appear; disabled/planned modules simply don't render (or render
  *     locked).
  */
-import type { Config, ConfigOverride, ModuleId, ModulesConfig } from "../types.js";
+import type { Config, ConfigOverride, Lot, ModuleId, ModulesConfig } from "../types.js";
+
+/** Phase 2 spatial siting — the fixed buildable parcels every market shares (districts at the
+ *  City View grid centers: downtown≈(4,4), riverside≈(12,4), southside≈(4,12), suburbs≈(12,12)).
+ *  Within-district lots sit ~2–3 apart (they cannibalize at radius 5); cross-district lots are
+ *  ~8–11 apart (safe) — so clustering for a district's brand draw crowds you, spreading avoids
+ *  it but forfeits the bonus. A couple unlock later as the city develops. Tunable. */
+const SITE_LOTS: Lot[] = [
+  { id: "dt_a", x: 3, y: 5, district: "downtown" },
+  { id: "dt_b", x: 6, y: 3, district: "downtown" },
+  { id: "dt_c", x: 5, y: 6, district: "downtown", unlock_round: 3 },
+  { id: "rv_a", x: 11, y: 5, district: "riverside" },
+  { id: "rv_b", x: 13, y: 3, district: "riverside" },
+  { id: "ss_a", x: 3, y: 11, district: "southside" },
+  { id: "ss_b", x: 6, y: 13, district: "southside" },
+  { id: "ss_c", x: 4, y: 9, district: "southside", unlock_round: 4 },
+  { id: "sb_a", x: 11, y: 13, district: "suburbs" },
+  { id: "sb_b", x: 13, y: 11, district: "suburbs" },
+];
 
 /** Canonical all-off module block merged into the baseline config. */
 export const defaultModules: ModulesConfig = {
@@ -87,12 +105,15 @@ export const defaultModules: ModulesConfig = {
     // Capacity is SPLIT across markets, not multiplied — entering a region trades
     // home presence for reach. Regions reshape tastes; brand carries at a discount.
     markets: [
-      { id: "home", label: "Home region", kind: "home", demand_mult: 1.0, beta_p_mult: 1.0, beta_q_mult: 1.0, beta_b_mult: 1.0, brand_transfer: 1.0, entry_cost: 0, distribution_cost_per_unit: 0, tariff_rate: 0, fx_volatility: 0 },
-      { id: "heartland", label: "Heartland", kind: "domestic", demand_mult: 1.3, beta_p_mult: 1.3, beta_q_mult: 0.7, beta_b_mult: 0.8, brand_transfer: 0.7, entry_cost: 200, distribution_cost_per_unit: 0.4, tariff_rate: 0, fx_volatility: 0 },
-      { id: "coastal", label: "Coastal cities", kind: "domestic", demand_mult: 0.75, beta_p_mult: 0.7, beta_q_mult: 1.3, beta_b_mult: 1.15, brand_transfer: 0.7, entry_cost: 300, distribution_cost_per_unit: 0.5, tariff_rate: 0, fx_volatility: 0 },
-      { id: "export_eu", label: "European export", kind: "export", demand_mult: 0.9, beta_p_mult: 0.8, beta_q_mult: 1.2, beta_b_mult: 1.1, brand_transfer: 0.4, entry_cost: 400, distribution_cost_per_unit: 0.6, tariff_rate: 0.12, fx_volatility: 0.05 },
-      { id: "export_asia", label: "Asia-Pacific export", kind: "export", demand_mult: 1.2, beta_p_mult: 1.1, beta_q_mult: 1.0, beta_b_mult: 1.2, brand_transfer: 0.4, entry_cost: 450, distribution_cost_per_unit: 0.7, tariff_rate: 0.08, fx_volatility: 0.08 },
+      { id: "home", label: "Home region", kind: "home", demand_mult: 1.0, beta_p_mult: 1.0, beta_q_mult: 1.0, beta_b_mult: 1.0, brand_transfer: 1.0, entry_cost: 0, distribution_cost_per_unit: 0, tariff_rate: 0, fx_volatility: 0, lots: SITE_LOTS, geo: [-105.3, 39.7], demand_growth: 0 },
+      { id: "heartland", label: "Heartland", kind: "domestic", demand_mult: 1.3, beta_p_mult: 1.3, beta_q_mult: 0.7, beta_b_mult: 0.8, brand_transfer: 0.7, entry_cost: 200, distribution_cost_per_unit: 0.4, tariff_rate: 0, fx_volatility: 0, lots: SITE_LOTS, geo: [-92.5, 41.6], demand_growth: 0.03 },
+      { id: "coastal", label: "Coastal cities", kind: "domestic", demand_mult: 0.75, beta_p_mult: 0.7, beta_q_mult: 1.3, beta_b_mult: 1.15, brand_transfer: 0.7, entry_cost: 300, distribution_cost_per_unit: 0.5, tariff_rate: 0, fx_volatility: 0, lots: SITE_LOTS, geo: [-74.0, 40.6], demand_growth: -0.02 },
+      { id: "export_eu", label: "European export", kind: "export", demand_mult: 0.9, beta_p_mult: 0.8, beta_q_mult: 1.2, beta_b_mult: 1.1, brand_transfer: 0.4, entry_cost: 400, distribution_cost_per_unit: 0.6, tariff_rate: 0.12, fx_volatility: 0.05, lots: SITE_LOTS, geo: [-0.1, 51.5], demand_growth: 0.04 },
+      { id: "export_asia", label: "Asia-Pacific export", kind: "export", demand_mult: 1.2, beta_p_mult: 1.1, beta_q_mult: 1.0, beta_b_mult: 1.2, brand_transfer: 0.4, entry_cost: 450, distribution_cost_per_unit: 0.7, tariff_rate: 0.08, fx_volatility: 0.08, lots: SITE_LOTS, geo: [121.5, 31.2], demand_growth: 0.06 },
     ],
+    // Phase 3: per-unit, per-geo-distance shipping when you sell far from where you produce.
+    // Domestic lanes are cheap (~0.05/u); home→Asia is steep (~0.9/u) — a reason to PRODUCE there.
+    shipping: { rate_per_unit_distance: 0.004 },
   },
   international: { enabled: false, fx_mean: 1.0, fx_speed: 0.2, export_unlock_round: 4 },
   laborMarket: {
@@ -137,7 +158,7 @@ export const defaultModules: ModulesConfig = {
   // play-test data. See engine/facilities.ts.
   facilities: {
     enabled: false,
-    max_facilities: 4,
+    max_facilities: 24, // generous (was 4 — far too tight once you operate across regions); 0 = unlimited
     types: [
       { id: "brewery_small", label: "Nano brewery", capacity_contribution: 120, base_cost: 220, fixed_cost: 14, build_rounds: 1, condition_decay: 0.06, maintenance_effect: 0.004 },
       { id: "brewery_large", label: "Production brewery", capacity_contribution: 320, base_cost: 520, fixed_cost: 30, build_rounds: 2, condition_decay: 0.05, maintenance_effect: 0.0025 },
@@ -155,6 +176,9 @@ export const defaultModules: ModulesConfig = {
       { id: "southside", label: "South Side", kind: "industrial", rent_mult: 0.75, capacity_mult: 1.2, brand_boost: 0, blurb: "Cheap industrial yards with easy logistics — most output per facility, no brand halo. Best for production." },
       { id: "suburbs", label: "The Suburbs", kind: "suburban", rent_mult: 0.95, capacity_mult: 1.05, brand_boost: 0, blurb: "Roomy and affordable with a little extra room to run — quieter trade, no brand draw." },
     ],
+    // Phase 2 spatial cannibalization. Noticeable by default (beta_loc 1.0): a blue-ocean lot
+    // vs. a fully crowded one swings appeal by ~e^2. Tune with play data. See engine/geography.ts.
+    catchment: { grid: 16, radius: 5, lambda: 0.6, self_weight: 0.5, beta_loc: 1.0 },
   },
   // MOD-B12 — named human capital. OFF by default (additive: no employees ⇒ identical
   // to the pre-module game). Each hire adds a salary (opex) and a skill×satisfaction
@@ -175,6 +199,23 @@ export const defaultModules: ModulesConfig = {
     starting_satisfaction: 0.7,
     tenure_bump: 0.1,
     poach_base: 0.05,
+  },
+  // MOD-A10 — market conduct & stakeholder backlash. OFF by default (all-off parity). Noticeable
+  // when on: a firm holding >40% share at a markup over 2.2× cost is fined + loses brand, worse
+  // on thin quality — unless T_gov/reputation buffer it. Tunable with play data. See engine/conduct.ts.
+  marketConduct: {
+    enabled: false,
+    dominance_threshold: 0.4,
+    fair_markup: 2.2,
+    sensitivity: 1.0,
+    quality_weight: 0.6,
+    fine_scale: 220,
+    fine_cap_frac: 0.15,
+    brand_scale: 9,
+    tgov_k: 0.5,
+    rep_k: 0.4,
+    halfsat: 10,
+    max_mitigation: 0.8,
   },
 };
 
@@ -330,6 +371,12 @@ export const MODULE_REGISTRY: ModuleMeta[] = [
     pedagogy: "Relational governance, reputation as strategic asset, trust in repeated games.",
     deps: [], implemented: true,
   },
+  {
+    id: "marketConduct", code: "MOD-A10", tier: "A", category: "society", name: "Market conduct & stakeholder backlash",
+    blurb: "Dominate and gouge — especially on thin quality — and you draw consumer-protection fines + brand backlash, unless regulatory goodwill (T_gov) and reputation buffer you.",
+    pedagogy: "Stakeholder theory, market power & antitrust, non-market risk, license to operate, reputation as insurance.",
+    deps: [], implemented: true,
+  },
 ];
 
 export const moduleMeta = (id: ModuleId): ModuleMeta | undefined => MODULE_REGISTRY.find((m) => m.id === id);
@@ -347,7 +394,7 @@ export interface Preset {
  *  planning) and Tier C are excluded; presets list only Tier A/B ids. */
 export const PRESETS: Preset[] = [
   { id: "base", name: "Strategy core", description: "The v1 base game — fundamentals only, nothing added.", audience: "Any capstone", modules: [] },
-  { id: "org", name: "Org & stakeholders", description: "Collective action, resilience, asymmetric starts, talent, team roles, reputation.", audience: "OB / HR / stakeholder management", modules: ["publicGoods", "sustainability", "asymmetricStarts", "laborMarket", "teamRoles", "reputation"] },
+  { id: "org", name: "Org & stakeholders", description: "Collective action, resilience, asymmetric starts, talent, reputation, and stakeholder/regulatory backlash against market-power abuse.", audience: "OB / HR / stakeholder management", modules: ["publicGoods", "sustainability", "asymmetricStarts", "employees", "reputation", "marketConduct"] },
   { id: "finance", name: "Financial strategy", description: "Contracting flexibility, M&A, financing instruments, inventory, reputation.", audience: "Finance / corporate finance", modules: ["contingentContracts", "renegotiation", "ma", "financialInstruments", "inventory", "reputation"] },
   { id: "marketing", name: "Market dynamics", description: "PR events, asymmetric starts, consumer drift, R&D races.", audience: "Marketing strategy", modules: ["prEvents", "asymmetricStarts", "consumerDrift", "rndRace"] },
   { id: "global", name: "International strategy", description: "Sustainability, asymmetric starts, geographic + international expansion.", audience: "International business", modules: ["sustainability", "asymmetricStarts", "geography", "international"] },

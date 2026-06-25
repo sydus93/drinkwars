@@ -13,7 +13,7 @@
  * dossier (FirmDetail) with its research-gated poach flow. Nothing here changes engine math.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { GameView, MarketView, MarketSegmentStanding } from "../game/controller.js";
+import type { GameView, MarketView, MarketSegmentStanding, MarketLot } from "../game/controller.js";
 import type { CityActions } from "../game/cityActions.js";
 import { capacityInMarket, marketPresenceFrom } from "../game/cityActions.js";
 import { SEG_LABEL, SEG_CHARACTER, DISTRICT_BEST, MARKET_META, ZONE_OF, ZONE_TONE, FAC_TAG, FAC_NOTE, fmt } from "../labels.js";
@@ -77,12 +77,13 @@ const FPROF: Record<string, number> = { taproom: 26, brewery_small: 30, canning_
 
 // ───────────────────────── city model + procedural plan ─────────────────────────
 interface DistrictModel { key: string; label: string; arch: string; kind: string; rent: number; out: number; brand: number; best: string }
-interface MineModel { id: string; type: string; district: string; active: boolean; pending: boolean }
-interface RivalModel { firmId: string; name: string; district: string; type: string }
+interface MineModel { id: string; type: string; district: string; lot?: string; active: boolean; pending: boolean }
+interface RivalModel { firmId: string; name: string; district: string; type: string; lot?: string }
 interface CityModel {
   id: string; name: string; region: string; kind: string; entered: boolean; entryCost: number; fx: number;
   geo: [number, number]; coast: "right" | "bottom" | null; seed: number; roadEvery: number;
-  districts: DistrictModel[]; mine: MineModel[]; rivals: RivalModel[]; segments: MarketSegmentStanding[];
+  districts: DistrictModel[]; mine: MineModel[]; rivals: RivalModel[]; segments: MarketSegmentStanding[]; lots: MarketLot[];
+  catchment?: { grid: number; radius: number; lambda: number; self_weight: number; beta_loc: number };
 }
 interface Cell { cx: number; cy: number; kind: string; di: number; arch: string; h: number; t2: number; traffic: number; major: boolean; fac?: MineModel; rival?: RivalModel }
 interface Plan {
@@ -90,7 +91,7 @@ interface Plan {
   districts: { key: string; label: string; arch: string; cx: number; cy: number; traffic: number }[];
   facilities: { id: string; cx: number; cy: number; h: number; tag: string; type: string; district: string; active: boolean; pending: boolean }[];
   rivals: { cx: number; cy: number; h: number; firmId: string; name: string; type: string; district: string }[];
-  leases: { cx: number; cy: number; district: string }[];
+  leases: { cx: number; cy: number; district: string; lot: string; crowd: number }[];
 }
 
 function buildCity(view: GameView, market: MarketView, actions: CityActions): CityModel {
@@ -102,19 +103,25 @@ function buildCity(view: GameView, market: MarketView, actions: CityActions): Ci
   }));
   const fallbackDistrict = districts[0]?.key ?? "downtown";
   const real: MineModel[] = market.yourSites.map((s) => ({
-    id: s.id, type: s.type, district: s.location_id ?? fallbackDistrict,
+    id: s.id, type: s.type, district: s.location_id ?? fallbackDistrict, lot: s.lot_id,
     active: actions.reactivations.includes(s.id) ? true : actions.mothballs.includes(s.id) ? false : s.active,
     pending: false,
   }));
   const queued: MineModel[] = actions.builds
     .filter((b) => b.market === market.id)
-    .map((b, i) => ({ id: `queued_${market.id}_${i}`, type: b.type, district: b.location, active: true, pending: true }));
-  const rivals: RivalModel[] = market.rivalSites.map((s) => ({ firmId: s.firmId, name: s.name, district: s.location_id ?? fallbackDistrict, type: s.type }));
+    .map((b, i) => ({ id: `queued_${market.id}_${i}`, type: b.type, district: b.location, lot: b.lot, active: true, pending: true }));
+  const rivals: RivalModel[] = market.rivalSites.map((s) => ({ firmId: s.firmId, name: s.name, district: s.location_id ?? fallbackDistrict, type: s.type, lot: s.lot_id }));
+  // A market counts as entered if the engine has it (prior rounds) OR it was committed this
+  // round in the City View — otherwise the just-entered market stays "locked" and its siting
+  // UI (FOR LEASE lots, "Site a facility") never appears, so you can't develop it until the
+  // round resolves. Same-round enter→build is valid in the engine, so let the UI allow it.
+  const enteredNow = market.entered || actions.markets.includes(market.id);
   return {
     id: market.id, name: meta.city, region: meta.region || market.label, kind: market.kind,
-    entered: market.entered, entryCost: market.entryCost, fx: market.fx,
+    entered: enteredNow, entryCost: market.entryCost, fx: market.fx,
     geo: meta.geo, coast: meta.coast, seed: meta.seed, roadEvery: 4,
-    districts, mine: [...real, ...queued], rivals, segments: market.segments,
+    districts, mine: [...real, ...queued], rivals, segments: market.segments, lots: market.lots ?? [],
+    catchment: view.modules?.facilities?.catchment,
   };
 }
 
@@ -132,7 +139,7 @@ function cityPlan(c: CityModel): Plan {
   let coreIdx = 0, bb = -1; dr.forEach((d, i) => { const s = (d.arch === "core" ? 3 : 0) + d.brand; if (s > bb) { bb = s; coreIdx = i; } });
   const coreC = centers[coreIdx];
   const traffic = (x: number, y: number) => { let t = 1 - dist(x, y, coreC) / (N * 0.85); if (x % (roadEvery * 2) === 0 || y % (roadEvery * 2) === 0) t += 0.18; return Math.max(0, Math.min(1, t)); };
-  const cells: Cell[] = [], buildable: Record<number, Cell[]> = {};
+  const cells: Cell[] = [];
   for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
     const di = districtOf(x, y), prof = PROF[dr[di].arch] || PROF.arts, h = prof.min + rand() * (prof.max - prof.min), isPark = rand() < prof.park, t2 = rand();
     let kind: string;
@@ -140,21 +147,51 @@ function cityPlan(c: CityModel): Plan {
     else if (isRoad(x, y)) kind = "road";
     else if (isPark) kind = "park";
     else kind = "build";
-    const cell: Cell = { cx: x, cy: y, kind, di, arch: dr[di].arch, h, t2, traffic: traffic(x, y), major: x % (roadEvery * 2) === 0 || y % (roadEvery * 2) === 0 };
-    cells.push(cell);
-    if (kind === "build") (buildable[di] = buildable[di] || []).push(cell);
+    cells.push({ cx: x, cy: y, kind, di, arch: dr[di].arch, h, t2, traffic: traffic(x, y), major: x % (roadEvery * 2) === 0 || y % (roadEvery * 2) === 0 });
   }
-  Object.keys(buildable).forEach((k) => { const di = Number(k), ctr = centers[di]; buildable[di].sort((a, b) => dist(a.cx, a.cy, ctr) - dist(b.cx, b.cy, ctr)); });
-  const dIdx: Record<string, number> = {}; dr.forEach((d, i) => (dIdx[d.key] = i));
-  const used: Record<number, number> = {};
-  const take = (di: number): Cell | undefined => { const list = buildable[di] || []; let k = used[di] || 0; while (k < list.length && list[k].kind !== "build") k++; used[di] = k + 1; return list[k]; };
+  const cellAt = (x: number, y: number): Cell | undefined => (x >= 0 && y >= 0 && x < N && y < N ? cells[y * N + x] : undefined);
+  const dCenterOf = (key: string): [number, number] => centers[dr.findIndex((d) => d.key === key)] ?? [8, 8];
+
+  // Phase 2: facilities, rivals, and leases sit on REAL lots (engine coords). Lot-less legacy
+  // facilities (e.g. founding builds) fall back near their district center so they still show.
+  const lotById = new Map(c.lots.map((L) => [L.id, L] as const));
+  const fallbackPos = (district: string, idx: number): [number, number] => { const [cx, cy] = dCenterOf(district); return [Math.max(1, Math.min(N - 2, cx + ((idx % 3) - 1))), Math.max(1, Math.min(N - 2, cy + ((Math.floor(idx / 3) % 3) - 1)))]; };
+
   const facilities: Plan["facilities"] = [];
-  c.mine.forEach((f) => { const cell = take(dIdx[f.district] ?? 0); if (cell) { cell.kind = "mine"; cell.h = FPROF[f.type] ?? 28; cell.fac = f; facilities.push({ id: f.id, cx: cell.cx, cy: cell.cy, h: cell.h, tag: FAC_TAG[f.type] ?? "•", type: f.type, district: f.district, active: f.active, pending: f.pending }); } });
+  c.mine.forEach((f, idx) => {
+    const L = f.lot ? lotById.get(f.lot) : undefined;
+    const [cx, cy] = L ? [L.x, L.y] : fallbackPos(f.district, idx);
+    const cell = cellAt(cx, cy); if (cell) { cell.kind = "mine"; cell.h = FPROF[f.type] ?? 28; cell.fac = f; }
+    facilities.push({ id: f.id, cx, cy, h: FPROF[f.type] ?? 28, tag: FAC_TAG[f.type] ?? "•", type: f.type, district: f.district, active: f.active, pending: f.pending });
+  });
   const rivals: Plan["rivals"] = [];
-  c.rivals.forEach((rv) => { const cell = take(dIdx[rv.district] ?? 0); if (cell) { cell.kind = "rival"; cell.h = 34; cell.rival = rv; rivals.push({ cx: cell.cx, cy: cell.cy, h: 34, firmId: rv.firmId, name: rv.name, type: rv.type, district: rv.district }); } });
+  c.rivals.forEach((rv, idx) => {
+    const L = rv.lot ? lotById.get(rv.lot) : undefined;
+    const [cx, cy] = L ? [L.x, L.y] : fallbackPos(rv.district, idx + 40);
+    const cell = cellAt(cx, cy); if (cell) { cell.kind = "rival"; cell.h = 34; cell.rival = rv; }
+    rivals.push({ cx, cy, h: 34, firmId: rv.firmId, name: rv.name, type: rv.type, district: rv.district });
+  });
+
+  // Available parcels = unlocked + unoccupied (built/queued/rival). Crowd preview = competing
+  // footprint within the catchment radius (rivals full weight, your own softer) — the "find the
+  // right location" hint: low crowd = blue ocean, high = saturated.
+  const occupied = new Set<string>(); c.mine.forEach((f) => f.lot && occupied.add(f.lot)); c.rivals.forEach((r) => r.lot && occupied.add(r.lot));
+  const sited = [...facilities.map((f) => ({ x: f.cx, y: f.cy, own: true })), ...rivals.map((r) => ({ x: r.cx, y: r.cy, own: false }))];
+  const radius = c.catchment?.radius ?? 5, selfW = c.catchment?.self_weight ?? 0.5;
+  const crowdAt = (x: number, y: number): number => sited.reduce((a, s) => { const k = Math.max(0, 1 - Math.hypot(x - s.x, y - s.y) / radius); return a + (k > 0 ? k * (s.own ? selfW : 1) : 0); }, 0);
   const leases: Plan["leases"] = [];
-  dr.forEach((d, di) => { const cell = take(di); if (cell) { cell.kind = "lease"; leases.push({ cx: cell.cx, cy: cell.cy, district: d.key }); } });
-  const districts = dr.map((d, i) => { const ctr = centers[i]; let tt = 0, n = 0; (buildable[i] || []).forEach((c2) => { tt += c2.traffic; n++; }); return { key: d.key, label: d.label, arch: d.arch, cx: ctr[0], cy: ctr[1], traffic: n ? tt / n : traffic(ctr[0], ctr[1]) }; });
+  for (const L of c.lots) {
+    if (!L.unlocked || occupied.has(L.id)) continue;
+    const cell = cellAt(L.x, L.y); if (cell) cell.kind = "lease";
+    leases.push({ cx: L.x, cy: L.y, district: L.district, lot: L.id, crowd: crowdAt(L.x, L.y) });
+  }
+
+  const districts = dr.map((d) => {
+    const dl = c.lots.filter((L) => L.district === d.key);
+    const cx = dl.length ? dl.reduce((a, L) => a + L.x, 0) / dl.length : dCenterOf(d.key)[0];
+    const cy = dl.length ? dl.reduce((a, L) => a + L.y, 0) / dl.length : dCenterOf(d.key)[1];
+    return { key: d.key, label: d.label, arch: d.arch, cx, cy, traffic: traffic(Math.round(cx), Math.round(cy)) };
+  });
   cells.sort((a, b) => a.cx + a.cy - (b.cx + b.cy));
   return { cells, districts, facilities, rivals, leases };
 }
@@ -363,13 +400,13 @@ export function CityView({ view, actions, setActions, onInspect }: { view: GameV
   const [layer, setLayer] = useState<"map" | "traffic" | "zoning">("map");
   const [hoverSeg, setHoverSeg] = useState<string | null>(null);
   const [hoverFac, setHoverFac] = useState<string | null>(null);
-  const [siting, setSiting] = useState<{ district: string | null; type: string | null } | null>(null);
+  const [siting, setSiting] = useState<{ lot: string | null; district: string | null; type: string | null } | null>(null);
   const [entering, setEntering] = useState<string | null>(null);
   const [facPop, setFacPop] = useState<string | null>(null);
   const [globeOpen, setGlobeOpen] = useState(false);
 
   const sel = cities.find((c) => c.id === selId) ?? cities[0];
-  const plan = useMemo(() => (sel ? cityPlan(sel) : null), [sel?.id, sel?.mine.map((f) => f.id + f.district + f.active).join(","), sel?.rivals.length]);
+  const plan = useMemo(() => (sel ? cityPlan(sel) : null), [sel?.id, sel?.mine.map((f) => f.id + f.lot + f.district + f.active).join(","), sel?.rivals.map((r) => r.firmId + r.lot).join(","), sel?.lots.map((L) => L.id + L.unlocked + L.occupant).join(",")]);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
@@ -391,13 +428,25 @@ export function CityView({ view, actions, setActions, onInspect }: { view: GameV
   // ---- actions ----
   const selectCity = (id: string) => { const c = cities.find((x) => x.id === id); if (!c) return; setSiting(null); setFacPop(null); setGlobeOpen(false); if (c.entered) setSelId(id); else { setSelId(id); setEntering(id); } };
   const commitEnter = (id: string) => { setActions((a) => ({ ...a, markets: Array.from(new Set([...a.markets, id])) })); setEntering(null); setSelId(id); };
-  const openSiting = (district?: string | null) => setSiting({ district: district ?? null, type: null });
+  const openSiting = (district?: string | null, lot?: string | null) => setSiting({ lot: lot ?? null, district: district ?? null, type: null });
   const build = () => {
-    if (!siting?.district || !siting.type) return;
-    const order = { type: siting.type, location: siting.district, market: sel.id };
+    if (!siting?.lot || !siting.district || !siting.type) return;
+    const order = { type: siting.type, location: siting.district, market: sel.id, lot: siting.lot };
     setActions((a) => ({ ...a, builds: [...a.builds, order], markets: Array.from(new Set([...a.markets, sel.id])) }));
     setSiting(null);
   };
+  // Parcels you can lease right now (unlocked + unoccupied by built/queued/rival), with a crowd
+  // preview so a blue-ocean spot is obvious. Mirrors the engine catchment weighting.
+  const cat = sel.catchment;
+  const occupiedLots = new Set<string>(); sel.mine.forEach((f) => f.lot && occupiedLots.add(f.lot)); sel.rivals.forEach((r) => r.lot && occupiedLots.add(r.lot));
+  const lotCoord = new Map(sel.lots.map((L) => [L.id, L] as const));
+  const sitedPts = [
+    ...sel.mine.map((f) => f.lot && lotCoord.get(f.lot)).filter(Boolean).map((L) => ({ x: (L as MarketLot).x, y: (L as MarketLot).y, own: true })),
+    ...sel.rivals.map((r) => r.lot && lotCoord.get(r.lot)).filter(Boolean).map((L) => ({ x: (L as MarketLot).x, y: (L as MarketLot).y, own: false })),
+  ];
+  const crowdAtLot = (L: MarketLot): number => sitedPts.reduce((a, s) => { const k = Math.max(0, 1 - Math.hypot(L.x - s.x, L.y - s.y) / (cat?.radius ?? 5)); return a + (k > 0 ? k * (s.own ? cat?.self_weight ?? 0.5 : 1) : 0); }, 0);
+  const crowdTone = (cr: number): { label: string; color: string } => cr < 0.25 ? { label: "Blue ocean", color: "var(--color-hop)" } : cr < 0.9 ? { label: "Some competition", color: "var(--color-gold)" } : { label: "Crowded", color: "var(--color-brick)" };
+  const availLots = sel.lots.filter((L) => L.unlocked && !occupiedLots.has(L.id));
   const toggleFac = (id: string) => {
     const fac = sel.mine.find((f) => f.id === id); if (!fac || fac.pending) return;
     setActions((a) => {
@@ -499,10 +548,10 @@ export function CityView({ view, actions, setActions, onInspect }: { view: GameV
                 </div>
               ); })}
 
-              {plan && facOn && sel.entered && layer === "map" && plan.leases.map((L, i) => { const p = pct(L.cx, L.cy, 0, layer); const ec = dByKey(L.district); const z = ZONE_OF[ec?.kind ?? ""]; return (
-                <button key={i} onClick={() => openSiting(L.district)} title={`Available lot · ${ec?.label ?? L.district}`} className="absolute z-[5] cursor-pointer border-none bg-none p-0" style={{ left: `${p.l}%`, top: `${p.t}%`, transform: "translate(-50%,-100%)" }}>
+              {plan && facOn && sel.entered && layer === "map" && plan.leases.map((L, i) => { const p = pct(L.cx, L.cy, 0, layer); const ec = dByKey(L.district); const z = ZONE_OF[ec?.kind ?? ""]; const ct = crowdTone(L.crowd); return (
+                <button key={i} onClick={() => openSiting(L.district, L.lot)} title={`Available parcel · ${ec?.label ?? L.district} · ${ct.label}`} className="absolute z-[5] cursor-pointer border-none bg-none p-0" style={{ left: `${p.l}%`, top: `${p.t}%`, transform: "translate(-50%,-100%)" }}>
                   <span className="block rounded-t-[3px] border px-1.5 py-0.5 font-mono text-[0.5rem] font-bold uppercase tracking-wide text-white" style={{ background: "var(--color-copperdeep)", borderColor: "#6e3914" }}>FOR LEASE</span>
-                  <span className="block rounded-b-[3px] border border-t-0 px-1 py-px text-center font-mono text-[0.44rem] font-bold uppercase text-copperdeep" style={{ background: "#f3e6c8", borderColor: "#6e3914" }}>{z?.zone ?? ""}</span>
+                  <span className="flex items-center justify-center gap-0.5 rounded-b-[3px] border border-t-0 px-1 py-px text-center font-mono text-[0.44rem] font-bold uppercase text-copperdeep" style={{ background: "#f3e6c8", borderColor: "#6e3914" }}><span className="h-1.5 w-1.5 rounded-full" style={{ background: ct.color }} />{z?.zone ?? ""}</span>
                   <span className="mx-auto block h-2 w-px" style={{ background: "#6e3914" }} />
                 </button>
               ); })}
@@ -602,49 +651,55 @@ export function CityView({ view, actions, setActions, onInspect }: { view: GameV
               <div className="flex items-center gap-2.5 border-b border-line px-4 py-4">
                 <div className="flex-1">
                   <div className="font-mono text-[0.55rem] uppercase tracking-[0.16em] text-copperdeep">Site a facility · {sel.name}</div>
-                  <div className="display text-lg font-extrabold uppercase text-ink">{siting.district ? dByKey(siting.district)?.label : "Choose a district"}</div>
+                  <div className="display text-lg font-extrabold uppercase text-ink">{siting.lot ? dByKey(siting.district ?? "")?.label : "Choose a parcel"}</div>
                 </div>
                 <button onClick={() => setSiting(null)} className="border-none bg-none text-lg text-inksoft">✕</button>
               </div>
-              {!siting.district ? (
+              {!siting.lot ? (
                 <div className="p-4">
-                  <div className="mb-3 text-xs text-inksoft">Each district trades rent against output, foot traffic, and brand draw. Choose where to build.</div>
+                  <div className="mb-3 text-xs text-inksoft">Pick a parcel. A spot near rivals (or your own taprooms) splits demand — a blue-ocean lot pulls more. District sets rent, output, zoning, and brand draw.</div>
+                  {availLots.filter((L) => !siting.district || L.district === siting.district).length === 0 ? (
+                    <div className="text-xs italic text-inksoft">No parcels available here right now — more open up as the city develops, or free up if a rival leaves.</div>
+                  ) : (
                   <div className="flex flex-col gap-2">
-                    {sel.districts.map((d) => { const z = ZONE_OF[d.kind]; return (
-                      <button key={d.key} onClick={() => setSiting({ district: d.key, type: null })} className="rounded-[10px] border border-line2 p-3 text-left" style={{ background: "var(--color-panel2)" }}>
+                    {availLots.filter((L) => !siting.district || L.district === siting.district).map((L) => { const d = dByKey(L.district); const z = ZONE_OF[d?.kind ?? ""]; const ct = crowdTone(crowdAtLot(L)); return (
+                      <button key={L.id} onClick={() => setSiting({ lot: L.id, district: L.district, type: null })} className="rounded-[10px] border border-line2 p-3 text-left" style={{ background: "var(--color-panel2)" }}>
                         <div className="flex items-baseline justify-between">
-                          <span className="display text-[0.95rem] font-bold uppercase tracking-wide text-ink">{d.label}</span>
-                          <span className="font-mono text-[0.6rem] text-copperdeep">{d.best}</span>
+                          <span className="display text-[0.95rem] font-bold uppercase tracking-wide text-ink">{d?.label ?? L.district}</span>
+                          <span className="flex items-center gap-1 font-mono text-[0.6rem]" style={{ color: ct.color }}><span className="h-1.5 w-1.5 rounded-full" style={{ background: ct.color }} />{ct.label}</span>
                         </div>
                         <div className="mt-1.5 flex flex-wrap gap-1">
-                          <span className="rounded border border-line bg-panel px-1.5 py-px font-mono text-[0.6rem]" style={{ color: d.rent > 1.05 ? "var(--color-brick)" : d.rent < 0.95 ? "var(--color-hop)" : "var(--color-inksoft)" }}>Rent ×{d.rent.toFixed(2)}</span>
-                          <span className="rounded border border-line bg-panel px-1.5 py-px font-mono text-[0.6rem]" style={{ color: d.out > 1.02 ? "var(--color-hop)" : d.out < 0.98 ? "var(--color-brick)" : "var(--color-inksoft)" }}>Out ×{d.out.toFixed(2)}</span>
-                          <span className="rounded border border-line bg-panel px-1.5 py-px font-mono text-[0.6rem] text-aero">{d.brand > 0 ? `Brand +${d.brand}` : "No brand"}</span>
+                          <span className="rounded border border-line bg-panel px-1.5 py-px font-mono text-[0.6rem]" style={{ color: (d?.rent ?? 1) > 1.05 ? "var(--color-brick)" : (d?.rent ?? 1) < 0.95 ? "var(--color-hop)" : "var(--color-inksoft)" }}>Rent ×{(d?.rent ?? 1).toFixed(2)}</span>
+                          <span className="rounded border border-line bg-panel px-1.5 py-px font-mono text-[0.6rem]" style={{ color: (d?.out ?? 1) > 1.02 ? "var(--color-hop)" : (d?.out ?? 1) < 0.98 ? "var(--color-brick)" : "var(--color-inksoft)" }}>Out ×{(d?.out ?? 1).toFixed(2)}</span>
+                          <span className="rounded border border-line bg-panel px-1.5 py-px font-mono text-[0.6rem] text-aero">{(d?.brand ?? 0) > 0 ? `Brand +${d?.brand}` : "No brand"}</span>
                         </div>
                         <div className="mt-1.5 text-[0.66rem] text-inksoft"><b style={{ color: ZONE_TONE[z?.zone ?? ""] ?? "var(--color-inksoft)" }}>{z?.zone} zone</b> · permits {(z?.allow ?? []).map((id) => typeOf(id)?.label ?? id).join(" · ")}</div>
                       </button>
                     ); })}
                   </div>
+                  )}
                 </div>
               ) : (() => {
-                const d = dByKey(siting.district)!; const z = ZONE_OF[d.kind] ?? { zone: "", allow: [] as string[] };
+                const d = dByKey(siting.district ?? "")!; const z = ZONE_OF[d.kind] ?? { zone: "", allow: [] as string[] };
+                const lotObj = lotCoord.get(siting.lot!); const ct = crowdTone(lotObj ? crowdAtLot(lotObj) : 0);
                 const selType = siting.type; const selOk = !!selType && z.allow.includes(selType);
                 const capex = selType ? typeOf(selType)?.base_cost ?? 0 : 0;
                 const queuedSpend = actions.builds.reduce((s, b) => s + (typeOf(b.type)?.base_cost ?? 0), 0);
                 const afford = selOk && view.own.cash - queuedSpend >= capex; const can = selOk && afford;
                 return (
                   <div className="p-4">
-                    <button onClick={() => openSiting(null)} className="mb-2.5 border-none bg-none p-0 font-mono text-[0.6rem] uppercase tracking-wide text-inksoft">← change district</button>
+                    <button onClick={() => openSiting(siting.district)} className="mb-2.5 border-none bg-none p-0 font-mono text-[0.6rem] uppercase tracking-wide text-inksoft">← change parcel</button>
                     <div className="mb-3 flex flex-wrap gap-1">
                       <span className="rounded px-2 py-px font-mono text-[0.6rem] font-bold uppercase tracking-wide" style={{ background: `color-mix(in srgb, ${ZONE_TONE[z.zone] ?? "var(--color-inksoft)"} 14%, var(--color-panel))`, border: `1px solid ${ZONE_TONE[z.zone] ?? "var(--color-inksoft)"}`, color: ZONE_TONE[z.zone] ?? "var(--color-inksoft)" }}>{z.zone}</span>
                       <span className="rounded border border-line2 bg-panel2 px-2 py-px font-mono text-[0.6rem] text-inksoft">Rent ×{d.rent.toFixed(2)}</span>
                       <span className="rounded border border-line2 bg-panel2 px-2 py-px font-mono text-[0.6rem] text-inksoft">Out ×{d.out.toFixed(2)}</span>
                       <span className="rounded border border-line2 bg-panel2 px-2 py-px font-mono text-[0.6rem] text-aero">{d.brand > 0 ? `Brand +${d.brand}` : "No brand"}</span>
+                      <span className="flex items-center gap-1 rounded border px-2 py-px font-mono text-[0.6rem]" style={{ borderColor: ct.color, color: ct.color }}><span className="h-1.5 w-1.5 rounded-full" style={{ background: ct.color }} />{ct.label}</span>
                     </div>
                     <div className="mb-2.5 text-xs text-inksoft">Numbers below have this district's multipliers applied — what you'll actually get.</div>
                     <div className="flex flex-col gap-2">
                       {facTypes.map((t) => { const allowed = z.allow.includes(t.id), isSel = selType === t.id, canAfford = view.own.cash - queuedSpend >= t.base_cost; return (
-                        <button key={t.id} onClick={() => allowed && setSiting({ district: siting.district, type: t.id })} disabled={!allowed} className="rounded-[11px] border p-3 text-left transition-colors" style={{ borderColor: !allowed ? "var(--color-line2)" : isSel ? "var(--color-copperdeep)" : "var(--color-line)", background: !allowed ? "color-mix(in srgb, var(--color-panel2) 50%, transparent)" : isSel ? "color-mix(in srgb, var(--color-copper) 10%, var(--color-panel))" : "var(--color-panel)", opacity: allowed ? 1 : 0.5, cursor: allowed ? "pointer" : "not-allowed" }}>
+                        <button key={t.id} onClick={() => allowed && setSiting({ lot: siting.lot!, district: siting.district, type: t.id })} disabled={!allowed} className="rounded-[11px] border p-3 text-left transition-colors" style={{ borderColor: !allowed ? "var(--color-line2)" : isSel ? "var(--color-copperdeep)" : "var(--color-line)", background: !allowed ? "color-mix(in srgb, var(--color-panel2) 50%, transparent)" : isSel ? "color-mix(in srgb, var(--color-copper) 10%, var(--color-panel))" : "var(--color-panel)", opacity: allowed ? 1 : 0.5, cursor: allowed ? "pointer" : "not-allowed" }}>
                           <div className="flex items-center gap-2.5">
                             <span className="grid h-[26px] w-[26px] flex-none place-items-center rounded font-mono text-[0.72rem] font-bold" style={{ background: "var(--color-copper)", color: "#fff4e0" }}>{FAC_TAG[t.id] ?? "•"}</span>
                             <span className="display flex-1 text-[0.92rem] font-bold uppercase tracking-wide text-ink">{t.label}</span>

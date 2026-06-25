@@ -58,7 +58,9 @@ export function FirmDetail({
 
   const maOn = !!view.modules?.ma?.enabled;
   const maCfg = view.modules?.ma;
-  const labOn = !!view.modules?.laborMarket?.enabled;
+  // Named employees (MOD-B12) supersede key-role toggles (MOD-B03): when employees is on,
+  // the crew section below is the single talent surface, so hide the legacy "Key people" row.
+  const labOn = !!view.modules?.laborMarket?.enabled && !view.modules?.employees?.enabled;
   const vertOn = !!view.modules?.verticalIntegration?.enabled;
   const roleLabel = (id: string) => view.modules?.laborMarket?.roles.find((r) => r.id === id)?.label ?? id.replace(/_/g, " ");
   const assetLabel = (id: string) => view.modules?.verticalIntegration?.assets.find((a) => a.id === id)?.label ?? id.replace(/_/g, " ");

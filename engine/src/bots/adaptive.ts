@@ -34,11 +34,44 @@ function maintenanceCapex(f: FirmState, c: Config): number {
   return (c.capacity.depreciation * f.cap) / Math.max(c.capacity.gain, 1e-6);
 }
 
-export function decideAdaptive(lean: Lean, f: FirmState, world: WorldState, c: Config): FirmDecision {
+/** Pick an available, UNCROWDED parcel in a market for a bot's facility — so rivals spread
+ *  across the map (and actually feel catchment) instead of all piling into one district.
+ *  Prefers the district kind that suits the build, then the least-crowded lot. */
+function pickLot(world: WorldState, c: Config, marketId: string, preferKind?: string): string | undefined {
+  const lots = c.modules?.geography?.markets.find((m) => m.id === marketId)?.lots ?? [];
+  if (!lots.length) return undefined;
+  const districts = c.modules?.facilities?.districts ?? [];
+  const kindOf = (id: string) => districts.find((d) => d.id === id)?.kind;
+  const radius = c.modules?.facilities?.catchment?.radius ?? 5;
+  const occupied = new Set<string>();
+  const occPts: { x: number; y: number }[] = [];
+  for (const fm of world.firms) for (const fac of fm.facilities ?? []) {
+    if ((fac.market_id ?? "home") === marketId && fac.lot_id) {
+      occupied.add(fac.lot_id);
+      const L = lots.find((l) => l.id === fac.lot_id);
+      if (L) occPts.push({ x: L.x, y: L.y });
+    }
+  }
+  const avail = lots.filter((L) => (L.unlock_round ?? 0) <= world.round && !occupied.has(L.id));
+  if (!avail.length) return undefined;
+  const crowd = (L: { x: number; y: number }) => occPts.reduce((a, p) => a + Math.max(0, 1 - Math.hypot(L.x - p.x, L.y - p.y) / radius), 0);
+  const score = (L: (typeof avail)[number]) => (preferKind && kindOf(L.district) === preferKind ? 1.2 : 0) - crowd(L);
+  return [...avail].sort((a, b) => score(b) - score(a))[0]?.id;
+}
+
+/**
+ * @param aggression difficulty signal (≈ investScale): >1 ⇒ cutthroat — undercut harder to
+ *   contest share head-on rather than retreating into a comfortable differentiated niche.
+ */
+export function decideAdaptive(lean: Lean, f: FirmState, world: WorldState, c: Config, aggression = 1): FirmDecision {
   const activeSegs = world.segments.filter((s) => s.active);
   const allSegs = world.segments.map((s) => s.id);
   const rivals = world.firms.filter((x) => x.status === "active" && x.id !== f.id);
   const unit = estUnit(f, c);
+
+  // Cutthroat bots undercut harder (extra low-markup rungs) to take share head-on instead of
+  // sitting comfortably above the field. Relaxed/competitive keep the standard grid.
+  const grid = aggression >= 1.2 ? [1.05, 1.2, 1.35, 1.5, 1.7, 1.9, 2.1] : MARKUP_GRID;
 
   // Forecast best price + share + profit-density for each active segment.
   type Plan = { seg: SegmentId; price: number; share: number; profit: number };
@@ -56,7 +89,7 @@ export function decideAdaptive(lean: Lean, f: FirmState, world: WorldState, c: C
     const outside = Math.exp(sc.U0);
 
     let best: Plan = { seg: sw.id, price: unit * 1.7, share: 0, profit: -Infinity };
-    for (const mk of MARKUP_GRID) {
+    for (const mk of grid) {
       const price = unit * mk;
       const u = sc.alpha - sc.beta_p * price + sc.beta_q * f.Q + sc.beta_b * f.B + sc.beta_fit * 0.7;
       const share = Math.exp(u) / (Math.exp(u) + rivalExpSum + outside);
@@ -221,35 +254,36 @@ export function decideAdaptive(lean: Lean, f: FirmState, world: WorldState, c: C
     }
   }
 
-  // Facilities (MOD-B11) — rivals put real assets on the city map: a cheap high-output
-  // brewery in the industrial district first, then brand-leaning rivals add a downtown
-  // taproom for the brand draw. Capex (reserved from the budget so it doesn't overcommit).
-  const buildFacilities: { type: string; location?: string; market?: string }[] = [];
+  // Facilities (MOD-B11) — rivals put real assets on the city map and now SPREAD: each new site
+  // goes to the operating market where the bot has the fewest sites (branch out across cities)
+  // and onto an UNCROWDED parcel (so they don't all stack one district + they feel catchment).
+  const buildFacilities: { type: string; location?: string; market?: string; lot?: string }[] = [];
   if (mods?.facilities?.enabled) {
     const have = (f.facilities ?? []).length;
     const districts = mods.facilities.districts ?? [];
     const typeById = (id: string) => mods.facilities!.types.find((t) => t.id === id);
-    const distByKind = (k: string) => districts.find((d) => d.kind === k)?.id ?? districts[0]?.id;
-    // Which market/city these facilities sit in — a bot's expansion region if it has one,
-    // else home — so rival pins spread across the City View instead of all landing on home.
-    const facMarket: string | undefined = !mods.geography?.enabled ? undefined
-      : (marketPresence
-          ? (Object.entries(marketPresence).filter(([id, w]) => id !== "home" && w > 0).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "home")
-          : ((f.markets_entered ?? ["home"]).find((m) => m !== "home") ?? "home"));
-    if (have === 0 && world.round >= 1) {
-      // First footprint: a cheap nano brewery in the cheap industrial district, so
-      // rivals reliably appear on the city map early (modest buffer).
-      const small = typeById("brewery_small") ?? mods.facilities.types.find((t) => /brewery/.test(t.id));
-      if (small && f.cash > small.base_cost + 200) { buildFacilities.push({ type: small.id, location: distByKind("industrial"), market: facMarket }); moduleCash += small.base_cost; }
-    } else if (have === 1 && world.round >= 3) {
-      // Second site reflects the lean: brand bots open a downtown taproom (brand draw),
-      // cost/scale bots add a production brewery in the industrial yards.
-      if (lean.bias.B >= 1.2) {
-        const tap = typeById("taproom");
-        if (tap && f.cash > tap.base_cost + 350) { buildFacilities.push({ type: tap.id, location: distByKind("downtown"), market: facMarket }); moduleCash += tap.base_cost; }
-      } else {
-        const big = typeById("brewery_large");
-        if (big && f.cash > big.base_cost + 400) { buildFacilities.push({ type: big.id, location: distByKind("industrial"), market: facMarket }); moduleCash += big.base_cost; }
+    const facCountIn = (m?: string) => (f.facilities ?? []).filter((x) => (x.market_id ?? "home") === (m ?? "home")).length;
+    // Operating markets (home + entered + this round's expansion targets); pick the emptiest.
+    const operating: (string | undefined)[] = mods.geography?.enabled
+      ? Array.from(new Set(["home", ...(f.markets_entered ?? []), ...Object.keys(marketPresence ?? {})]))
+      : [undefined];
+    const facMarket = [...operating].sort((a, b) => facCountIn(a) - facCountIn(b))[0];
+    // Brand-leaning bots favor a downtown taproom (brand draw) once they have a base; otherwise a
+    // production brewery in the cheap industrial yards.
+    const wantTaproom = lean.bias.B >= 1.2 && have >= 1;
+    const buildType = have === 0 ? typeById("brewery_small") ?? mods.facilities.types[0]
+      : wantTaproom ? typeById("taproom")
+      : typeById("brewery_large") ?? typeById("brewery_small");
+    const preferKind = buildType?.id === "taproom" ? "downtown" : "industrial";
+    // Pace + reach: a site by r1, a second by r3, then aggressive/scale bots keep expanding.
+    const target = lean.debtDraw >= 160 || lean.bias.cap >= 1.6 ? 5 : 3;
+    const ready = have === 0 ? world.round >= 1 : have === 1 ? world.round >= 3 : world.round >= 5 && world.round % 2 === 1;
+    if (buildType && have < target && ready && f.cash > buildType.base_cost + 300) {
+      const lot = mods.geography?.enabled ? pickLot(world, c, facMarket ?? "home", preferKind) : undefined;
+      // With geography on, only build if we found a real parcel (lands on the map + feels catchment).
+      if (!mods.geography?.enabled || lot) {
+        buildFacilities.push({ type: buildType.id, market: facMarket, lot, location: mods.geography?.enabled ? undefined : districts.find((d) => d.kind === preferKind)?.id });
+        moduleCash += buildType.base_cost;
       }
     }
   }

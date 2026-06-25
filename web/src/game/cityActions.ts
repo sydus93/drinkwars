@@ -5,12 +5,14 @@
  * submit hub and merges these in at submit. Keeping the shape + the presence math here lets
  * Play (init/reset), CityView (edit), and DecisionForm (merge) all agree on one source of truth.
  */
+import type { FirmDecision } from "drinkwars-engine";
 import type { GameView } from "./controller.js";
 
 export interface CityBuildOrder {
   type: string; // FacilityTypeConfig.id
   location: string; // district id
   market: string; // MOD-B01 market/city id
+  lot?: string; // Phase 2 parcel id (specific buildable lot)
 }
 
 export interface CityActions {
@@ -44,6 +46,29 @@ export function capacityInMarket(view: GameView, marketId: string): number {
     if (t) cap += t.capacity_contribution * capMult(f.location_id) * (f.condition ?? 1);
   }
   return cap;
+}
+
+/** Fold City View actions + lifted talent raids into a round decision. This is the SINGLE
+ *  source of truth used BOTH for the projected-cash readout in the Decide tab AND at submit —
+ *  so entering a market or siting a facility on the City View tab always shows up in projected
+ *  cash, and nothing is double-counted. With no cityActions (geography off / multiplayer) it
+ *  collapses to the draft (plus poaches), preserving prior behavior. */
+export function mergeDecision(
+  view: GameView,
+  draft: FirmDecision,
+  cityActions?: CityActions,
+  poaches?: { firm: string; employee: string; offer: number }[],
+): FirmDecision {
+  const base = (poaches ? { ...draft, poach_employees: poaches } : draft) as FirmDecision;
+  if (!cityActions) return base;
+  return {
+    ...base,
+    build_facilities: [...(base.build_facilities ?? []), ...cityActions.builds],
+    market_presence: marketPresenceFrom(view, cityActions.markets),
+    mothball_facilities: [...(base.mothball_facilities ?? []), ...cityActions.mothballs],
+    reactivate_facilities: [...(base.reactivate_facilities ?? []), ...cityActions.reactivations],
+    maintain_facilities: { ...(base.maintain_facilities ?? {}), ...cityActions.maintain },
+  };
 }
 
 /** Turn the committed-markets set into engine `market_presence` weights. Home keeps a base

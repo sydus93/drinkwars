@@ -20,6 +20,7 @@ import { updateReputation, reputationSpread } from "./reputation.js";
 import { resolveRnd, rndFirstMoverBonus } from "./rndrace.js";
 import { resolveAssets, verticalCostReduction, verticalRegRelief } from "./assets.js";
 import { resolveFacilities, facilityCapacity } from "./facilities.js";
+import { computeMarketConduct } from "./conduct.js";
 import { resolveEmployees } from "./employees.js";
 import { resolveMa } from "./ma.js";
 import { buildStatements, firmValuation } from "./finance.js";
@@ -321,6 +322,16 @@ export function resolveRound(prevWorld: WorldState, decisionList: FirmDecision[]
     f.cum_output += inv.enabled ? (prodByFirm.get(f.id) ?? 0) : (qSoldByFirm.get(f.id) ?? 0);
   }
 
+  // Step 7.5: market conduct (MOD-A10). Dominance + gouging (worse on thin quality) draws a
+  // consumer-protection fine (→ opex below) and brand erosion (applied now ⇒ felt next round),
+  // both blunted by T_gov + reputation. Off ⇒ empty maps (parity).
+  const conduct = computeMarketConduct(w, c, qSoldByFirm, revenueByFirm);
+  events.push(...conduct.events);
+  for (const [id, hit] of conduct.brandHitByFirm) {
+    const f = w.firms.find((x) => x.id === id);
+    if (f) f.B = Math.max(0, f.B - hit);
+  }
+
   // Step 8 (+9): statements, cash, balance sheet; cash-hit damage flows through here.
   // Inventory accounting (weighted-average cost) sits here: produced output is
   // capitalized into stock, COGS expenses what sold, spoilage writes off the rest.
@@ -355,7 +366,7 @@ export function resolveRound(prevWorld: WorldState, decisionList: FirmDecision[]
       // cash swaps into PP&E without adding brewing capacity.
       invest: { Q: d.invest_Q, B: d.invest_B, T_emp: d.invest_T_emp, T_inv: d.invest_T_inv, T_gov: d.invest_T_gov, process: d.invest_process, cap: d.invest_cap + (assetsRes.capexByFirm.get(f.id) ?? 0) + (facRes.capexByFirm.get(f.id) ?? 0) },
       financing: { debt_draw: d.debt_draw, debt_repay: d.debt_repay, equity_raise: d.equity_raise, dividend: d.dividend },
-      extraOpex: (agRes.extraOpex.get(f.id) ?? 0) + (d.buy_info ? c.information.cost : 0) + holdingCost + (prRes.costByFirm.get(f.id) ?? 0) + (sustRes.costByFirm.get(f.id) ?? 0) + (pgRes.costByFirm.get(f.id) ?? 0) + (geoOpexByFirm.get(f.id) ?? 0) + (rndRes.costByFirm.get(f.id) ?? 0) + (assetsRes.opexByFirm.get(f.id) ?? 0) + (loRes.costByFirm.get(f.id) ?? 0) + (facRes.opexByFirm.get(f.id) ?? 0) + (empRes.opexByFirm.get(f.id) ?? 0),
+      extraOpex: (agRes.extraOpex.get(f.id) ?? 0) + (d.buy_info ? c.information.cost : 0) + holdingCost + (prRes.costByFirm.get(f.id) ?? 0) + (sustRes.costByFirm.get(f.id) ?? 0) + (pgRes.costByFirm.get(f.id) ?? 0) + (geoOpexByFirm.get(f.id) ?? 0) + (rndRes.costByFirm.get(f.id) ?? 0) + (assetsRes.opexByFirm.get(f.id) ?? 0) + (loRes.costByFirm.get(f.id) ?? 0) + (facRes.opexByFirm.get(f.id) ?? 0) + (empRes.opexByFirm.get(f.id) ?? 0) + (conduct.fineByFirm.get(f.id) ?? 0),
       cashHit: shock.perFirm.get(f.id)?.cash_hit ?? 0,
       spreadReduction: reputationSpread(f, c),
       regBurdenReduction: verticalRegRelief(f, c, round),

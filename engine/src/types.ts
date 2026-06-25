@@ -141,6 +141,7 @@ export interface ShockTypeConfig {
   signaling: "unannounced" | "signaled_noisy";
   resilience_mitigated: boolean;
   duration: number; // rounds the effect persists
+  regional?: boolean; // Phase 3: strike a RANDOMLY-chosen market (exposure-weighted by where each firm produces) instead of all firms equally — e.g. a drought hitting one region's water supply
 }
 
 export interface AntitrustConfig {
@@ -208,7 +209,8 @@ export type ModuleId =
   | "renegotiation" | "asymmetricStarts" | "consumerDrift" | "lobbying"
   // Tier B — medium lift
   | "geography" | "international" | "laborMarket" | "rndRace" | "teamRoles"
-  | "verticalIntegration" | "ma" | "financialInstruments" | "inventory" | "reputation" | "facilities" | "employees";
+  | "verticalIntegration" | "ma" | "financialInstruments" | "inventory" | "reputation" | "facilities" | "employees"
+  | "marketConduct";
 
 /** Minimal module config: a plain on/off flag. Modules whose engine logic isn't
  *  wired yet use this shape; they appear in the instructor selector as "planned"
@@ -320,6 +322,21 @@ export interface MarketConfig {
   distribution_cost_per_unit: number; // per-unit opex selling here
   tariff_rate: number; // export only: import tariff as a fraction of revenue
   fx_volatility: number; // export only: per-round FX move size
+  lots?: Lot[]; // MOD-B11 spatial siting: the fixed buildable parcels in this market (Phase 2)
+  geo?: [number, number]; // [lon, lat] — drives shipping distance between markets (Phase 3)
+  demand_growth?: number; // per-round compounding change to this market's demand size (Phase 3 heterogeneity)
+}
+
+/** One buildable parcel within a market (Phase 2 spatial siting). A facility occupies a
+ *  specific lot at grid coords (x,y); proximity to other facilities (own + rival) drives the
+ *  catchment cannibalization term. Each lot belongs to a district (rent/zoning/capacity/brand).
+ *  Some lots unlock only after a round (the city develops) — `unlock_round` (0/undefined = open). */
+export interface Lot {
+  id: string;
+  x: number; // grid coords, 0..(catchment.grid-1); matches the City View isometric grid
+  y: number;
+  district: string; // DistrictConfig.id
+  unlock_round?: number; // round this lot becomes available to lease (default 0 = from the start)
 }
 
 /** MOD-B01 · Geographic expansion. The home market is always active; domestic
@@ -328,6 +345,10 @@ export interface MarketConfig {
 export interface GeographyConfig {
   enabled: boolean;
   markets: MarketConfig[]; // includes the always-on home market
+  // Phase 3 trade: selling units far from where you PRODUCE them (your facilities' markets) costs
+  // shipping — per unit, per unit of geo-distance. Local production (a facility in the market) ships
+  // free; home→overseas is steep. Absent ⇒ no shipping cost (parity). Tariffs/FX are separate.
+  shipping?: { rate_per_unit_distance: number };
 }
 
 /** MOD-B02 · International markets. Gates the export-kind markets and drives the
@@ -522,11 +543,26 @@ export interface DistrictConfig {
   brand_boost?: number; // Brand (B) added per round per active, online facility here (default 0)
   blurb: string;
 }
+/** Phase 2 spatial catchment: a facility's demand pull is cut by competing facilities nearby.
+ *  For each of a firm's online facilities, crowding = Σ over other online facilities within
+ *  `radius` of kernel(dist)·weight (weight 1 for rivals, `self_weight` for the firm's own —
+ *  self-cannibalization is real but softer). A facility's local score = 1/(1+lambda·crowding);
+ *  the firm's market location score is its capacity-weighted average, mapped to a utility term
+ *  `beta_loc·(2·score−1)` (blue-ocean → +beta_loc, fully crowded → −beta_loc). All-zero/absent
+ *  ⇒ no spatial effect (parity). */
+export interface CatchmentConfig {
+  grid: number; // coordinate space size (lots use 0..grid-1); also the City View grid
+  radius: number; // catchment reach in grid units
+  lambda: number; // crowding → score falloff strength
+  self_weight: number; // own-facility cannibalization weight vs. 1 for rivals
+  beta_loc: number; // utility scale of the location term (noticeable; tune with play data)
+}
 export interface FacilitiesConfig {
   enabled: boolean;
   max_facilities: number; // cap on owned facilities per firm
   types: FacilityTypeConfig[];
   districts?: DistrictConfig[]; // siting options (optional)
+  catchment?: CatchmentConfig; // Phase 2 spatial cannibalization (optional; absent ⇒ off)
 }
 /** One owned facility (FirmState.facilities) — named, condition-tracked. */
 export interface Facility {
@@ -539,6 +575,7 @@ export interface Facility {
   active: boolean; // false ⇒ mothballed (no capacity, no fixed cost)
   location_id?: string; // DistrictConfig.id it's sited in (optional)
   market_id?: string; // MOD-B01 market/city this facility belongs to (optional; "home" when geography on and unset). Siting/display tag.
+  lot_id?: string; // Phase 2: the specific Lot (parcel) it occupies in that market — drives catchment
 }
 
 /** MOD-B12 · Employees (named human capital). Additive + gated, like facilities:
@@ -588,6 +625,26 @@ export interface Employee {
   avatar_seed: string;
 }
 
+/** MOD-A10 · Market conduct & stakeholder backlash. Gives stakeholder management defensive
+ *  teeth: a DOMINANT firm that GOUGES (high markup over cost) — worse if on THIN QUALITY —
+ *  draws a consumer-protection fine (opex) + brand erosion. Both are mitigated by regulatory
+ *  goodwill (T_gov) and reputation, so the firms that invested in stakeholder relationships
+ *  ride out scrutiny that punishes the pure profit-maximizer. Off ⇒ no effect (parity). */
+export interface MarketConductConfig {
+  enabled: boolean;
+  dominance_threshold: number; // market share above which conduct is scrutinized (e.g. 0.40)
+  fair_markup: number; // realized-price/unit-cost above which markup reads as gouging
+  sensitivity: number; // overall scale of the conduct score
+  quality_weight: number; // how much selling below the field's average quality worsens it
+  fine_scale: number; // conduct → cash fine (opex)
+  fine_cap_frac: number; // fine capped at this fraction of the firm's cash
+  brand_scale: number; // conduct → Brand (B) erosion
+  tgov_k: number; // T_gov goodwill mitigation weight
+  rep_k: number; // reputation mitigation weight
+  halfsat: number; // half-saturation for the mitigation stocks
+  max_mitigation: number; // cap on how much goodwill can blunt the backlash
+}
+
 export interface ModulesConfig {
   // Tier A
   publicGoods: PublicGoodsConfig;
@@ -611,6 +668,7 @@ export interface ModulesConfig {
   reputation: ReputationConfig;
   facilities: FacilitiesConfig; // MOD-B11 — named physical capacity assets (see engine/facilities.ts)
   employees: EmployeesConfig; // MOD-B12 — named human capital (see engine/employees.ts)
+  marketConduct: MarketConductConfig; // MOD-A10 — stakeholder/regulatory backlash (see engine/conduct.ts)
 }
 
 export interface ScoringConfig {
@@ -765,6 +823,7 @@ export interface ScheduledShock {
   duration: number;
   locked: boolean; // instructor lock (engine never auto-edits a locked shock)
   fired: boolean;
+  region?: string; // Phase 3: the market this regional shock struck (chosen randomly at roll time)
 }
 
 export interface SegmentWorld {
@@ -847,7 +906,7 @@ export interface FirmDecision {
   hire_roles?: string[]; // MOD-B03: key roles to hire this round
   fire_roles?: string[]; // MOD-B03: key roles to let go this round
   // MOD-B11 facilities (physical capacity assets)
-  build_facilities?: { type: string; name?: string; location?: string; market?: string }[]; // facility types to build this round (location = district id; market = MOD-B01 market/city id)
+  build_facilities?: { type: string; name?: string; location?: string; market?: string; lot?: string }[]; // facility types to build this round (location = district id; market = MOD-B01 market/city id; lot = Phase 2 parcel id)
   maintain_facilities?: Record<string, number>; // facility id → maintenance $ this round
   mothball_facilities?: string[]; // facility ids to take offline (stop fixed cost + capacity)
   reactivate_facilities?: string[]; // mothballed facility ids to bring back online

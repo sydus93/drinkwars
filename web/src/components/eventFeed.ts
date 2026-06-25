@@ -143,6 +143,11 @@ const RULES: Rule[] = [
     },
   },
   {
+    test: /^MARKET CONDUCT:\s*(.+?)\s+drew a consumer-protection penalty\s*—\s*(.+)$/i,
+    kind: "regulatory", title: "Stakeholder backlash",
+    body: (_r, m) => `${m[1]} drew a consumer-protection penalty for ${m[2]} — a regulatory fine landed and the brand took a public hit. Goodwill (regulator trust + reputation) softens this.`,
+  },
+  {
     test: /^DISTRESS DUMPING:\s*(.+?)'s collapse depresses\s+(\w+)/i,
     kind: "shock", title: "Distress dumping",
     body: (_r, m) => `${m[1]}'s collapse is flooding the ${seg(m[2])} category with cut-price product, depressing prices.`,
@@ -224,13 +229,14 @@ const RULES: Rule[] = [
   // <m>, <signaling>)" / "SHOCK live-triggered: <type>" forms into prose; the raw
   // type/kind/magnitude ids must never reach the player.
   {
-    test: /^SHOCK (?:fired|live-triggered):\s*([a-z0-9_]+)(?:\(live\))?\s*(?:\(([a-z_]+),\s*mag\s*([\d.]+)[^)]*\))?/i,
+    test: /^SHOCK (?:fired|live-triggered):\s*([a-z0-9_]+)(?:\(live\))?\s*(?:\(([a-z_]+),\s*mag\s*([\d.]+)[^)]*\))?(?:\s+in\s+(.+?))?\s*$/i,
     kind: "shock",
     title: (m) => SHOCK_LABEL[m[1].toLowerCase()] ?? "Market disruption",
     body: (_r, m) => {
       const label = SHOCK_LABEL[m[1].toLowerCase()] ?? "A supply shock";
-      if (!m[2]) return `${label} just hit the market.`;
-      return `${label}: ${SHOCK_KIND[m[2]] ?? "the market is disrupted"} ${severity(+m[3])} this round.`;
+      const where = m[4] ? ` in ${m[4]}` : "";
+      if (!m[2]) return `${label} just hit${where ? where : " the market"}.`;
+      return `${label}${where}: ${SHOCK_KIND[m[2]] ?? "the market is disrupted"} ${severity(+m[3])} this round${where ? " for producers there" : ""}.`;
     },
   },
   { test: /SHOCK/i, kind: "shock", title: "Market disruption", body: (r) => stripPrefix(r) },

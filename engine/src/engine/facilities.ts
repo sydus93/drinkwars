@@ -57,6 +57,13 @@ export function resolveFacilities(world: WorldState, decisions: Map<FirmId, Firm
   const cfg = c.modules?.facilities;
   if (!cfg?.enabled) return out;
 
+  // Phase 2 spatial siting: a lot (parcel) holds at most one facility. Seed occupancy from
+  // existing facilities, then claim lots as we build this round so two can't share a parcel.
+  const occupied = new Map<string, Set<string>>(); // market id → occupied lot ids
+  const claim = (mk: string, lot: string) => { let s = occupied.get(mk); if (!s) { s = new Set(); occupied.set(mk, s); } s.add(lot); };
+  for (const f of world.firms) for (const fac of f.facilities ?? []) if (fac.lot_id) claim(fac.market_id ?? "home", fac.lot_id);
+  const lotsOf = (mk: string) => c.modules?.geography?.markets.find((m) => m.id === mk)?.lots ?? [];
+
   for (const f of world.firms) {
     if (f.status !== "active") continue;
     f.facilities ??= [];
@@ -68,17 +75,39 @@ export function resolveFacilities(world: WorldState, decisions: Map<FirmId, Firm
     // ---- Build (capitalized; comes online after build_rounds) ----
     for (const b of d?.build_facilities ?? []) {
       const t = typeOf(c, b.type);
-      if (!t || f.facilities.length >= cfg.max_facilities) continue;
-      if (f.cash < t.base_cost) continue; // can't finance the build this round
+      if (!t) continue;
+      // Don't silently swallow a build the player queued: surface why it didn't happen so a
+      // paid market-entry without a resulting site isn't a mystery.
+      if (cfg.max_facilities > 0 && f.facilities.length >= cfg.max_facilities) {
+        out.events.push(`BUILD BLOCKED: ${f.id} is at its facility cap (${cfg.max_facilities}) — ${t.label.toLowerCase()} not built`);
+        continue;
+      }
+      if (f.cash < t.base_cost) {
+        out.events.push(`BUILD BLOCKED: ${f.id} can't fund a ${t.label.toLowerCase()} (needs ${Math.round(t.base_cost)})`);
+        continue; // can't finance the build this round
+      }
       const id = `fac_${round}_${f.facilities.length}`;
-      const location_id = b.location ?? cfg.districts?.[0]?.id;
       // Tag the facility with the market/city it's sited in (MOD-B01). Defaults to "home"
       // when geography is on so home-only builds still place correctly on the City View.
       const market_id = b.market ?? (c.modules?.geography?.enabled ? "home" : undefined);
+      let location_id = b.location ?? cfg.districts?.[0]?.id;
+      let lot_id: string | undefined;
+      // Phase 2: if a specific parcel was chosen, validate it (exists, unlocked, free) and let
+      // the lot's district drive rent/zoning/capacity/brand. No lot ⇒ legacy district-only build.
+      if (b.lot) {
+        const mk = market_id ?? "home";
+        const lot = lotsOf(mk).find((L) => L.id === b.lot);
+        if (!lot) { out.events.push(`BUILD BLOCKED: ${f.id} — parcel ${b.lot} not found in ${mk}`); continue; }
+        if (round < (lot.unlock_round ?? 0)) { out.events.push(`BUILD BLOCKED: ${f.id} — that parcel isn't available yet`); continue; }
+        if (occupied.get(mk)?.has(b.lot)) { out.events.push(`BUILD BLOCKED: ${f.id} — that parcel is already taken`); continue; }
+        lot_id = lot.id;
+        location_id = lot.district;
+        claim(mk, lot.id);
+      }
       f.facilities.push({
         id, type: t.id, name: (b.name ?? "").trim() || t.label,
         built_round: round, online_round: round + t.build_rounds,
-        condition: 1, active: true, location_id, market_id,
+        condition: 1, active: true, location_id, market_id, lot_id,
       });
       capex += t.base_cost;
       out.events.push(`FACILITY BUILT: ${f.id} breaks ground on a ${t.label.toLowerCase()} (online in ${t.build_rounds} round${t.build_rounds === 1 ? "" : "s"})`);

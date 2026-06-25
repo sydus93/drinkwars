@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Facility, FirmDecision, PrPlayType, SegmentId } from "drinkwars-engine";
 import type { GameView } from "../game/controller.js";
-import { marketPresenceFrom, type CityActions } from "../game/cityActions.js";
+import { mergeDecision, type CityActions } from "../game/cityActions.js";
 import { SEG_LABEL, SEG_TAG, STOCK_LABEL, fmt } from "../labels.js";
 import { Button, Card, Eyebrow, Row, Tag } from "./ui.js";
 import { AllocationBar } from "./AllocationBar.js";
@@ -51,6 +51,8 @@ export function DecisionForm({
   poaches: externalPoaches,
   onPoach,
   cityActions,
+  decision,
+  setDecision,
 }: {
   view: GameView;
   defaultDecision: () => Promise<FirmDecision>;
@@ -67,8 +69,15 @@ export function DecisionForm({
   // City View actions (builds, market commitments, upkeep), merged into the round decision
   // at submit. When geography is on, the City View tab owns markets + facilities.
   cityActions?: CityActions;
+  // The round decision draft. When the parent screen lifts it (single-player Play), it survives
+  // tab switches; when absent (multiplayer), the form keeps it locally as before.
+  decision?: FirmDecision | null;
+  setDecision?: (d: FirmDecision) => void;
 }) {
-  const [d, setD] = useState<FirmDecision | null>(null);
+  const [localD, setLocalD] = useState<FirmDecision | null>(null);
+  const lifted = setDecision !== undefined;
+  const d = lifted ? decision ?? null : localD;
+  const writeD = setDecision ?? setLocalD;
   const [prModal, setPrModal] = useState(false);
   const [marketDetail, setMarketDetail] = useState<string | null>(null);
   const [detailEmp, setDetailEmp] = useState<string | null>(null);
@@ -76,23 +85,30 @@ export function DecisionForm({
   const [siteDistrict, setSiteDistrict] = useState<string>("");
   const activeSegs = view.segments.filter((s) => s.active).map((s) => s.id);
 
+  // When lifted, the parent screen owns init/reset (so the draft survives tab switches);
+  // only seed the LOCAL draft here for the multiplayer path.
   useEffect(() => {
+    if (lifted) return;
     let live = true;
     defaultDecision().then((dd) => {
       if (live) {
-        setD(dd);
+        setLocalD(dd);
         onInfoChange?.(!!dd.buy_info);
       }
     });
     return () => {
       live = false;
     };
-  }, [view.round, defaultDecision, onInfoChange]);
+  }, [view.round, defaultDecision, onInfoChange, lifted]);
 
   if (!d) return <Card>Loading lineup…</Card>;
 
-  const set = (patch: Partial<FirmDecision>) => setD({ ...d, ...patch });
+  const set = (patch: Partial<FirmDecision>) => writeD({ ...d, ...patch });
   const setPrice = (s: SegmentId, v: number) => set({ price: { ...d.price, [s]: v } });
+  // The decision as it will actually be submitted — draft folded with City View actions + raids.
+  // Projected-cash spend is computed from THIS, so market entry / siting done on the City View
+  // tab is reflected in the Decide tab's forecast (not just merged silently at submit).
+  const effective = mergeDecision(view, d, cityActions, externalPoaches);
 
   const cash = view.own.cash;
   // Production / inventory mode (only when the game was created with it on).
@@ -133,7 +149,10 @@ export function DecisionForm({
     next.has(id) ? next.delete(id) : next.add(id);
     set({ buy_vertical: [...next] });
   };
-  const labOn = !!mods?.laborMarket?.enabled;
+  // Talent is ONE system: the named employees roster (MOD-B12) supersedes the older
+  // key-role toggles (MOD-B03). When employees is on, the B03 UI/spend is suppressed so the
+  // player never sees two parallel hiring surfaces. B03 only shows in games without employees.
+  const labOn = !!mods?.laborMarket?.enabled && !mods?.employees?.enabled;
   const labRoles = mods?.laborMarket?.roles ?? [];
   // Retention read: the chance a hire stays, from the same formula the engine uses
   // (employee trust mitigates the base departure probability).
@@ -177,7 +196,8 @@ export function DecisionForm({
   const entered = view.own.markets_entered ?? ["home"];
   const marketWeights = d?.market_presence ?? { home: 1 };
   const setWeight = (id: string, v: number) => set({ market_presence: { ...marketWeights, [id]: Math.max(0, v) } });
-  const geoEntrySpend = geoOn ? markets.filter((m) => m.kind !== "home" && (marketWeights[m.id] ?? 0) > 0 && !entered.includes(m.id)).reduce((a, m) => a + m.entry_cost, 0) : 0;
+  const effWeights = effective.market_presence ?? { home: 1 };
+  const geoEntrySpend = geoOn ? markets.filter((m) => m.kind !== "home" && (effWeights[m.id] ?? 0) > 0 && !entered.includes(m.id)).reduce((a, m) => a + m.entry_cost, 0) : 0;
 
   // MOD-A09 lobbying · MOD-A05/A06 alliances
   const lobOn = !!mods?.lobbying?.enabled;
@@ -204,8 +224,11 @@ export function DecisionForm({
   const fmothball = new Set(d?.mothball_facilities ?? []);
   const freactivate = new Set(d?.reactivate_facilities ?? []);
   const facIsActive = (fac: Facility) => (freactivate.has(fac.id) ? true : fmothball.has(fac.id) ? false : fac.active);
-  const buildCost = facOn ? fbuilds.reduce((s, b) => s + (facTypes.find((t) => t.id === b.type)?.base_cost ?? 0), 0) : 0;
-  const maintCost = facOn ? Object.values(fmaint).reduce((s: number, v) => s + Math.max(0, v), 0) : 0;
+  // Costs reflect the merged decision (form builds + City View builds), so the forecast is whole.
+  const effBuilds = effective.build_facilities ?? [];
+  const effMaint = effective.maintain_facilities ?? {};
+  const buildCost = facOn ? effBuilds.reduce((s, b) => s + (facTypes.find((t) => t.id === b.type)?.base_cost ?? 0), 0) : 0;
+  const maintCost = facOn ? Object.values(effMaint).reduce((s: number, v) => s + Math.max(0, v), 0) : 0;
   const facSpend = buildCost + maintCost;
   const addBuild = (type: string) => set({ build_facilities: [...fbuilds, { type, location: siteDistrict || facDistricts[0]?.id }] });
   const removeBuild = (i: number) => set({ build_facilities: fbuilds.filter((_, j) => j !== i) });
@@ -1042,24 +1065,7 @@ export function DecisionForm({
         </Card>
         <Button
           variant="go"
-          onClick={() => {
-            const base = { ...d, poach_employees: poaches } as FirmDecision;
-            // Fold City View actions into the round: market_presence is authoritative from the
-            // committed-markets set (entering a new market here triggers the engine entry cost);
-            // builds and upkeep are appended (founding builds on round 0 are preserved).
-            onPlay(
-              cityActions
-                ? {
-                    ...base,
-                    build_facilities: [...(base.build_facilities ?? []), ...cityActions.builds],
-                    market_presence: marketPresenceFrom(view, cityActions.markets),
-                    mothball_facilities: [...(base.mothball_facilities ?? []), ...cityActions.mothballs],
-                    reactivate_facilities: [...(base.reactivate_facilities ?? []), ...cityActions.reactivations],
-                    maintain_facilities: { ...(base.maintain_facilities ?? {}), ...cityActions.maintain },
-                  }
-                : base,
-            );
-          }}
+          onClick={() => onPlay(mergeDecision(view, d, cityActions, poaches))}
           disabled={busy}
           className="w-full py-3 text-base"
         >

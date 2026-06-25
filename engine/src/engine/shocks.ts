@@ -16,14 +16,36 @@ export function resilienceMitigation(firm: FirmState, c: Config): number {
   return Math.min(c.shocks.max_mitigation, fromProcess + fromEmp);
 }
 
+/** A firm's PRODUCTION exposure to a region (0..1): its online capacity sited there (home counts
+ *  the base brewery) over its total capacity. A regional shock scales by this — a firm that builds
+ *  in the struck region takes the hit; one that produces elsewhere is spared. */
+function regionExposure(f: FirmState, c: Config, region: string, round: number): number {
+  const facCfg = c.modules?.facilities;
+  const typeCap = (id: string) => facCfg?.types.find((t) => t.id === id)?.capacity_contribution ?? 0;
+  const capMult = (loc?: string) => facCfg?.districts?.find((d) => d.id === loc)?.capacity_mult ?? 1;
+  const condF = (cond: number) => 0.5 + 0.5 * Math.max(0, Math.min(1, cond));
+  let inRegion = region === "home" ? f.cap : 0;
+  let total = f.cap;
+  for (const fac of f.facilities ?? []) {
+    if (!fac.active || round < fac.online_round) continue;
+    const cap = typeCap(fac.type) * condF(fac.condition) * capMult(fac.location_id);
+    total += cap;
+    if ((fac.market_id ?? "home") === region) inRegion += cap;
+  }
+  return total > 0 ? inRegion / total : region === "home" ? 1 : 0;
+}
+
 /** Roll the shock timeline (§9.1). Deterministic given the base seed. */
 export function rollTimeline(c: Config, seed: number): ScheduledShock[] {
   const rng = new RNG(deriveSeed(seed, 0, 777));
   const out: ScheduledShock[] = [];
   let seq = 0;
+  const geoMarkets = c.modules?.geography?.enabled ? c.modules.geography.markets ?? [] : [];
   for (const t of c.shocks.types) {
     for (let r = t.earliest_round; r <= t.latest_round; r++) {
       if (rng.bool(t.prob_per_round)) {
+        // A regional shock strikes one randomly-chosen market (drought hits a region's water).
+        const region = t.regional && geoMarkets.length ? geoMarkets[rng.int(0, geoMarkets.length - 1)].id : undefined;
         out.push({
           id: `s_${t.id}_${seq++}`,
           type_id: t.id,
@@ -36,6 +58,7 @@ export function rollTimeline(c: Config, seed: number): ScheduledShock[] {
           duration: t.duration,
           locked: false,
           fired: false,
+          region,
         });
       }
     }
@@ -64,15 +87,16 @@ export function computeShockEffects(world: WorldState, c: Config, coordinationUn
   const events: string[] = [];
 
   // Gather shocks active this round: scheduled (within [round, round+duration)) + live triggers.
-  const active: { kind: ScheduledShock["kind"]; target: SegmentId | "all"; magnitude: number; resilience: boolean; label: string }[] = [];
+  const regionLabel = (id?: string) => (id ? c.modules?.geography?.markets.find((m) => m.id === id)?.label ?? id : undefined);
+  const active: { kind: ScheduledShock["kind"]; target: SegmentId | "all"; magnitude: number; resilience: boolean; label: string; region?: string }[] = [];
   for (const s of world.shock_timeline) {
     const isActive = round >= s.round && round < s.round + s.duration;
     if (!isActive) continue;
     if (round === s.round && !s.fired) {
       s.fired = true;
-      events.push(`SHOCK fired: ${s.type_id} (${s.kind}, mag ${s.magnitude.toFixed(2)}, ${s.signaling})`);
+      events.push(`SHOCK fired: ${s.type_id} (${s.kind}, mag ${s.magnitude.toFixed(2)}, ${s.signaling})${s.region ? ` in ${regionLabel(s.region)}` : ""}`);
     }
-    active.push({ kind: s.kind, target: s.target, magnitude: s.magnitude, resilience: s.resilience_mitigated, label: s.type_id });
+    active.push({ kind: s.kind, target: s.target, magnitude: s.magnitude, resilience: s.resilience_mitigated, label: s.type_id, region: s.region });
   }
   for (const typeId of world.live_triggers) {
     const t = c.shocks.types.find((x) => x.id === typeId);
@@ -97,7 +121,9 @@ export function computeShockEffects(world: WorldState, c: Config, coordinationUn
       // (MOD-A02) add resilience to the water shock only.
       const base = s.resilience ? resilienceMitigation(f, c) + (isWater ? waterEfficiencyMitigation(f, c) + extraWaterMitigation : 0) : 0;
       const mit = Math.min(c.shocks.max_mitigation, base);
-      const m = s.magnitude * (1 - mit);
+      // Regional shocks scale by how much this firm PRODUCES in the struck region (0 ⇒ untouched).
+      const exposure = s.region ? regionExposure(f, c, s.region, round) : 1;
+      const m = s.magnitude * (1 - mit) * exposure;
       if (s.kind === "cost_spike") eff.cost_multiplier *= 1 + m;
       else if (s.kind === "capacity_hit") eff.capacity_multiplier *= Math.max(0, 1 - m);
       else if (s.kind === "cash_hit") eff.cash_hit += m * Math.max(0, f.cash);

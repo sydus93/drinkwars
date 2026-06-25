@@ -30,11 +30,14 @@ export function Diagnostics({ result, view }: { result: FirmRoundResult; view: G
   const repOn = !!mods?.reputation?.enabled;
   const sustOn = !!mods?.sustainability?.enabled;
   const rndOn = !!mods?.rndRace?.enabled;
-  const hires = own.key_hires ?? [];
+  // Talent: one system. Named employees (B12) supersede key-role hires (B03) in the readout.
+  const empOn = !!mods?.employees?.enabled;
+  const emps = own.employees ?? [];
+  const hires = empOn ? [] : own.key_hires ?? [];
   const vassets = own.vertical_assets ?? [];
   const note = own.convertible_note ?? null;
   const rbf = Math.max(0, own.rbf_outstanding ?? 0);
-  const showPrograms = repOn || sustOn || rndOn || hires.length > 0 || vassets.length > 0 || note != null || rbf > 0;
+  const showPrograms = repOn || sustOn || rndOn || hires.length > 0 || emps.length > 0 || vassets.length > 0 || note != null || rbf > 0;
   const meter = (v: number, scale: number) => (
     <span className="inline-flex h-1.5 w-24 overflow-hidden rounded-[2px] border border-line align-middle">
       <span style={{ width: `${Math.min(100, (v / scale) * 100)}%`, background: PALETTE.copper }} />
@@ -77,6 +80,7 @@ export function Diagnostics({ result, view }: { result: FirmRoundResult; view: G
             {sustOn && <Row label={<span>Water efficiency <span className="text-[0.62rem] text-inksoft">drought armor</span></span>} value={<span>{meter(result.state.water_efficiency, 30)} <span className="tnum ml-1">{result.state.water_efficiency.toFixed(1)}</span></span>} />}
             {rndOn && <Row label={<span>R&amp;D progress <span className="text-[0.62rem] text-inksoft">race to the new category</span></span>} value={<span>{meter(result.state.rnd_progress, 60)} <span className="tnum ml-1">{result.state.rnd_progress.toFixed(0)}</span></span>} />}
             {vassets.length > 0 && <Row label="Vertical assets" value={vassets.map((a) => a.id.replace(/_/g, " ")).join(" · ")} />}
+            {emps.length > 0 && <Row label="Your crew" value={emps.map((e) => e.name).join(" · ")} />}
             {hires.length > 0 && <Row label="Key people" value={hires.map((h) => h.role.replace(/_/g, " ")).join(" · ")} />}
             {note && <Row label="Convertible note" value={<span className="tnum">{fmt.money(note.principal)} outstanding</span>} />}
             {rbf > 0 && <Row label="Revenue financing" value={<span className="tnum">{fmt.money(rbf)} still owed</span>} />}

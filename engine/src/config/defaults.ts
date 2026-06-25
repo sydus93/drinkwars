@@ -178,6 +178,7 @@ export const defaultConfig: Config = {
         signaling: "unannounced",
         resilience_mitigated: true,
         duration: 2,
+        regional: true, // a drought hits ONE region's water — exposure depends on where you produce
       },
       {
         // Hop/barley harvest failure — dramatic unannounced cost spike.

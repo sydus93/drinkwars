@@ -105,7 +105,17 @@ export interface MarketSite {
   name: string;
   type: string; // FacilityTypeConfig.id
   location_id?: string; // district id
+  lot_id?: string; // Phase 2 parcel id (drives map position + catchment)
   active: boolean;
+}
+/** A buildable parcel in a market (Phase 2 spatial siting). */
+export interface MarketLot {
+  id: string;
+  x: number;
+  y: number;
+  district: string;
+  unlocked: boolean; // available to lease this round
+  occupant: "you" | "rival" | null;
 }
 /** One market/city for the City View (MOD-B01). Gated like the engine: home + domestic
  *  always; export ("international") cities only once international is on AND past the
@@ -121,6 +131,7 @@ export interface MarketView {
   segments: MarketSegmentStanding[];
   yourSites: MarketSite[];
   rivalSites: MarketSite[];
+  lots: MarketLot[]; // Phase 2 buildable parcels (coords, availability, occupancy)
 }
 
 export interface GameView {
@@ -335,7 +346,20 @@ export class SinglePlayerGame {
       const sitesOf = (f: FirmState): MarketSite[] =>
         (f.facilities ?? [])
           .filter((x) => (x.market_id ?? homeMarketId) === m.id)
-          .map((x) => ({ id: x.id, firmId: f.id, name: this.nameOf(f.id), type: x.type, location_id: x.location_id, active: x.active }));
+          .map((x) => ({ id: x.id, firmId: f.id, name: this.nameOf(f.id), type: x.type, location_id: x.location_id, lot_id: x.lot_id, active: x.active }));
+      // Phase 2 parcels: availability (unlock-over-time) + who occupies each.
+      const occByLot = new Map<string, "you" | "rival">();
+      for (const f of world.firms) {
+        if (f.status !== "active") continue;
+        for (const fac of f.facilities ?? []) {
+          if ((fac.market_id ?? homeMarketId) === m.id && fac.lot_id) occByLot.set(fac.lot_id, f.id === this.humanFirmId ? "you" : "rival");
+        }
+      }
+      const lots: MarketLot[] = (m.lots ?? []).map((L) => ({
+        id: L.id, x: L.x, y: L.y, district: L.district,
+        unlocked: game.current_round >= (L.unlock_round ?? 0),
+        occupant: occByLot.get(L.id) ?? null,
+      }));
       return {
         id: m.id,
         label: m.label,
@@ -347,6 +371,7 @@ export class SinglePlayerGame {
         segments,
         yourSites: sitesOf(own),
         rivalSites: world.firms.filter((f) => f.id !== this.humanFirmId && f.status === "active").flatMap(sitesOf),
+        lots,
       };
     });
 
@@ -432,6 +457,9 @@ export class SinglePlayerGame {
       presence[s] = 1;
     }
     const budget = Math.max(0, own.cash) * 0.25;
+    // Available home parcels for founding facilities (unlocked from the start). Empty ⇒ geography
+    // off ⇒ founding builds carry no lot (legacy district-only behavior).
+    const homeFoundingLots = (this.config.modules?.geography?.markets.find((m) => m.kind === "home")?.lots ?? []).filter((L) => (L.unlock_round ?? 0) <= 0);
     return {
       firm_id: this.humanFirmId, price, presence,
       invest_cap: Math.round((this.config.capacity.depreciation * own.cap) / this.config.capacity.gain),
@@ -440,7 +468,10 @@ export class SinglePlayerGame {
       debt_draw: 0, debt_repay: 0, equity_raise: 0, dividend: 0,
       buy_info: false, agreement_actions: [], exit_action: null, beliefs: {}, reflection: "",
       // Founding choices from the firm builder seed the opening round (then never repeat).
-      build_facilities: (this.founding?.facilities ?? []).map((t) => ({ type: t })),
+      // Founding facilities take real home parcels (so a starting site is a true spatial lot —
+      // catchment-aware + correctly placed on the map — not a ghost at a district centroid).
+      // Picking the parcel yourself is part of the deferred firm-builder rework.
+      build_facilities: (this.founding?.facilities ?? []).map((t, i) => ({ type: t, market: "home", lot: homeFoundingLots[i]?.id })),
       hire_employees: this.founding?.hires ?? [],
     };
   }
@@ -478,7 +509,7 @@ export class SinglePlayerGame {
     for (const n of this.npc) {
       const firm = world.firms.find((f) => f.id === n.firmId);
       if (!firm || firm.status !== "active") continue;
-      await this.orch.submitDecision(this.gameId, n.teamId, this.scaleNpc(decideAdaptive(n.lean, firm, world, this.config), firm));
+      await this.orch.submitDecision(this.gameId, n.teamId, this.scaleNpc(decideAdaptive(n.lean, firm, world, this.config, this.investScale), firm));
     }
     await this.orch.lockRound(this.gameId);
     const { lifecycle } = await this.orch.resolveRound(this.gameId);

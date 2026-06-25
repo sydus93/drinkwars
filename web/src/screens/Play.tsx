@@ -54,17 +54,28 @@ export function Play({
   // City View actions (facility builds, market commitments, upkeep) are lifted here so the
   // City View tab and the decision form edit ONE round decision — merged in at submit.
   const [cityActions, setCityActions] = useState<CityActions>(() => emptyCityActions(view));
+  // The round decision draft is lifted here (like cityActions/poaches) so it survives tab
+  // switches — fixes edits being wiped when hopping Decide ↔ City View. Reset each round.
+  const [decision, setDecision] = useState<FirmDecision | null>(null);
   const seenRound = useRef<number | null>(null);
 
   // New game (no results yet) → start on the decision tab.
   useEffect(() => {
     if (!view.result) setTab("decision");
   }, [view.result]);
-  // Reset the live intel preview + queued talent raids each new round.
+  // Reset the live intel preview + queued talent raids + decision draft each new round.
   useEffect(() => {
     setInfoPreview(false);
     setPoaches([]);
     setCityActions(emptyCityActions(view));
+    let live = true;
+    defaultDecision().then((dd) => {
+      if (live) {
+        setDecision(dd);
+        setInfoPreview(!!dd.buy_info);
+      }
+    });
+    return () => { live = false; };
   }, [view.round]);
   // Surface this round's events on each resolution (not on first mount / replays).
   // Keyed on resolved-round COUNT, not the round pointer — the pointer stops
@@ -177,7 +188,7 @@ export function Play({
       <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
         <div className="min-w-0">
           {tab === "decision" && view.ownActive && !view.complete && (
-            <DecisionForm view={view} defaultDecision={defaultDecision} onPlay={handlePlay} busy={busy} infoCost={infoCost} onInfoChange={setInfoPreview} poaches={poaches} onPoach={queuePoach} cityActions={cityActions} />
+            <DecisionForm view={view} defaultDecision={defaultDecision} onPlay={handlePlay} busy={busy} infoCost={infoCost} onInfoChange={setInfoPreview} poaches={poaches} onPoach={queuePoach} cityActions={cityActions} decision={decision} setDecision={setDecision} />
           )}
           {tab === "decision" && !view.ownActive && !view.complete && (
             <Card>
@@ -231,7 +242,7 @@ export function Play({
               </div>
             </Card>
           )}
-          <Events events={view.events} />
+          <Events events={parseEvents(view.events, view.names[view.own.id] ?? "")} />
         </div>
       </div>
       )}

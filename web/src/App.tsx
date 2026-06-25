@@ -45,16 +45,25 @@ function ModeToggle() {
 
 /** Single-player: the full stack runs in the browser (engine + orchestration + NPCs). */
 function Solo() {
-  const { view, busy, start, play, defaultDecision, infoCost, reset } = useGame();
+  const { view, busy, error, start, play, defaultDecision, infoCost, reset } = useGame();
   if (!view)
     return (
-      <FirmBuilder
-        busy={busy}
-        onStart={(c) => {
-          setPlayerColor(c.color);
-          start({ breweryName: c.name, difficulty: c.difficulty, tagline: c.tagline, founding: c.founding, override: Object.keys(c.modules).length ? ({ modules: c.modules } as never) : undefined });
-        }}
-      />
+      <>
+        {error && (
+          <div className="mx-auto mt-4 max-w-[640px] px-4">
+            <div className="rounded-lg border border-brick/40 bg-brick/10 px-4 py-3 text-sm text-ink">
+              <span className="font-semibold text-brick">Couldn't open the brewery.</span> {error}. Adjust your setup and try again — if it keeps happening, a hard refresh (⌘⇧R) clears any stale cache.
+            </div>
+          </div>
+        )}
+        <FirmBuilder
+          busy={busy}
+          onStart={(c) => {
+            setPlayerColor(c.color);
+            start({ breweryName: c.name, difficulty: c.difficulty, tagline: c.tagline, founding: c.founding, override: Object.keys(c.modules).length ? ({ modules: c.modules } as never) : undefined });
+          }}
+        />
+      </>
     );
   return <Play view={view} busy={busy} infoCost={infoCost()} onPlay={play} defaultDecision={defaultDecision} onReset={reset} />;
 }

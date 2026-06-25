@@ -44,6 +44,9 @@ export interface Arena {
   betaMult: { p: number; q: number; b: number };
   brandMult: number; // brand transfer in this market (1 = home; <1 = less established)
   supplyOf: (firmId: FirmId) => number;
+  /** Phase 2 spatial catchment: per-firm location-attractiveness utility in this market
+   *  (blue-ocean siting > crowded). 0/absent ⇒ no spatial effect (identical to pre-Phase-2). */
+  locUtil?: (firmId: FirmId) => number;
 }
 
 interface Cell {
@@ -101,7 +104,8 @@ export function resolveArena(activeFirms: FirmState[], decisions: Map<FirmId, Fi
       const tQual = betaQ * f.Q;
       const tBrand = betaB * brand;
       const tFit = sc.beta_fit * frac;
-      const u = alpha + tPrice + tQual + tBrand + tFit;
+      const tLoc = arena.locUtil?.(f.id) ?? 0; // Phase 2: location/catchment attractiveness
+      const u = alpha + tPrice + tQual + tBrand + tFit + tLoc;
       best = Math.max(best, u);
       list.push({
         firmId: f.id,

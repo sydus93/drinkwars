@@ -4,6 +4,7 @@ import type { InstructorClient } from "../game/multiplayer.js";
 import { Button, Card, Eyebrow, Row, Stat, Tag } from "../components/ui.js";
 import { Legend, LineChart, Scatter, type ScatterPoint, type Series } from "../components/charts.js";
 import { Events } from "../components/Events.js";
+import { parseEvents } from "../components/eventFeed.js";
 import { SEG_LABEL, fmt } from "../labels.js";
 import { teamColor } from "../lib/teamColors.js";
 
@@ -187,7 +188,7 @@ function OverviewPanel({ d }: { d: Derived }) {
         {joinedEng.length === 0 && <div className="mt-2 text-[0.72rem] text-inksoft">No human teams yet — all slots are adaptive NPCs.</div>}
       </Card>
 
-      {events.length > 0 && <Events events={events} />}
+      {events.length > 0 && <Events events={parseEvents(events)} />}
     </div>
   );
 }
