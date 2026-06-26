@@ -98,10 +98,10 @@ export const MARKET_META: Record<string, { city: string; region: string; geo: [n
  *  guidance). Reinforces each district's economics: production breweries belong in the
  *  industrial yards, taprooms on commercial/retail streets. */
 export const ZONE_OF: Record<string, { zone: string; allow: string[] }> = {
-  downtown: { zone: "Commercial", allow: ["taproom", "canning_line"] },
-  riverside: { zone: "Mixed-use", allow: ["taproom", "brewery_small", "canning_line"] },
+  downtown: { zone: "Commercial", allow: ["taproom", "brewpub", "bottle_shop", "canning_line"] },
+  riverside: { zone: "Mixed-use", allow: ["taproom", "brewpub", "bottle_shop", "brewery_small", "canning_line"] },
   industrial: { zone: "Industrial", allow: ["brewery_large", "brewery_small", "canning_line"] },
-  suburban: { zone: "Residential", allow: ["brewery_small", "taproom", "canning_line"] },
+  suburban: { zone: "Residential", allow: ["brewery_small", "brewpub", "taproom", "bottle_shop", "canning_line"] },
 };
 export const ZONE_TONE: Record<string, string> = {
   Commercial: "var(--color-copper)",
@@ -112,10 +112,12 @@ export const ZONE_TONE: Record<string, string> = {
 };
 
 /** Single-letter tags + a one-line role note for each facility type (City View pins/cards). */
-export const FAC_TAG: Record<string, string> = { brewery_small: "n", brewery_large: "B", taproom: "T", canning_line: "C" };
+export const FAC_TAG: Record<string, string> = { brewery_small: "n", brewery_large: "B", taproom: "T", canning_line: "C", brewpub: "P", bottle_shop: "S" };
 export const FAC_NOTE: Record<string, string> = {
   brewery_small: "A small, flexible base of output — a cheap first footprint.",
   brewery_large: "Heavy output for the cost-and-scale game. Wants cheap industrial land.",
-  taproom: "Little output, but a brand magnet — best where foot traffic runs high.",
+  taproom: "Mostly a retail brand magnet (a little brewing) — best where foot traffic runs high.",
   canning_line: "Solid packaged output that travels — fits most districts.",
+  brewpub: "Brews and serves under one roof — moderate output with a real retail draw.",
+  bottle_shop: "Pure retail — no brewing, but a local sales presence and brand draw. Ships beer in.",
 };

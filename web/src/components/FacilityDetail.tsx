@@ -25,7 +25,7 @@ export function FacilityDetail({ facility: f, type: t, round, maintainValue, onM
   const online = round >= f.online_round;
   const condPct = Math.round(f.condition * 100);
   const condTone = f.condition > 0.6 ? "var(--color-hop)" : f.condition > 0.35 ? "var(--color-gold)" : "var(--color-brick)";
-  const liveCap = t ? Math.round(t.capacity_contribution * (0.5 + 0.5 * f.condition)) : 0;
+  const liveCap = t ? Math.round((t.production_capacity ?? t.capacity_contribution ?? 0) * (0.5 + 0.5 * f.condition)) : 0;
   const spendN = Math.max(0, +spend || 0);
   // Project next round's condition at the entered upkeep.
   const projCond = t ? Math.max(0, Math.min(1, f.condition - t.condition_decay + spendN * t.maintenance_effect)) : f.condition;
@@ -57,7 +57,7 @@ export function FacilityDetail({ facility: f, type: t, round, maintainValue, onM
             <div className="rounded-md border border-line bg-paper2/30 p-3">
               <div className="text-inksoft">Capacity</div>
               <div className="tnum mt-0.5 text-lg font-semibold text-ink">{online && active ? `+${fmt.int(liveCap)}` : "—"}<span className="text-[0.7rem] font-normal text-inksoft"> tanks</span></div>
-              {t && <div className="text-[0.66rem] text-inksoft">full: {fmt.int(t.capacity_contribution)}</div>}
+              {t && <div className="text-[0.66rem] text-inksoft">full: {fmt.int(t.production_capacity ?? t.capacity_contribution ?? 0)}{(t.retail_draw ?? 0) > 0 ? ` · retail +${fmt.int(t.retail_draw ?? 0)}` : ""}</div>}
             </div>
             <div className="rounded-md border border-line bg-paper2/30 p-3">
               <div className="text-inksoft">Fixed cost</div>

@@ -521,7 +521,15 @@ export interface LobbyingConfig {
 export interface FacilityTypeConfig {
   id: string;
   label: string;
-  capacity_contribution: number; // tank capacity this type adds at full condition
+  // Producer/retail SPECTRUM (not a binary role). A type can produce, sell, both, or neither:
+  //  - production_capacity: tank capacity it adds — the PRODUCER role (a shipping origin; bears
+  //    regional production shocks; feeds effective capacity). 0 ⇒ doesn't brew (e.g. a bottle shop).
+  //  - retail_draw: its local demand/brand pull and the weight it carries in catchment crowding —
+  //    the RETAIL role (foot traffic). 0 ⇒ back-of-house (e.g. a pure production brewery).
+  // A production brewery is pure producer; a bottle shop pure retail; nano/brewpub/taproom mix.
+  production_capacity: number; // tank capacity this type adds at full condition (producer role)
+  retail_draw: number; // local demand/brand pull + catchment crowding weight (retail role)
+  capacity_contribution?: number; // DEPRECATED — legacy single-scalar alias, read as a production_capacity fallback
   base_cost: number; // build cost, capitalized into PP&E
   fixed_cost: number; // rent + baseline upkeep per round (opex)
   build_rounds: number; // rounds until operational (0 = immediate)
@@ -560,6 +568,7 @@ export interface CatchmentConfig {
 export interface FacilitiesConfig {
   enabled: boolean;
   max_facilities: number; // cap on owned facilities per firm
+  salvage_fraction?: number; // divest: cash recovered = this × base_cost × condition (default 0.5). Frees the lot.
   types: FacilityTypeConfig[];
   districts?: DistrictConfig[]; // siting options (optional)
   catchment?: CatchmentConfig; // Phase 2 spatial cannibalization (optional; absent ⇒ off)
@@ -910,6 +919,7 @@ export interface FirmDecision {
   maintain_facilities?: Record<string, number>; // facility id → maintenance $ this round
   mothball_facilities?: string[]; // facility ids to take offline (stop fixed cost + capacity)
   reactivate_facilities?: string[]; // mothballed facility ids to bring back online
+  divest_facilities?: string[]; // facility ids to sell/demolish — frees the lot (back to the lease pool) and recovers partial book value
   // MOD-B12 employees
   hire_employees?: string[]; // candidate ids (from this round's market) to hire
   fire_employees?: string[]; // employee ids to let go this round

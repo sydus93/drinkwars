@@ -159,11 +159,18 @@ export const defaultModules: ModulesConfig = {
   facilities: {
     enabled: false,
     max_facilities: 24, // generous (was 4 — far too tight once you operate across regions); 0 = unlimited
+    salvage_fraction: 0.5, // divest a facility ⇒ recover 50% of build cost × condition, and the lot returns to the lease pool
+    // Producer/retail SPECTRUM. production_capacity = tanks (brews → a shipping origin, bears regional
+    // production shocks); retail_draw = local demand/brand pull + catchment weight (foot traffic, the
+    // thing crowding acts on). Production brewery = pure producer; bottle shop = pure retail; nano,
+    // brewpub, taproom mix. So a Shanghai taproom no longer counts as a full Shanghai production base.
     types: [
-      { id: "brewery_small", label: "Nano brewery", capacity_contribution: 120, base_cost: 220, fixed_cost: 14, build_rounds: 1, condition_decay: 0.06, maintenance_effect: 0.004 },
-      { id: "brewery_large", label: "Production brewery", capacity_contribution: 320, base_cost: 520, fixed_cost: 30, build_rounds: 2, condition_decay: 0.05, maintenance_effect: 0.0025 },
-      { id: "taproom", label: "Taproom", capacity_contribution: 40, base_cost: 180, fixed_cost: 12, build_rounds: 1, condition_decay: 0.07, maintenance_effect: 0.005 },
-      { id: "canning_line", label: "Canning line", capacity_contribution: 160, base_cost: 300, fixed_cost: 16, build_rounds: 1, condition_decay: 0.06, maintenance_effect: 0.004 },
+      { id: "brewery_large", label: "Production brewery", production_capacity: 320, retail_draw: 0, base_cost: 520, fixed_cost: 30, build_rounds: 2, condition_decay: 0.05, maintenance_effect: 0.0025 },
+      { id: "canning_line", label: "Canning line", production_capacity: 160, retail_draw: 0, base_cost: 300, fixed_cost: 16, build_rounds: 1, condition_decay: 0.06, maintenance_effect: 0.004 },
+      { id: "brewery_small", label: "Nano brewery", production_capacity: 120, retail_draw: 10, base_cost: 220, fixed_cost: 14, build_rounds: 1, condition_decay: 0.06, maintenance_effect: 0.004 },
+      { id: "brewpub", label: "Brewpub", production_capacity: 90, retail_draw: 26, base_cost: 240, fixed_cost: 15, build_rounds: 1, condition_decay: 0.06, maintenance_effect: 0.0045 },
+      { id: "taproom", label: "Taproom", production_capacity: 28, retail_draw: 40, base_cost: 180, fixed_cost: 12, build_rounds: 1, condition_decay: 0.07, maintenance_effect: 0.005 },
+      { id: "bottle_shop", label: "Bottle shop", production_capacity: 0, retail_draw: 30, base_cost: 120, fixed_cost: 9, build_rounds: 0, condition_decay: 0.06, maintenance_effect: 0.005 },
     ],
     // Each district is a real siting tradeoff (rent × capacity × brand draw), not flavor.
     // Downtown: pricey + cramped, but huge brand visibility (a taproom play). Riverside:

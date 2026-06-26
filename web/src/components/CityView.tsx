@@ -459,6 +459,10 @@ export function CityView({ view, actions, setActions, onInspect }: { view: GameV
     const t = typeOf(type); const amt = t ? Math.round(t.condition_decay / Math.max(t.maintenance_effect, 1e-6)) : 12;
     setActions((a) => { const m = { ...a.maintain }; if (m[id]) delete m[id]; else m[id] = amt; return { ...a, maintain: m }; });
   };
+  const toggleDivest = (id: string) => {
+    const fac = sel.mine.find((f) => f.id === id); if (!fac || fac.pending) return;
+    setActions((a) => { const dv = new Set(a.divests); if (dv.has(id)) dv.delete(id); else dv.add(id); return { ...a, divests: [...dv] }; });
+  };
 
   const presence = marketPresenceFrom(view, actions.markets);
   const selSites = sel.mine.length;
@@ -706,9 +710,9 @@ export function CityView({ view, actions, setActions, onInspect }: { view: GameV
                             <span className="font-mono text-xs font-bold" style={{ color: !allowed ? "var(--color-inksoft)" : canAfford ? "var(--color-ink)" : "var(--color-brick)" }}>{fmt.money(t.base_cost)}</span>
                           </div>
                           <div className="mt-2 flex gap-3.5 pl-[35px] text-[0.7rem] text-inksoft">
-                            <span>Output <b className="font-mono text-hop">+{fmt.int(t.capacity_contribution * d.out)}</b></span>
+                            <span>Output <b className="font-mono text-hop">+{fmt.int((t.production_capacity ?? t.capacity_contribution ?? 0) * d.out)}</b></span>
+                            <span>Retail <b className="font-mono" style={{ color: (t.retail_draw ?? 0) > 0 ? "var(--color-aero)" : "var(--color-inksoft)" }}>{(t.retail_draw ?? 0) > 0 ? `+${fmt.int(t.retail_draw ?? 0)}` : "—"}</b></span>
                             <span>Fixed <b className="font-mono text-ink">{fmt.money(t.fixed_cost * d.rent)}</b>/rd</span>
-                            <span>Brand <b className="font-mono text-aero">{d.brand > 0 ? `+${d.brand}` : "—"}</b></span>
                           </div>
                           <div className="mt-1.5 pl-[35px] text-[0.66rem]" style={{ color: allowed ? "var(--color-inksoft)" : "var(--color-brick)" }}>{allowed ? FAC_NOTE[t.id] ?? "" : `✕ Not permitted in ${z.zone} zone`}</div>
                         </button>
@@ -771,19 +775,26 @@ export function CityView({ view, actions, setActions, onInspect }: { view: GameV
                   </div>
                   <button onClick={() => setFacPop(null)} className="border-none bg-none text-base text-inksoft">✕</button>
                 </div>
-                <div className="mt-3.5 grid grid-cols-2 gap-2.5">
-                  <div className="rounded-lg border border-line bg-panel2 p-2.5"><div className="text-[0.62rem] text-inksoft">Output</div><div className="font-mono text-base font-bold text-ink">+{f.active ? fmt.int(t.capacity_contribution * ec.out) : "0"}</div></div>
+                <div className="mt-3.5 grid grid-cols-3 gap-2">
+                  <div className="rounded-lg border border-line bg-panel2 p-2.5"><div className="text-[0.62rem] text-inksoft">Output</div><div className="font-mono text-base font-bold text-ink">+{f.active ? fmt.int((t.production_capacity ?? t.capacity_contribution ?? 0) * ec.out) : "0"}</div></div>
+                  <div className="rounded-lg border border-line bg-panel2 p-2.5"><div className="text-[0.62rem] text-inksoft">Retail</div><div className="font-mono text-base font-bold" style={{ color: (t.retail_draw ?? 0) > 0 ? "var(--color-aero)" : "var(--color-inksoft)" }}>{(t.retail_draw ?? 0) > 0 ? `+${fmt.int(t.retail_draw ?? 0)}` : "—"}</div></div>
                   <div className="rounded-lg border border-line bg-panel2 p-2.5"><div className="text-[0.62rem] text-inksoft">Fixed/rd</div><div className="font-mono text-base font-bold text-ink">{f.active ? fmt.money(t.fixed_cost * ec.rent) : "—"}</div></div>
                 </div>
-                <div className="mt-2.5 text-xs text-inksoft">{FAC_NOTE[f.type] ?? ""}{ec.brand > 0 ? ` Adds +${ec.brand} brand/round while online here.` : ""}</div>
+                <div className="mt-2.5 text-xs text-inksoft">{FAC_NOTE[f.type] ?? ""}{(t.retail_draw ?? 0) > 0 && ec.brand > 0 ? ` Draws +${(Math.min(1.5, (t.retail_draw ?? 0) / 40) * ec.brand).toFixed(1)} brand/round (retail foot traffic) while online here.` : (t.production_capacity ?? t.capacity_contribution ?? 0) > 0 && (t.retail_draw ?? 0) === 0 ? " Back-of-house production — no brand draw, but a local shipping origin." : ""}</div>
                 {f.pending ? (
                   <div className="mt-3.5 rounded-md border border-line bg-panel2 px-3 py-2 text-center font-mono text-[0.62rem] uppercase tracking-wide text-inksoft">Breaking ground this round</div>
-                ) : (
+                ) : (() => {
+                  const divesting = actions.divests.includes(f.id);
+                  const cond = view.own.facilities?.find((x) => x.id === f.id)?.condition ?? 1;
+                  const salvage = Math.round((view.modules?.facilities?.salvage_fraction ?? 0.5) * t.base_cost * (0.5 + 0.5 * cond));
+                  return (
                   <div className="mt-3.5 grid gap-1.5">
-                    <button onClick={() => toggleFac(f.id)} className="w-full rounded-md border border-line2 bg-panel2 px-2 py-2 font-mono text-[0.62rem] uppercase tracking-wide text-inksoft">{f.active ? "Mothball (stop cost & output)" : "Reactivate"}</button>
-                    {f.active && <button onClick={() => toggleMaintain(f.id, f.type)} className="w-full rounded-md border px-2 py-2 font-mono text-[0.62rem] uppercase tracking-wide" style={{ borderColor: maintaining ? "var(--color-hop)" : "var(--color-line2)", background: maintaining ? "color-mix(in srgb, var(--color-hop) 12%, var(--color-panel))" : "var(--color-panel2)", color: maintaining ? "var(--color-hop)" : "var(--color-inksoft)" }}>{maintaining ? "✓ Keeping in repair" : "Keep in repair (upkeep)"}</button>}
+                    {divesting && <div className="rounded-md border px-3 py-2 text-center font-mono text-[0.6rem] uppercase tracking-wide" style={{ borderColor: "var(--color-brick)", color: "var(--color-brick)", background: "color-mix(in srgb, var(--color-brick) 10%, var(--color-panel))" }}>Selling this round — recovers ~{fmt.money(salvage)}, frees the lot</div>}
+                    {!divesting && <button onClick={() => toggleFac(f.id)} className="w-full rounded-md border border-line2 bg-panel2 px-2 py-2 font-mono text-[0.62rem] uppercase tracking-wide text-inksoft">{f.active ? "Mothball (stop cost & output)" : "Reactivate"}</button>}
+                    {f.active && !divesting && <button onClick={() => toggleMaintain(f.id, f.type)} className="w-full rounded-md border px-2 py-2 font-mono text-[0.62rem] uppercase tracking-wide" style={{ borderColor: maintaining ? "var(--color-hop)" : "var(--color-line2)", background: maintaining ? "color-mix(in srgb, var(--color-hop) 12%, var(--color-panel))" : "var(--color-panel2)", color: maintaining ? "var(--color-hop)" : "var(--color-inksoft)" }}>{maintaining ? "✓ Keeping in repair" : "Keep in repair (upkeep)"}</button>}
+                    <button onClick={() => toggleDivest(f.id)} className="w-full rounded-md border px-2 py-2 font-mono text-[0.62rem] uppercase tracking-wide" style={{ borderColor: divesting ? "var(--color-line2)" : "var(--color-brick)", color: divesting ? "var(--color-inksoft)" : "var(--color-brick)", background: divesting ? "var(--color-panel2)" : "color-mix(in srgb, var(--color-brick) 6%, var(--color-panel))" }}>{divesting ? "Cancel sale" : "Divest (sell & free the lot)"}</button>
                   </div>
-                )}
+                  ); })()}
               </div>
             </div>
           </div>

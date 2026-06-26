@@ -526,7 +526,7 @@ export function DecisionForm({
                   const online = view.round >= fac.online_round;
                   const condPct = Math.round(fac.condition * 100);
                   const condTone = fac.condition > 0.6 ? "var(--color-hop)" : fac.condition > 0.35 ? "var(--color-gold)" : "var(--color-brick)";
-                  const liveCap = t ? Math.round(t.capacity_contribution * (0.5 + 0.5 * fac.condition)) : 0;
+                  const liveCap = t ? Math.round((t.production_capacity ?? t.capacity_contribution ?? 0) * (0.5 + 0.5 * fac.condition)) : 0;
                   return (
                     <div key={fac.id} className={`rounded-md border p-2.5 ${active ? "border-line2 bg-paper2/30" : "border-line bg-paper2/10 opacity-70"}`}>
                       <div className="flex items-center gap-2">
@@ -593,7 +593,7 @@ export function DecisionForm({
                     <button key={t.id} type="button" onClick={() => addBuild(t.id)} disabled={cash < t.base_cost}
                       className="flex items-center gap-2 rounded-md border border-line p-2 text-left transition-colors hover:border-copper disabled:cursor-not-allowed disabled:opacity-40">
                       <span className="text-sm font-semibold text-ink">{t.label}</span>
-                      <span className="text-[0.64rem] text-inksoft">+{fmt.int(t.capacity_contribution)} tanks · {t.build_rounds}r · {fmt.money(t.fixed_cost)}/rd</span>
+                      <span className="text-[0.64rem] text-inksoft">+{fmt.int(t.production_capacity ?? t.capacity_contribution ?? 0)} tanks{(t.retail_draw ?? 0) > 0 ? ` · +${fmt.int(t.retail_draw ?? 0)} retail` : ""} · {t.build_rounds}r · {fmt.money(t.fixed_cost)}/rd</span>
                       <span className="tnum ml-auto text-[0.72rem] text-copperdeep">{fmt.money(t.base_cost)}</span>
                     </button>
                   ))}

@@ -440,7 +440,7 @@ export class SinglePlayerGame {
         debt_draw: 0, debt_repay: 0, equity_raise: 0, dividend: 0,
         buy_info: false, agreement_actions: [], exit_action: null,
         // Facility + employee actions are one-shot — clear them so a build/hire doesn't re-fire every round.
-        build_facilities: [], maintain_facilities: {}, mothball_facilities: [], reactivate_facilities: [],
+        build_facilities: [], maintain_facilities: {}, mothball_facilities: [], reactivate_facilities: [], divest_facilities: [],
         hire_employees: [], fire_employees: [], raise_employees: {}, poach_employees: [],
         beliefs: {}, reflection: "",
       };

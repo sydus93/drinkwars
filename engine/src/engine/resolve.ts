@@ -370,6 +370,7 @@ export function resolveRound(prevWorld: WorldState, decisionList: FirmDecision[]
       cashHit: shock.perFirm.get(f.id)?.cash_hit ?? 0,
       spreadReduction: reputationSpread(f, c),
       regBurdenReduction: verticalRegRelief(f, c, round),
+      disposalProceeds: facRes.salvageByFirm.get(f.id) ?? 0, // MOD-B11 divest proceeds (book-neutral)
       round,
       instruments: { draw_convertible: nn(d.draw_convertible ?? 0), draw_rbf: nn(d.draw_rbf ?? 0) },
       config: c,

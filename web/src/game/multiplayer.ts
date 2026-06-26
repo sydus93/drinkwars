@@ -182,7 +182,7 @@ export class StudentClient {
         pr_action: null, invest_water_efficiency: 0, public_good_contributions: {},
         invest_rnd: 0, buy_vertical: [], hire_roles: [], fire_roles: [],
         draw_convertible: 0, draw_rbf: 0, acquisition_bid: null,
-        build_facilities: [], maintain_facilities: {}, mothball_facilities: [], reactivate_facilities: [],
+        build_facilities: [], maintain_facilities: {}, mothball_facilities: [], reactivate_facilities: [], divest_facilities: [],
         hire_employees: [], fire_employees: [], raise_employees: {}, poach_employees: [],
       };
     }

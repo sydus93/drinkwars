@@ -15,6 +15,7 @@
 import type { Config, FirmDecision, FirmId, FirmState, MarketConfig, SegmentId, SegmentResult, WorldState } from "../types.js";
 import { RNG, deriveSeed } from "../rng.js";
 import { resolveArena, type Arena, type DemandModifiers } from "./demand.js";
+import { prodCapOf, retailOf } from "./facilities.js";
 
 export interface GeoOutcome {
   perFirm: Map<FirmId, Record<SegmentId, SegmentResult>>; // aggregated across markets (by segment)
@@ -72,16 +73,20 @@ function locUtilForMarket(market: MarketConfig, activeFirms: FirmState[], c: Con
   const cat = c.modules?.facilities?.catchment;
   if (!c.modules?.facilities?.enabled || !cat || !market.lots?.length) return out;
   const coordOf = new Map(market.lots.map((L) => [L.id, L] as const));
-  const typeCap = (id: string) => c.modules?.facilities?.types.find((t) => t.id === id)?.capacity_contribution ?? 0;
-  // Every online, active, lot-placed facility operating in this market.
+  const typeRetail = (id: string) => { const t = c.modules?.facilities?.types.find((x) => x.id === id); return t ? retailOf(t) : 0; };
+  // Crowding is a RETAIL phenomenon — taprooms/shops competing for the same drinkers. Only retail
+  // sites participate (a back-of-house production brewery neither draws foot traffic nor crowds it),
+  // each weighted by its retail intensity. A pure-producer firm has no retail sites → no location term.
   const sites: { firmId: FirmId; x: number; y: number; cap: number }[] = [];
   for (const f of activeFirms) {
     for (const fac of f.facilities ?? []) {
       if (!fac.active || round < fac.online_round) continue;
       if ((fac.market_id ?? "home") !== market.id) continue;
+      const retail = typeRetail(fac.type);
+      if (retail <= 0) continue; // non-retail (pure production) facilities don't draw or crowd
       const L = fac.lot_id ? coordOf.get(fac.lot_id) : undefined;
       if (!L) continue; // legacy/un-sited facilities have no position → no catchment effect
-      sites.push({ firmId: f.id, x: L.x, y: L.y, cap: typeCap(fac.type) });
+      sites.push({ firmId: f.id, x: L.x, y: L.y, cap: retail });
     }
   }
   if (!sites.length) return out;
@@ -168,26 +173,43 @@ export function resolveGeography(
     fracByFirm.set(f.id, frac);
   }
 
-  // Phase 3 trade: where each firm PRODUCES (markets with an online active facility) — used to
-  // price shipping to where it SELLS. Home counts as a production base (your original brewery).
-  const facMarketsByFirm = new Map<FirmId, Set<string>>();
+  // Phase 3 trade. A market is a PRODUCTION BASE (a shipping origin) only where the firm has online
+  // PRODUCER capacity — a taproom that brews a little produces a little, not a full base; a retail-only
+  // outpost (bottle shop) is no base at all. Home is always a base (the original cap stock). Shipping
+  // is priced on the SHORTFALL only: units sold in a market beyond what's produced locally there, moved
+  // from the nearest other base. So a small local producer cuts (not zeros) the bill, and the
+  // taproom-in-Shanghai bug — where any facility zeroed all shipping to a region — is gone.
+  const condF = (cond: number) => 0.5 + 0.5 * Math.max(0, Math.min(1, cond));
+  const capMultOf = (loc?: string) => c.modules?.facilities?.districts?.find((d) => d.id === loc)?.capacity_mult ?? 1;
+  const typeProd = (id: string) => { const t = c.modules?.facilities?.types.find((x) => x.id === id); return t ? prodCapOf(t) : 0; };
+  const localProd = new Map<FirmId, Map<string, number>>(); // (firm → market → online producer capacity there)
+  const baseMarkets = new Map<FirmId, Set<string>>(); // markets the firm can ship FROM
   for (const f of activeFirms) {
-    const set = new Set<string>(["home"]);
+    const byMk = new Map<string, number>([["home", f.cap]]); // the base cap stock sits at home
+    const bases = new Set<string>(["home"]);
     for (const fac of f.facilities ?? []) {
-      if (fac.active && world.round >= fac.online_round) set.add(fac.market_id ?? "home");
+      if (!fac.active || world.round < fac.online_round) continue;
+      const p = typeProd(fac.type) * condF(fac.condition) * capMultOf(fac.location_id);
+      if (p <= 0) continue; // retail-only facility: not a production base
+      const mk = fac.market_id ?? "home";
+      byMk.set(mk, (byMk.get(mk) ?? 0) + p);
+      bases.add(mk);
     }
-    facMarketsByFirm.set(f.id, set);
+    localProd.set(f.id, byMk);
+    baseMarkets.set(f.id, bases);
   }
   const geoOf = (id: string) => markets.find((mm) => mm.id === id)?.geo;
   const geoDist = (a?: [number, number], b?: [number, number]) => (a && b ? Math.hypot(a[0] - b[0], a[1] - b[1]) : 0);
   const shipRate = c.modules?.geography?.shipping?.rate_per_unit_distance ?? 0;
-  // Min shipping distance to market m from any of the firm's production bases (0 if it produces in m).
-  const shipDistTo = (firmId: FirmId, m: MarketConfig): number => {
-    const bases = facMarketsByFirm.get(firmId);
-    if (!bases || bases.has(m.id)) return 0;
+  // Shipping cost to serve `soldInM` units in market m: only the shortfall beyond local production,
+  // priced per unit × distance from the nearest OTHER base.
+  const shipCostTo = (firmId: FirmId, m: MarketConfig, soldInM: number): number => {
+    if (shipRate <= 0 || soldInM <= 0) return 0;
+    const shortfall = Math.max(0, soldInM - (localProd.get(firmId)?.get(m.id) ?? 0));
+    if (shortfall <= 0) return 0;
     let best = Infinity;
-    for (const b of bases) best = Math.min(best, geoDist(geoOf(b), m.geo));
-    return Number.isFinite(best) ? best : 0;
+    for (const b of baseMarkets.get(firmId) ?? []) { if (b === m.id) continue; const dd = geoDist(geoOf(b), m.geo); if (dd < best) best = dd; }
+    return shipRate * shortfall * (Number.isFinite(best) ? best : 0);
   };
 
   // Solve each market and aggregate.
@@ -229,8 +251,8 @@ export function resolveGeography(
       const mRevenue = mRevenueLocal * fx; // FX conversion (home markets fx = 1)
       const tariff = m.tariff_rate * mRevenue;
       const distribution = m.distribution_cost_per_unit * mQ;
-      // Phase 3: ship from the nearest production base to this market (0 if produced locally).
-      const shipping = shipRate * mQ * shipDistTo(f.id, m);
+      // Phase 3: ship only the shortfall not produced locally, from the nearest other base.
+      const shipping = shipCostTo(f.id, m, mQ);
       out.revenueByFirm.set(f.id, (out.revenueByFirm.get(f.id) ?? 0) + mRevenue);
       out.qSoldByFirm.set(f.id, (out.qSoldByFirm.get(f.id) ?? 0) + mQ);
       out.distCostByFirm.set(f.id, (out.distCostByFirm.get(f.id) ?? 0) + tariff + distribution + shipping);

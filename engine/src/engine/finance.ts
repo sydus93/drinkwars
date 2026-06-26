@@ -32,6 +32,7 @@ export interface FinanceInputs {
   inventoryValueEnd?: number; // $ cost basis carried forward
   spreadReduction?: number; // MOD-B10: reputation lowers the endogenous debt spread
   regBurdenReduction?: number; // MOD-B06: integrated distribution relieves regulatory opex
+  disposalProceeds?: number; // MOD-B11 divest: cash from selling a facility — a book-neutral PP&E reduction (cash in = PP&E out)
   round?: number; // current round (needed by MOD-B08 instrument terms)
   instruments?: { draw_convertible: number; draw_rbf: number }; // MOD-B08 draws this round
   config: Config;
@@ -154,6 +155,14 @@ export function buildStatements(input: FinanceInputs): FinanceOutput {
   const depreciation = c.capacity.depreciation * ppeBegin;
   const ebit = gross - opex - spoilage - depreciation;
 
+  // --- Facility disposal (MOD-B11 divest) — book-neutral: cash in == PP&E out, no P&L gain/loss.
+  // Clamped to the PP&E available after this round's capex and depreciation so book can't go negative
+  // (and the proceeds clamp with it, keeping the swap exactly matched → invariants hold). ---
+  const disposal = Math.min(
+    Math.max(0, input.disposalProceeds ?? 0),
+    Math.max(0, ppeBegin + Math.max(0, input.invest.cap) - depreciation),
+  );
+
   // --- Endogenous cost of capital (§7.4) — leverage counts ALL debt-like balances ---
   const instrDebtNow = (conv?.principal ?? 0) + rbfPrin;
   const leverage = (debtEff + instrDebtNow) / Math.max(equityAfter, EPS);
@@ -177,7 +186,7 @@ export function buildStatements(input: FinanceInputs): FinanceOutput {
 
   // --- Convertible maturity (MOD-B08): repay if the cash is there, else convert ---
   const cashPreMaturity =
-    cashBegin + (netIncome + depreciation - deltaInventory) - Math.max(0, input.invest.cap) +
+    cashBegin + (netIncome + depreciation - deltaInventory) - Math.max(0, input.invest.cap) + disposal +
     (draw - repay + equityNet) + convDraw + rbfDraw - rbfPrinPaid;
   if (fiOn && conv && convDraw === 0 && round >= conv.drawn_round + fi.convertible.term) {
     if (cashPreMaturity >= conv.principal) {
@@ -196,7 +205,7 @@ export function buildStatements(input: FinanceInputs): FinanceOutput {
 
   // --- Cash flow (operating subtracts ΔInventory; = 0 in legacy mode) ---
   const operating = netIncome + depreciation - deltaInventory;
-  const investing = -Math.max(0, input.invest.cap);
+  const investing = -Math.max(0, input.invest.cap) + disposal; // capex out, divest proceeds in
   const financing = draw - repay + equityNet - dividend + convDraw + rbfDraw - rbfPrinPaid - convRepaid;
   const cashHit = Math.max(0, input.cashHit);
   const deltaCash = operating + investing + financing - cashHit;
@@ -210,7 +219,7 @@ export function buildStatements(input: FinanceInputs): FinanceOutput {
   // The shock cash hit is an extraordinary loss → flows through retained earnings
   // so the balance sheet stays balanced (Assets fell by cashHit; Equity must too).
   const retainedNext = retainedBegin + netIncome - dividend - cashHit;
-  const ppeNext = ppeBegin + Math.max(0, input.invest.cap) - depreciation;
+  const ppeNext = ppeBegin + Math.max(0, input.invest.cap) - depreciation - disposal; // disposal removes book = proceeds
 
   const assets = cashNext + ppeNext + invEnd;
   const equity = paidNext + retainedNext;

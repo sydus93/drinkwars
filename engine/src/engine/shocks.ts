@@ -7,6 +7,7 @@
 import type { Config, FirmId, FirmState, ScheduledShock, ShockEffect, SegmentId, WorldState } from "../types.js";
 import { RNG, deriveSeed } from "../rng.js";
 import { waterEfficiencyMitigation } from "./sustainability.js";
+import { prodCapOf } from "./facilities.js";
 
 /** Resilience mitigation fraction for a firm (process capability + T_emp), capped. */
 export function resilienceMitigation(firm: FirmState, c: Config): number {
@@ -21,7 +22,9 @@ export function resilienceMitigation(firm: FirmState, c: Config): number {
  *  in the struck region takes the hit; one that produces elsewhere is spared. */
 function regionExposure(f: FirmState, c: Config, region: string, round: number): number {
   const facCfg = c.modules?.facilities;
-  const typeCap = (id: string) => facCfg?.types.find((t) => t.id === id)?.capacity_contribution ?? 0;
+  // Production exposure: only producer capacity bears regional production shocks (a drought hits
+  // brewing, not a back-of-house bottle shop). retail-only facilities contribute 0.
+  const typeCap = (id: string) => { const t = facCfg?.types.find((x) => x.id === id); return t ? prodCapOf(t) : 0; };
   const capMult = (loc?: string) => facCfg?.districts?.find((d) => d.id === loc)?.capacity_mult ?? 1;
   const condF = (cond: number) => 0.5 + 0.5 * Math.max(0, Math.min(1, cond));
   let inRegion = region === "home" ? f.cap : 0;

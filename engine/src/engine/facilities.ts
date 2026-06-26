@@ -20,8 +20,17 @@ export interface FacilitiesOutcome {
   capexByFirm: Map<FirmId, number>; // builds (capitalized into PP&E)
   opexByFirm: Map<FirmId, number>; // fixed cost + maintenance (expensed)
   brandByFirm: Map<FirmId, number>; // district brand draw (added to the B stock this round)
+  salvageByFirm: Map<FirmId, number>; // divest proceeds (cash in, book-neutral PP&E reduction)
   events: string[];
 }
+
+/** Producer/retail spectrum accessors. production_capacity is the tank capacity (producer role);
+ *  retail_draw is the local demand/brand pull + catchment weight (retail role). capacity_contribution
+ *  is the deprecated single-scalar field, read as a production_capacity fallback for legacy overrides. */
+export const prodCapOf = (t: FacilityTypeConfig): number => t.production_capacity ?? t.capacity_contribution ?? 0;
+export const retailOf = (t: FacilityTypeConfig): number => t.retail_draw ?? 0;
+/** Reference retail intensity (a taproom): brand draw + catchment weight scale relative to this. */
+export const RETAIL_REF = 40;
 
 const typeOf = (c: Config, id: string): FacilityTypeConfig | undefined =>
   c.modules?.facilities?.types.find((t) => t.id === id);
@@ -47,15 +56,16 @@ export function facilityCapacity(f: FirmState, c: Config, round: number): number
   for (const fac of f.facilities ?? []) {
     if (!fac.active || round < fac.online_round) continue;
     const t = typeOf(c, fac.type);
-    if (t) cap += t.capacity_contribution * conditionFactor(fac.condition) * capacityMult(c, fac.location_id);
+    if (t) cap += prodCapOf(t) * conditionFactor(fac.condition) * capacityMult(c, fac.location_id);
   }
   return cap;
 }
 
 export function resolveFacilities(world: WorldState, decisions: Map<FirmId, FirmDecision>, c: Config, round: number): FacilitiesOutcome {
-  const out: FacilitiesOutcome = { capexByFirm: new Map(), opexByFirm: new Map(), brandByFirm: new Map(), events: [] };
+  const out: FacilitiesOutcome = { capexByFirm: new Map(), opexByFirm: new Map(), brandByFirm: new Map(), salvageByFirm: new Map(), events: [] };
   const cfg = c.modules?.facilities;
   if (!cfg?.enabled) return out;
+  const salvageFrac = Math.max(0, cfg.salvage_fraction ?? 0.5);
 
   // Phase 2 spatial siting: a lot (parcel) holds at most one facility. Seed occupancy from
   // existing facilities, then claim lots as we build this round so two can't share a parcel.
@@ -71,6 +81,22 @@ export function resolveFacilities(world: WorldState, decisions: Map<FirmId, Firm
     let capex = 0;
     let opex = 0;
     let brand = 0;
+    let salvage = 0;
+
+    // ---- Divest (sell/demolish) — processed BEFORE build so the freed lot is available the
+    // same round (a relocate = divest + build elsewhere). Recovers salvage_fraction × build cost
+    // × condition in cash (book-neutral PP&E reduction handled in finance), and frees the parcel. ----
+    for (const id of d?.divest_facilities ?? []) {
+      const idx = f.facilities.findIndex((x) => x.id === id);
+      if (idx < 0) continue;
+      const fac = f.facilities[idx];
+      const t = typeOf(c, fac.type);
+      const proceeds = t ? Math.round(salvageFrac * t.base_cost * conditionFactor(fac.condition)) : 0;
+      salvage += proceeds;
+      if (fac.lot_id) occupied.get(fac.market_id ?? "home")?.delete(fac.lot_id); // return the parcel to the lease pool
+      f.facilities.splice(idx, 1);
+      out.events.push(`FACILITY DIVESTED: ${f.id} sells off ${(fac.name || t?.label || "a facility").toLowerCase()}${proceeds > 0 ? ` (recovers ${proceeds})` : ""}`);
+    }
 
     // ---- Build (capitalized; comes online after build_rounds) ----
     for (const b of d?.build_facilities ?? []) {
@@ -133,14 +159,19 @@ export function resolveFacilities(world: WorldState, decisions: Map<FirmId, Firm
       opex += spend;
       // Condition: decays by the type rate, restored by maintenance; clamped to [0,1].
       fac.condition = Math.max(0, Math.min(1, fac.condition - t.condition_decay + spend * t.maintenance_effect));
-      // District brand draw (foot traffic + visibility): only once the facility is online,
-      // scaled by condition so a derelict storefront pulls less.
-      if (round >= fac.online_round) brand += (districtOf(c, fac.location_id)?.brand_boost ?? 0) * conditionFactor(fac.condition);
+      // District brand draw (foot traffic + visibility): only once online, scaled by condition AND
+      // by the facility's RETAIL intensity — a downtown taproom draws full brand, a back-of-house
+      // production brewery downtown draws none (brand is a retail phenomenon, not a brewing one).
+      if (round >= fac.online_round) {
+        const retailFactor = Math.min(1.5, retailOf(t) / RETAIL_REF);
+        brand += (districtOf(c, fac.location_id)?.brand_boost ?? 0) * retailFactor * conditionFactor(fac.condition);
+      }
     }
 
     if (capex > 0) out.capexByFirm.set(f.id, capex);
     if (opex > 0) out.opexByFirm.set(f.id, opex);
     if (brand > 0) out.brandByFirm.set(f.id, brand);
+    if (salvage > 0) out.salvageByFirm.set(f.id, salvage);
   }
   return out;
 }

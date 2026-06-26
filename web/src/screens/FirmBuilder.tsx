@@ -186,7 +186,7 @@ export function FirmBuilder({ onStart, busy }: { onStart: (c: FoundingChoices) =
                               className={`flex items-center gap-2 rounded-md border p-2.5 text-left transition-colors disabled:opacity-40 ${on ? "border-copper bg-copper/[0.06]" : "border-line hover:border-copper"}`}>
                               <div className="min-w-0 flex-1">
                                 <div className="text-sm font-semibold text-ink">{t.label}</div>
-                                <div className="text-[0.64rem] text-inksoft">+{fmt.int(t.capacity_contribution)} tanks · {fmt.money(t.fixed_cost)}/rd</div>
+                                <div className="text-[0.64rem] text-inksoft">+{fmt.int(t.production_capacity ?? t.capacity_contribution ?? 0)} tanks{(t.retail_draw ?? 0) > 0 ? ` · +${fmt.int(t.retail_draw ?? 0)} retail` : ""} · {fmt.money(t.fixed_cost)}/rd</div>
                               </div>
                               <span className="tnum shrink-0 text-[0.72rem] text-copperdeep">{fmt.money(t.base_cost)}</span>
                               <span className="shrink-0 text-[0.7rem] font-semibold text-copperdeep">{on ? "✓" : "+"}</span>

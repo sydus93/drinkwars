@@ -20,6 +20,7 @@ export interface CityActions {
   builds: CityBuildOrder[]; // facilities queued this round
   mothballs: string[]; // facility ids to mothball
   reactivations: string[]; // facility ids to reactivate
+  divests: string[]; // facility ids to sell/demolish (frees the lot, recovers partial book value)
   maintain: Record<string, number>; // facility id → maintenance $ this round
 }
 
@@ -29,6 +30,7 @@ export const emptyCityActions = (view: GameView): CityActions => ({
   builds: [],
   mothballs: [],
   reactivations: [],
+  divests: [],
   maintain: {},
 });
 
@@ -43,7 +45,7 @@ export function capacityInMarket(view: GameView, marketId: string): number {
     if (!f.active || view.round < f.online_round) continue;
     if ((f.market_id ?? "home") !== marketId) continue;
     const t = types.find((x) => x.id === f.type);
-    if (t) cap += t.capacity_contribution * capMult(f.location_id) * (f.condition ?? 1);
+    if (t) cap += (t.production_capacity ?? t.capacity_contribution ?? 0) * capMult(f.location_id) * (f.condition ?? 1);
   }
   return cap;
 }
@@ -67,6 +69,7 @@ export function mergeDecision(
     market_presence: marketPresenceFrom(view, cityActions.markets),
     mothball_facilities: [...(base.mothball_facilities ?? []), ...cityActions.mothballs],
     reactivate_facilities: [...(base.reactivate_facilities ?? []), ...cityActions.reactivations],
+    divest_facilities: [...(base.divest_facilities ?? []), ...cityActions.divests],
     maintain_facilities: { ...(base.maintain_facilities ?? {}), ...cityActions.maintain },
   };
 }
