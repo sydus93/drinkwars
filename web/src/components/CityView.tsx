@@ -18,6 +18,7 @@ import type { CityActions } from "../game/cityActions.js";
 import { capacityInMarket, marketPresenceFrom } from "../game/cityActions.js";
 import { SEG_LABEL, SEG_CHARACTER, DISTRICT_BEST, MARKET_META, ZONE_OF, ZONE_TONE, FAC_TAG, FAC_NOTE, fmt } from "../labels.js";
 import { firmColor } from "../lib/teamColors.js";
+import { FacilityChip, flowBadge } from "./FacilityGlyph.js";
 import { WORLD_LAND_PATH } from "./worldland.js";
 
 // ───────────────────────── constants (Tap House hexes for canvas drawing) ─────────────────────────
@@ -198,7 +199,8 @@ function cityPlan(c: CityModel): Plan {
 
 const pct = (cx: number, cy: number, h: number, layer: string) => {
   const [X, Y] = isoXY(cx, cy);
-  return { l: (X / 1000) * 100, t: ((Y + ISO.TH - (layer === "map" ? h || 0 : 4) - 14) / 680) * 100 };
+  const raised = layer === "map" || layer === "trade"; // trade reuses the 3-D base
+  return { l: (X / 1000) * 100, t: ((Y + ISO.TH - (raised ? h || 0 : 4) - 14) / 680) * 100 };
 };
 
 // ───────────────────────── isometric city canvas ─────────────────────────
@@ -397,13 +399,14 @@ export function CityView({ view, actions, setActions, onInspect }: { view: GameV
   const typeOf = (id: string) => facTypes.find((t) => t.id === id);
 
   const [selId, setSelId] = useState<string>(() => cities.find((c) => c.entered)?.id ?? cities[0]?.id ?? "home");
-  const [layer, setLayer] = useState<"map" | "traffic" | "zoning">("map");
+  const [layer, setLayer] = useState<"map" | "traffic" | "zoning" | "trade">("map");
   const [hoverSeg, setHoverSeg] = useState<string | null>(null);
   const [hoverFac, setHoverFac] = useState<string | null>(null);
   const [siting, setSiting] = useState<{ lot: string | null; district: string | null; type: string | null } | null>(null);
   const [entering, setEntering] = useState<string | null>(null);
   const [facPop, setFacPop] = useState<string | null>(null);
   const [globeOpen, setGlobeOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   const sel = cities.find((c) => c.id === selId) ?? cities[0];
   const plan = useMemo(() => (sel ? cityPlan(sel) : null), [sel?.id, sel?.mine.map((f) => f.id + f.lot + f.district + f.active).join(","), sel?.rivals.map((r) => r.firmId + r.lot).join(","), sel?.lots.map((L) => L.id + L.unlocked + L.occupant).join(",")]);
@@ -411,7 +414,7 @@ export function CityView({ view, actions, setActions, onInspect }: { view: GameV
 
   useEffect(() => {
     if (!plan || !canvasRef.current) return;
-    const draw = () => { if (canvasRef.current && plan) try { drawCity(canvasRef.current, plan, layer); } catch { /* ignore */ } };
+    const draw = () => { if (canvasRef.current && plan) try { drawCity(canvasRef.current, plan, layer === "trade" ? "map" : layer); } catch { /* ignore */ } };
     const id = window.setTimeout(draw, 0);
     window.addEventListener("resize", draw);
     return () => { clearTimeout(id); window.removeEventListener("resize", draw); };
@@ -466,7 +469,10 @@ export function CityView({ view, actions, setActions, onInspect }: { view: GameV
 
   const presence = marketPresenceFrom(view, actions.markets);
   const selSites = sel.mine.length;
-  const layerTabs: { id: "map" | "traffic" | "zoning"; label: string }[] = [{ id: "map", label: "Map" }, { id: "traffic", label: "Foot traffic" }, { id: "zoning", label: "Zoning" }];
+  const tradeOn = layer === "trade";
+  // Last resolved round's per-market trade flow (produced/consumed/net/lanes) — engine hook #1.
+  const flow = view.ownResult?.markets?.[sel.id] ?? null;
+  const layerTabs: { id: "map" | "traffic" | "zoning" | "trade"; label: string }[] = [{ id: "map", label: "Map" }, { id: "traffic", label: "Traffic" }, { id: "zoning", label: "Zoning" }, { id: "trade", label: "Trade" }];
 
   return (
     <div className="relative flex flex-col overflow-hidden rounded-xl border border-line2 bg-panel/40 lg:h-[80vh] lg:min-h-[620px] lg:flex-row">
@@ -540,7 +546,7 @@ export function CityView({ view, actions, setActions, onInspect }: { view: GameV
             <div className="absolute inset-3.5 overflow-hidden rounded-xl border border-line2" style={{ background: PAL.mapbg, boxShadow: "inset 0 1px 0 rgba(255,255,255,.4),0 6px 18px rgba(40,25,8,.12)" }}>
               <canvas ref={canvasRef} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", display: "block" }} />
 
-              {plan && layer === "map" && plan.districts.map((d) => { const ec = dByKey(d.key); if (!ec) return null; const p = pct(d.cx, d.cy, 60, layer); return (
+              {plan && (layer === "map" || layer === "trade") && plan.districts.map((d) => { const ec = dByKey(d.key); if (!ec) return null; const p = pct(d.cx, d.cy, 60, layer); return (
                 <div key={d.key} className="pointer-events-none absolute z-[4] flex flex-col items-center gap-0.5" style={{ left: `${p.l}%`, top: `${p.t}%`, transform: "translate(-50%,-100%)" }}>
                   <div className="display whitespace-nowrap text-[0.78rem] font-extrabold uppercase tracking-[0.12em]" style={{ color: "rgba(44,29,17,.74)", textShadow: `0 1px 3px ${PAL.mapbg}, 0 0 6px ${PAL.mapbg}` }}>{ec.label}</div>
                   <div className="pointer-events-auto flex items-center gap-1">
@@ -552,7 +558,7 @@ export function CityView({ view, actions, setActions, onInspect }: { view: GameV
                 </div>
               ); })}
 
-              {plan && facOn && sel.entered && layer === "map" && plan.leases.map((L, i) => { const p = pct(L.cx, L.cy, 0, layer); const ec = dByKey(L.district); const z = ZONE_OF[ec?.kind ?? ""]; const ct = crowdTone(L.crowd); return (
+              {plan && facOn && sel.entered && (layer === "map" || layer === "trade") && plan.leases.map((L, i) => { const p = pct(L.cx, L.cy, 0, layer); const ec = dByKey(L.district); const z = ZONE_OF[ec?.kind ?? ""]; const ct = crowdTone(L.crowd); return (
                 <button key={i} onClick={() => openSiting(L.district, L.lot)} title={`Available parcel · ${ec?.label ?? L.district} · ${ct.label}`} className="absolute z-[5] cursor-pointer border-none bg-none p-0" style={{ left: `${p.l}%`, top: `${p.t}%`, transform: "translate(-50%,-100%)" }}>
                   <span className="block rounded-t-[3px] border px-1.5 py-0.5 font-mono text-[0.5rem] font-bold uppercase tracking-wide text-white" style={{ background: "var(--color-copperdeep)", borderColor: "#6e3914" }}>FOR LEASE</span>
                   <span className="flex items-center justify-center gap-0.5 rounded-b-[3px] border border-t-0 px-1 py-px text-center font-mono text-[0.44rem] font-bold uppercase text-copperdeep" style={{ background: "#f3e6c8", borderColor: "#6e3914" }}><span className="h-1.5 w-1.5 rounded-full" style={{ background: ct.color }} />{z?.zone ?? ""}</span>
@@ -560,19 +566,45 @@ export function CityView({ view, actions, setActions, onInspect }: { view: GameV
                 </button>
               ); })}
 
-              {plan && plan.facilities.map((f) => { const p = pct(f.cx, f.cy, f.h, layer); const ec = dByKey(f.district); const dim = hoverFac && hoverFac !== f.id ? 0.5 : !f.active ? 0.5 : f.pending ? 0.6 : 1; return (
-                <button key={f.id} onClick={() => !f.pending && setFacPop(f.id)} onMouseEnter={() => setHoverFac(f.id)} onMouseLeave={() => setHoverFac(null)} title={`${typeOf(f.type)?.label ?? f.type} · ${ec?.label ?? f.district}${f.pending ? " · breaking ground" : f.active ? "" : " · mothballed"}`} className="absolute z-[7] cursor-pointer border-none bg-none p-0" style={{ left: `${p.l}%`, top: `${p.t}%`, transform: "translate(-50%,-100%)", opacity: dim, filter: hoverFac === f.id ? "drop-shadow(0 0 4px var(--color-copperdeep))" : "none" }}>
-                  <span className="grid h-[26px] w-[26px] place-items-center rounded-[7px_7px_7px_2px] font-mono text-[0.72rem] font-bold" style={{ background: "linear-gradient(160deg,#d2823f,#a85a26)", border: f.pending ? "1.5px dashed #7e3f18" : "1.5px solid #7e3f18", color: "#fff4e0" }}>{f.tag}</span>
-                  <span className="mx-auto -mt-px block h-2 w-0.5" style={{ background: "#7e3f18" }} />
+              {plan && plan.facilities.map((f) => { const p = pct(f.cx, f.cy, f.h, layer); const ec = dByKey(f.district); const tt = typeOf(f.type); const dim = hoverFac && hoverFac !== f.id ? 0.5 : !f.active ? 0.5 : f.pending ? 0.6 : 1; const fb = tradeOn ? flowBadge((tt?.production_capacity ?? tt?.capacity_contribution ?? 0) - (tt?.retail_draw ?? 0)) : null; return (
+                <button key={f.id} onClick={() => !f.pending && setFacPop(f.id)} onMouseEnter={() => setHoverFac(f.id)} onMouseLeave={() => setHoverFac(null)} title={`${tt?.label ?? f.type} · ${ec?.label ?? f.district}${f.pending ? " · breaking ground" : f.active ? "" : " · mothballed"}`} className="absolute z-[7] flex cursor-pointer flex-col items-center border-none bg-none p-0" style={{ left: `${p.l}%`, top: `${p.t}%`, transform: "translate(-50%,-100%)", opacity: dim, filter: hoverFac === f.id ? "drop-shadow(0 0 5px var(--color-copperdeep))" : "drop-shadow(0 3px 5px rgba(40,25,8,.32))" }}>
+                  <FacilityChip type={f.type} color={cssColor(youId)} size={30} mine style={f.pending ? { outline: "2px dashed #7e3f18", outlineOffset: 1 } : undefined} />
+                  {fb && <span className="mt-0.5 rounded-full px-1.5 py-px font-mono text-[0.5rem] font-bold leading-none" style={{ background: fb.tone === "out" ? "var(--color-copper)" : fb.tone === "in" ? "var(--color-aero)" : "var(--color-panel)", color: fb.tone === "neutral" ? "var(--color-inksoft)" : "#fff4e0", whiteSpace: "nowrap" }}>{fb.text}</span>}
                 </button>
               ); })}
 
               {plan && plan.rivals.map((r, i) => { const p = pct(r.cx, r.cy, r.h, layer); const col = cssColor(r.firmId); const ec = dByKey(r.district); return (
-                <button key={i} onClick={() => onInspect(r.firmId)} title={`${r.name} · ${typeOf(r.type)?.label ?? r.type} · ${ec?.label ?? r.district} — scout`} className="absolute z-[6] cursor-pointer border-none bg-none p-0" style={{ left: `${p.l}%`, top: `${p.t}%`, transform: "translate(-50%,-100%)", opacity: hoverSeg ? 0.45 : 1 }}>
-                  <span className="grid h-[22px] w-[22px] place-items-center rounded-[6px_6px_6px_2px] font-mono text-[0.5rem] font-bold text-white" style={{ background: col, border: `1.5px solid color-mix(in srgb, #000 30%, ${col})` }}>{(view.names[r.firmId] ?? "?").slice(0, 2).toUpperCase()}</span>
-                  <span className="mx-auto -mt-px block h-1.5 w-0.5" style={{ background: `color-mix(in srgb, #000 30%, ${col})` }} />
+                <button key={i} onClick={() => onInspect(r.firmId)} title={`${r.name} · ${typeOf(r.type)?.label ?? r.type} · ${ec?.label ?? r.district} — scout`} className="absolute z-[6] cursor-pointer border-none bg-none p-0" style={{ left: `${p.l}%`, top: `${p.t}%`, transform: "translate(-50%,-100%)", opacity: hoverSeg ? 0.45 : 1, filter: "drop-shadow(0 2px 4px rgba(40,25,8,.3))" }}>
+                  <FacilityChip type={r.type} color={col} size={24} />
                 </button>
               ); })}
+
+              {/* trade supply lanes (Trade layer) — internal producer→retail hints + net export/import, from last round's flow */}
+              {plan && tradeOn && (() => {
+                const isProd = (ty: string) => { const t = typeOf(ty); return (t?.production_capacity ?? t?.capacity_contribution ?? 0) > 0; };
+                const isRetail = (ty: string) => (typeOf(ty)?.retail_draw ?? 0) > 0;
+                const src = plan.facilities.find((f) => isProd(f.type)) ?? plan.facilities[0];
+                const retail = plan.facilities.filter((f) => isRetail(f.type) && f !== src);
+                const net = flow?.net ?? 0;
+                const ptOf = (f: { cx: number; cy: number; h: number }) => { const pp = pct(f.cx, f.cy, f.h, layer); return [pp.l, pp.t] as const; };
+                if (!src) return null;
+                const [sx, sy] = ptOf(src);
+                return (
+                  <>
+                    <svg className="pointer-events-none absolute inset-0 z-[5] h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                      {retail.slice(0, 3).map((rt, i) => { const [x2, y2] = ptOf(rt); if (sx === x2 && sy === y2) return null; return (
+                        <path key={i} d={`M${sx} ${sy} Q${(sx + x2) / 2} ${Math.min(sy, y2) - 7} ${x2} ${y2}`} fill="none" stroke="#cf9a5f" strokeWidth="0.6" strokeDasharray="1.6 1.6" strokeLinecap="round" className="dwflow" vectorEffect="non-scaling-stroke" />
+                      ); })}
+                      {Math.abs(net) > 5 && (() => { const out = net > 0; const x2 = out ? 98 : 2; const y2 = Math.max(8, sy - 12); return (
+                        <path d={`M${sx} ${sy} Q${(sx + x2) / 2} ${y2 - 5} ${x2} ${y2}`} fill="none" stroke={out ? "#c0703a" : "#1f8c93"} strokeWidth="1.3" strokeDasharray="2.6 2.4" strokeLinecap="round" className="dwflow" vectorEffect="non-scaling-stroke" />
+                      ); })()}
+                    </svg>
+                    {Math.abs(net) > 5 && (
+                      <div className="pointer-events-none absolute top-2 z-[6] rounded-full px-2 py-0.5 font-mono text-[0.55rem] font-bold" style={{ ...(net > 0 ? { right: 8 } : { left: 8 }), background: net > 0 ? "var(--color-copper)" : "var(--color-aero)", color: "#fff4e0" }}>{net > 0 ? `↗ ${fmt.int(net)} ship out` : `↘ ${fmt.int(-net)} ship in`}</div>
+                    )}
+                  </>
+                );
+              })()}
 
               {/* layer toggle */}
               <div className="absolute left-1/2 top-3 z-[8] flex -translate-x-1/2 gap-0.5 rounded-[9px] border border-line2 bg-panel/90 p-0.5 backdrop-blur">
@@ -627,7 +659,7 @@ export function CityView({ view, actions, setActions, onInspect }: { view: GameV
               <div className="flex flex-col gap-1.5">
                 {sel.mine.map((f) => { const t = typeOf(f.type); const ec = dByKey(f.district); return (
                   <div key={f.id} onMouseEnter={() => setHoverFac(f.id)} onMouseLeave={() => setHoverFac(null)} className="flex items-center gap-2 rounded-md border border-line px-2 py-1.5 text-[0.78rem]" style={{ background: hoverFac === f.id ? "color-mix(in srgb, var(--color-copper) 10%, var(--color-panel))" : "var(--color-panel)" }}>
-                    <span className="grid h-[18px] w-[18px] flex-none place-items-center rounded font-mono text-[0.6rem] font-bold" style={{ background: "var(--color-copper)", color: "#fff4e0" }}>{FAC_TAG[f.type] ?? "•"}</span>
+                    <FacilityChip type={f.type} color={cssColor(youId)} size={20} mine />
                     <span className="flex-1 font-semibold text-ink">{t?.label ?? f.type}{f.pending ? " · building" : f.active ? "" : " · mothballed"}</span>
                     <span className="font-mono text-[0.6rem] text-inksoft">{ec?.label ?? f.district}</span>
                   </div>
@@ -643,6 +675,7 @@ export function CityView({ view, actions, setActions, onInspect }: { view: GameV
             {!sel.entered && (
               <button onClick={() => setEntering(sel.id)} className="mt-3.5 w-full rounded-[10px] border border-copperdeep py-2.5 font-mono text-[0.7rem] font-bold uppercase tracking-wide text-[#3a2206]" style={{ background: "linear-gradient(var(--color-gold),var(--color-copper))" }}>Enter {sel.name} · {fmt.money(sel.entryCost)}</button>
             )}
+            {sel.entered && <button onClick={() => { setLayer("trade"); setDrawerOpen(true); }} className="w-full rounded-[10px] border border-line2 bg-panel py-2 font-mono text-[0.62rem] font-bold uppercase tracking-wide text-inksoft">View distribution ↗</button>}
             <div className="mt-2 text-center font-mono text-[0.55rem] text-inksoft">Supply routed here: {fmt.pct((presence[sel.id] ?? 0) / Math.max(0.001, Object.values(presence).reduce((a, b) => a + b, 0)))}</div>
           </aside>
         </div>
@@ -705,7 +738,7 @@ export function CityView({ view, actions, setActions, onInspect }: { view: GameV
                       {facTypes.map((t) => { const allowed = z.allow.includes(t.id), isSel = selType === t.id, canAfford = view.own.cash - queuedSpend >= t.base_cost; return (
                         <button key={t.id} onClick={() => allowed && setSiting({ lot: siting.lot!, district: siting.district, type: t.id })} disabled={!allowed} className="rounded-[11px] border p-3 text-left transition-colors" style={{ borderColor: !allowed ? "var(--color-line2)" : isSel ? "var(--color-copperdeep)" : "var(--color-line)", background: !allowed ? "color-mix(in srgb, var(--color-panel2) 50%, transparent)" : isSel ? "color-mix(in srgb, var(--color-copper) 10%, var(--color-panel))" : "var(--color-panel)", opacity: allowed ? 1 : 0.5, cursor: allowed ? "pointer" : "not-allowed" }}>
                           <div className="flex items-center gap-2.5">
-                            <span className="grid h-[26px] w-[26px] flex-none place-items-center rounded font-mono text-[0.72rem] font-bold" style={{ background: "var(--color-copper)", color: "#fff4e0" }}>{FAC_TAG[t.id] ?? "•"}</span>
+                            <FacilityChip type={t.id} color={cssColor(youId)} size={26} />
                             <span className="display flex-1 text-[0.92rem] font-bold uppercase tracking-wide text-ink">{t.label}</span>
                             <span className="font-mono text-xs font-bold" style={{ color: !allowed ? "var(--color-inksoft)" : canAfford ? "var(--color-ink)" : "var(--color-brick)" }}>{fmt.money(t.base_cost)}</span>
                           </div>
@@ -762,43 +795,126 @@ export function CityView({ view, actions, setActions, onInspect }: { view: GameV
         ); })()}
 
         {/* ── facility popup ── */}
-        {facPop && (() => { const f = sel.mine.find((x) => x.id === facPop); const t = f ? typeOf(f.type) : undefined; const ec = f ? dByKey(f.district) : undefined; if (!f || !t || !ec) return null; const maintaining = !!actions.maintain[f.id]; return (
-          <div onClick={() => setFacPop(null)} className="absolute inset-0 z-30 grid place-items-center" style={{ background: "rgba(44,29,17,.3)" }}>
-            <div onClick={(e) => e.stopPropagation()} className="w-[340px] overflow-hidden rounded-xl border border-line2 bg-panel" style={{ boxShadow: "0 16px 44px rgba(40,25,8,.35)" }}>
-              <div className="h-1.5" style={{ background: "var(--color-copper)" }} />
+        {facPop && (() => { const f = sel.mine.find((x) => x.id === facPop); const t = f ? typeOf(f.type) : undefined; const ec = f ? dByKey(f.district) : undefined; if (!f || !t || !ec) return null; const maintaining = !!actions.maintain[f.id];
+          const prod = t.production_capacity ?? t.capacity_contribution ?? 0; const retail = t.retail_draw ?? 0; const tot = prod + retail || 1;
+          const onsitePct = (retail / tot) * 100, exportPct = (prod / tot) * 100; const fb = flowBadge(prod - retail);
+          const condNow = view.own.facilities?.find((x) => x.id === f.id)?.condition ?? 1;
+          const divesting = actions.divests.includes(f.id);
+          const salvage = Math.round((view.modules?.facilities?.salvage_fraction ?? 0.5) * t.base_cost * (0.5 + 0.5 * condNow));
+          return (
+          <div onClick={() => setFacPop(null)} className="absolute inset-0 z-30 grid place-items-center" style={{ background: "rgba(44,29,17,.34)", backdropFilter: "blur(2px)" }}>
+            <div onClick={(e) => e.stopPropagation()} className="w-[348px] max-w-[92vw] overflow-hidden rounded-xl border border-line2 bg-panel" style={{ boxShadow: "0 18px 50px rgba(40,25,8,.4)" }}>
+              <div className="h-1.5" style={{ background: cssColor(youId) }} />
               <div className="px-4 py-4">
                 <div className="flex items-center gap-2.5">
-                  <span className="grid h-[30px] w-[30px] flex-none place-items-center rounded-md font-mono text-[0.8rem] font-bold" style={{ background: "var(--color-copper)", color: "#fff4e0" }}>{FAC_TAG[f.type] ?? "•"}</span>
-                  <div className="flex-1">
+                  <FacilityChip type={f.type} color={cssColor(youId)} size={36} mine />
+                  <div className="min-w-0 flex-1">
                     <div className="font-mono text-[0.55rem] uppercase tracking-wide text-inksoft">Your facility · {ec.label}</div>
                     <div className="display text-lg font-extrabold uppercase text-ink">{t.label}</div>
                   </div>
                   <button onClick={() => setFacPop(null)} className="border-none bg-none text-base text-inksoft">✕</button>
                 </div>
-                <div className="mt-3.5 grid grid-cols-3 gap-2">
-                  <div className="rounded-lg border border-line bg-panel2 p-2.5"><div className="text-[0.62rem] text-inksoft">Output</div><div className="font-mono text-base font-bold text-ink">+{f.active ? fmt.int((t.production_capacity ?? t.capacity_contribution ?? 0) * ec.out) : "0"}</div></div>
-                  <div className="rounded-lg border border-line bg-panel2 p-2.5"><div className="text-[0.62rem] text-inksoft">Retail</div><div className="font-mono text-base font-bold" style={{ color: (t.retail_draw ?? 0) > 0 ? "var(--color-aero)" : "var(--color-inksoft)" }}>{(t.retail_draw ?? 0) > 0 ? `+${fmt.int(t.retail_draw ?? 0)}` : "—"}</div></div>
-                  <div className="rounded-lg border border-line bg-panel2 p-2.5"><div className="text-[0.62rem] text-inksoft">Fixed/rd</div><div className="font-mono text-base font-bold text-ink">{f.active ? fmt.money(t.fixed_cost * ec.rent) : "—"}</div></div>
+
+                {/* brewed-here vs distributed */}
+                <div className="mt-3.5 rounded-[10px] border border-line bg-panel2 p-3">
+                  <div className="mb-1.5 flex justify-between"><span className="font-mono text-[0.55rem] uppercase tracking-wide text-copperdeep">Brewed here vs distributed</span><span className="font-mono text-[0.6rem] font-bold" style={{ color: fb.tone === "out" ? "var(--color-copper)" : fb.tone === "in" ? "var(--color-aero)" : "var(--color-inksoft)" }}>{fb.text}</span></div>
+                  <div className="flex h-3 overflow-hidden rounded-[3px] border border-line2">
+                    <div style={{ width: `${onsitePct}%`, background: "var(--color-aero)" }} />
+                    <div style={{ width: `${exportPct}%`, background: "var(--color-copper)" }} />
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-3">
+                    <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm" style={{ background: "var(--color-aero)" }} /><span className="font-mono text-[0.6rem] text-inksoft">sells on-site {fmt.int(retail)}</span></span>
+                    <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm" style={{ background: "var(--color-copper)" }} /><span className="font-mono text-[0.6rem] text-inksoft">brews to ship {fmt.int(prod)}</span></span>
+                  </div>
                 </div>
-                <div className="mt-2.5 text-xs text-inksoft">{FAC_NOTE[f.type] ?? ""}{(t.retail_draw ?? 0) > 0 && ec.brand > 0 ? ` Draws +${(Math.min(1.5, (t.retail_draw ?? 0) / 40) * ec.brand).toFixed(1)} brand/round (retail foot traffic) while online here.` : (t.production_capacity ?? t.capacity_contribution ?? 0) > 0 && (t.retail_draw ?? 0) === 0 ? " Back-of-house production — no brand draw, but a local shipping origin." : ""}</div>
+
+                <div className="mt-3 grid grid-cols-3 gap-2">
+                  <div className="rounded-lg border border-line bg-panel2 p-2.5"><div className="text-[0.62rem] text-inksoft">Output</div><div className="font-mono text-base font-bold text-ink">+{f.active ? fmt.int(prod * ec.out) : "0"}</div></div>
+                  <div className="rounded-lg border border-line bg-panel2 p-2.5"><div className="text-[0.62rem] text-inksoft">Retail</div><div className="font-mono text-base font-bold" style={{ color: retail > 0 ? "var(--color-aero)" : "var(--color-inksoft)" }}>{retail > 0 ? `+${fmt.int(retail)}` : "—"}</div></div>
+                  <div className="rounded-lg border border-line bg-panel2 p-2.5"><div className="text-[0.62rem] text-inksoft">Condition</div><div className="font-mono text-base font-bold" style={{ color: condNow > 0.6 ? "var(--color-hop)" : condNow > 0.35 ? "var(--color-gold)" : "var(--color-brick)" }}>{f.pending ? "—" : fmt.pct(condNow)}</div></div>
+                </div>
+                <div className="mt-2.5 text-xs text-inksoft">{FAC_NOTE[f.type] ?? ""}</div>
+
                 {f.pending ? (
                   <div className="mt-3.5 rounded-md border border-line bg-panel2 px-3 py-2 text-center font-mono text-[0.62rem] uppercase tracking-wide text-inksoft">Breaking ground this round</div>
-                ) : (() => {
-                  const divesting = actions.divests.includes(f.id);
-                  const cond = view.own.facilities?.find((x) => x.id === f.id)?.condition ?? 1;
-                  const salvage = Math.round((view.modules?.facilities?.salvage_fraction ?? 0.5) * t.base_cost * (0.5 + 0.5 * cond));
-                  return (
-                  <div className="mt-3.5 grid gap-1.5">
-                    {divesting && <div className="rounded-md border px-3 py-2 text-center font-mono text-[0.6rem] uppercase tracking-wide" style={{ borderColor: "var(--color-brick)", color: "var(--color-brick)", background: "color-mix(in srgb, var(--color-brick) 10%, var(--color-panel))" }}>Selling this round — recovers ~{fmt.money(salvage)}, frees the lot</div>}
-                    {!divesting && <button onClick={() => toggleFac(f.id)} className="w-full rounded-md border border-line2 bg-panel2 px-2 py-2 font-mono text-[0.62rem] uppercase tracking-wide text-inksoft">{f.active ? "Mothball (stop cost & output)" : "Reactivate"}</button>}
-                    {f.active && !divesting && <button onClick={() => toggleMaintain(f.id, f.type)} className="w-full rounded-md border px-2 py-2 font-mono text-[0.62rem] uppercase tracking-wide" style={{ borderColor: maintaining ? "var(--color-hop)" : "var(--color-line2)", background: maintaining ? "color-mix(in srgb, var(--color-hop) 12%, var(--color-panel))" : "var(--color-panel2)", color: maintaining ? "var(--color-hop)" : "var(--color-inksoft)" }}>{maintaining ? "✓ Keeping in repair" : "Keep in repair (upkeep)"}</button>}
-                    <button onClick={() => toggleDivest(f.id)} className="w-full rounded-md border px-2 py-2 font-mono text-[0.62rem] uppercase tracking-wide" style={{ borderColor: divesting ? "var(--color-line2)" : "var(--color-brick)", color: divesting ? "var(--color-inksoft)" : "var(--color-brick)", background: divesting ? "var(--color-panel2)" : "color-mix(in srgb, var(--color-brick) 6%, var(--color-panel))" }}>{divesting ? "Cancel sale" : "Divest (sell & free the lot)"}</button>
+                ) : (
+                  <div className="mt-3.5">
+                    <div className="mb-1.5 font-mono text-[0.55rem] uppercase tracking-[0.12em] text-inksoft">Lifecycle</div>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <button onClick={() => f.active && !divesting && toggleMaintain(f.id, f.type)} disabled={!f.active || divesting} className="rounded-md border px-2 py-2 font-mono text-[0.6rem] uppercase tracking-wide disabled:opacity-40" style={{ borderColor: maintaining ? "var(--color-hop)" : "var(--color-line2)", background: maintaining ? "color-mix(in srgb, var(--color-hop) 12%, var(--color-panel))" : "var(--color-panel2)", color: maintaining ? "var(--color-hop)" : "var(--color-inksoft)" }}>{maintaining ? "✓ Maintaining" : "Maintain"}</button>
+                      <button disabled title="Relocate by divesting this site and building elsewhere the same round" className="rounded-md border border-line2 bg-panel2 px-2 py-2 font-mono text-[0.6rem] uppercase tracking-wide text-inksoft opacity-50">Upgrade ↑</button>
+                      <button onClick={() => !divesting && toggleFac(f.id)} disabled={divesting} className="rounded-md border border-line2 bg-panel2 px-2 py-2 font-mono text-[0.6rem] uppercase tracking-wide text-inksoft disabled:opacity-40">{f.active ? "Mothball" : "Reactivate"}</button>
+                      <button onClick={() => toggleDivest(f.id)} className="rounded-md border px-2 py-2 font-mono text-[0.6rem] uppercase tracking-wide" style={{ borderColor: divesting ? "var(--color-line2)" : "var(--color-brick)", color: divesting ? "var(--color-inksoft)" : "var(--color-brick)", background: divesting ? "var(--color-panel2)" : "color-mix(in srgb, var(--color-brick) 7%, var(--color-panel))" }}>{divesting ? "Cancel sale" : "Divest"}</button>
+                    </div>
+                    <div className="mt-2 text-[0.66rem] text-inksoft">{divesting ? `Selling this round — recovers ~${fmt.money(salvage)} and frees the lot.` : maintaining ? "Upkeep booked — holds condition this round." : "Maintain holds condition; Divest sells the site and frees the lot."}</div>
                   </div>
-                  ); })()}
+                )}
               </div>
             </div>
           </div>
         ); })()}
+
+        {/* ── distribution drawer (produced-vs-consumed + origin breakdown, from engine flow) ── */}
+        {drawerOpen && (() => {
+          const mk = view.ownResult?.markets ?? null;
+          const rows = cities.filter((c) => c.entered).map((c) => { const m = mk?.[c.id]; return { id: c.id, name: c.name, brewed: m?.produced ?? 0, drunk: m?.q_sold ?? 0, net: m?.net ?? 0, lanes: m?.lanes ?? [] }; });
+          const maxv = Math.max(1, ...rows.map((r) => Math.max(r.brewed, r.drunk)));
+          const selRow = rows.find((r) => r.id === sel.id) ?? rows[0];
+          const nameOf = (id: string) => cities.find((c) => c.id === id)?.name ?? id;
+          return (
+          <>
+            <div onClick={() => setDrawerOpen(false)} className="absolute inset-0 z-20" style={{ background: "rgba(44,29,17,.3)" }} />
+            <aside className="dwslide scl absolute bottom-0 right-0 top-0 z-[21] w-[360px] max-w-[94vw] overflow-y-auto border-l border-line2 bg-panel" style={{ boxShadow: "-14px 0 40px rgba(40,25,8,.24)" }}>
+              <div className="sticky top-0 z-[2] flex items-start gap-2.5 border-b border-line bg-panel px-5 py-4">
+                <div className="flex-1"><div className="font-mono text-[0.55rem] uppercase tracking-[0.16em] text-copperdeep">Distribution · transportation</div><div className="display text-xl font-extrabold uppercase text-ink">Supply &amp; lanes</div></div>
+                <button onClick={() => setDrawerOpen(false)} className="border-none bg-none text-lg text-inksoft">✕</button>
+              </div>
+              <div className="px-5 py-4">
+                <div className="mb-3 text-xs text-inksoft">Produced vs consumed in every market you operate — <b className="text-copperdeep">brewed</b> left, <b style={{ color: "var(--color-aero)" }}>drunk</b> right. The gap is a lane you're paying to ship.</div>
+                {rows.length === 0 ? <div className="text-xs italic text-inksoft">No resolved round yet — flows appear once you end the first round.</div> : (
+                <>
+                  <div className="mb-2 flex justify-between"><span className="font-mono text-[0.55rem] uppercase text-copperdeep">◀ brewed</span><span className="font-mono text-[0.55rem] uppercase" style={{ color: "var(--color-aero)" }}>drunk ▶</span></div>
+                  {rows.map((r) => { const fb = flowBadge(r.net); return (
+                    <button key={r.id} onClick={() => setSelId(r.id)} className="mb-3 block w-full text-left">
+                      <div className="mb-1 flex items-baseline justify-between"><span className="display text-sm font-bold uppercase tracking-wide" style={{ color: r.id === sel.id ? "var(--color-copperdeep)" : "var(--color-ink)" }}>{r.name}</span><span className="font-mono text-[0.6rem] font-bold" style={{ color: fb.tone === "out" ? "var(--color-copper)" : fb.tone === "in" ? "var(--color-aero)" : "var(--color-inksoft)" }}>{fb.text}</span></div>
+                      <div className="relative h-3.5 rounded-[3px]" style={{ background: "var(--color-panel2)" }}>
+                        <div className="absolute bottom-0 top-0 rounded-l-[3px]" style={{ right: "50%", width: `${(r.brewed / maxv) * 50}%`, background: "var(--color-copper)" }} />
+                        <div className="absolute bottom-0 top-0 rounded-r-[3px]" style={{ left: "50%", width: `${(r.drunk / maxv) * 50}%`, background: "var(--color-aero)" }} />
+                        <div className="absolute -bottom-0.5 -top-0.5 left-1/2 w-px -translate-x-1/2" style={{ background: "var(--color-inksoft)" }} />
+                      </div>
+                    </button>
+                  ); })}
+                  {selRow && (
+                    <div className="mt-3 rounded-[11px] border border-line bg-panel2 p-3">
+                      <div className="mb-2 font-mono text-[0.55rem] uppercase tracking-wide text-inksoft">Where {selRow.name}'s {fmt.int(selRow.drunk)} comes from</div>
+                      {selRow.drunk <= 0 ? <div className="text-[0.7rem] italic text-inksoft">Nothing sold here last round.</div> : (() => {
+                        const localUnits = Math.max(0, Math.min(selRow.brewed, selRow.drunk));
+                        const shipped = selRow.lanes.reduce((a, L) => a + L.units, 0);
+                        const denom = Math.max(1, localUnits + shipped);
+                        return (<>
+                          <div className="mb-2 flex h-3.5 overflow-hidden rounded-[3px] border border-line2">
+                            <div style={{ width: `${(localUnits / denom) * 100}%`, background: "var(--color-aero)" }} />
+                            <div style={{ width: `${(shipped / denom) * 100}%`, background: "var(--color-copperdeep)" }} />
+                          </div>
+                          <div className="flex flex-col gap-1.5">
+                            <div className="flex items-center gap-2"><span className="h-2.5 w-2.5 flex-none rounded-sm" style={{ background: "var(--color-aero)" }} /><span className="flex-1 text-[0.72rem] text-ink">Brewed locally</span><span className="font-mono text-[0.6rem] font-bold" style={{ color: "var(--color-aero)" }}>{fmt.int(localUnits)}</span></div>
+                            {selRow.lanes.map((L, i) => (
+                              <div key={i} className="flex items-center gap-2"><span className="h-2.5 w-2.5 flex-none rounded-sm" style={{ background: "var(--color-copperdeep)" }} /><span className="flex-1 text-[0.72rem] text-ink">Shipped from {nameOf(L.origin_market)}</span><span className="font-mono text-[0.6rem] font-bold text-copperdeep">{fmt.int(L.units)}</span></div>
+                            ))}
+                          </div>
+                          {selRow.lanes.length > 0 && <div className="mt-2.5 flex justify-between border-t border-line pt-2"><span className="text-[0.7rem] text-inksoft">Lane cost</span><span className="font-mono text-[0.7rem] font-bold text-brick">−{fmt.money(selRow.lanes.reduce((a, L) => a + L.cost, 0))}</span></div>}
+                        </>);
+                      })()}
+                    </div>
+                  )}
+                </>
+                )}
+                <div className="mt-3 flex items-center gap-2 rounded-[10px] border border-dashed border-line2 bg-panel2/60 px-3 py-2"><span className="h-2.5 w-2.5 flex-none rounded-sm" style={{ background: "repeating-linear-gradient(45deg,#b6452f,#b6452f 3px,#9d3a27 3px,#9d3a27 6px)" }} /><span className="text-[0.7rem] text-inksoft"><b className="text-ink">Spoilage</b> — a slot for beer that ages out before it sells. Not wired to the engine yet.</span></div>
+              </div>
+            </aside>
+          </>
+          );
+        })()}
 
         {globeOpen && <GlobeOverlay cities={cities} homeGeo={homeGeo} onClose={() => setGlobeOpen(false)} onPick={(id) => { setGlobeOpen(false); selectCity(id); }} />}
       </main>
