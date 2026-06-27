@@ -24,7 +24,10 @@ export interface GeoOutcome {
   qSoldByFirm: Map<FirmId, number>;
   distCostByFirm: Map<FirmId, number>; // distribution + tariff (→ opex)
   entryCostByFirm: Map<FirmId, number>; // one-time market-entry cost (→ opex)
-  marketBreakdown: Map<FirmId, Record<string, { revenue: number; q_sold: number; entered: boolean; bySeg: Record<SegmentId, { q_sold: number; share: number; price: number }> }>>;
+  // Per market: revenue/units, plus the trade-flow read for the lane viz — producer capacity sited
+  // here (`produced`), units sold here (`q_sold`), their balance (`net`), and any inbound shipment
+  // lanes (the shortfall, from the nearest base). `consumed` == q_sold.
+  marketBreakdown: Map<FirmId, Record<string, { revenue: number; q_sold: number; entered: boolean; bySeg: Record<SegmentId, { q_sold: number; share: number; price: number }>; produced: number; net: number; lanes: { origin_market: string; units: number; cost: number }[] }>>;
   events: string[];
 }
 
@@ -201,15 +204,18 @@ export function resolveGeography(
   const geoOf = (id: string) => markets.find((mm) => mm.id === id)?.geo;
   const geoDist = (a?: [number, number], b?: [number, number]) => (a && b ? Math.hypot(a[0] - b[0], a[1] - b[1]) : 0);
   const shipRate = c.modules?.geography?.shipping?.rate_per_unit_distance ?? 0;
-  // Shipping cost to serve `soldInM` units in market m: only the shortfall beyond local production,
-  // priced per unit × distance from the nearest OTHER base.
-  const shipCostTo = (firmId: FirmId, m: MarketConfig, soldInM: number): number => {
-    if (shipRate <= 0 || soldInM <= 0) return 0;
+  // Shipping PLAN to serve `soldInM` units in market m: the shortfall beyond local production,
+  // shipped from the nearest OTHER base, priced per unit × distance. Returns the lane (origin +
+  // units + cost) so the UI can draw it; `cost` is identical to the prior cost-only path (replay
+  // determinism preserved).
+  const shipPlanTo = (firmId: FirmId, m: MarketConfig, soldInM: number): { units: number; origin: string | null; cost: number } => {
+    if (shipRate <= 0 || soldInM <= 0) return { units: 0, origin: null, cost: 0 };
     const shortfall = Math.max(0, soldInM - (localProd.get(firmId)?.get(m.id) ?? 0));
-    if (shortfall <= 0) return 0;
+    if (shortfall <= 0) return { units: 0, origin: null, cost: 0 };
     let best = Infinity;
-    for (const b of baseMarkets.get(firmId) ?? []) { if (b === m.id) continue; const dd = geoDist(geoOf(b), m.geo); if (dd < best) best = dd; }
-    return shipRate * shortfall * (Number.isFinite(best) ? best : 0);
+    let origin: string | null = null;
+    for (const b of baseMarkets.get(firmId) ?? []) { if (b === m.id) continue; const dd = geoDist(geoOf(b), m.geo); if (dd < best) { best = dd; origin = b; } }
+    return { units: shortfall, origin, cost: shipRate * shortfall * (Number.isFinite(best) ? best : 0) };
   };
 
   // Solve each market and aggregate.
@@ -252,11 +258,19 @@ export function resolveGeography(
       const tariff = m.tariff_rate * mRevenue;
       const distribution = m.distribution_cost_per_unit * mQ;
       // Phase 3: ship only the shortfall not produced locally, from the nearest other base.
-      const shipping = shipCostTo(f.id, m, mQ);
+      const plan = shipPlanTo(f.id, m, mQ);
+      const shipping = plan.cost;
       out.revenueByFirm.set(f.id, (out.revenueByFirm.get(f.id) ?? 0) + mRevenue);
       out.qSoldByFirm.set(f.id, (out.qSoldByFirm.get(f.id) ?? 0) + mQ);
       out.distCostByFirm.set(f.id, (out.distCostByFirm.get(f.id) ?? 0) + tariff + distribution + shipping);
-      out.marketBreakdown.get(f.id)![m.id] = { revenue: mRevenue, q_sold: mQ, entered: m.kind === "home" || f.markets_entered.includes(m.id), bySeg };
+      // Per-market trade flow for the lane viz: producer capacity sited here vs units sold here, and
+      // the inbound shipment lane (shortfall from the nearest base) when local supply falls short.
+      const producedHere = localProd.get(f.id)?.get(m.id) ?? 0;
+      out.marketBreakdown.get(f.id)![m.id] = {
+        revenue: mRevenue, q_sold: mQ, entered: m.kind === "home" || f.markets_entered.includes(m.id), bySeg,
+        produced: producedHere, net: producedHere - mQ,
+        lanes: plan.units > 0 && plan.origin ? [{ origin_market: plan.origin, units: plan.units, cost: plan.cost }] : [],
+      };
     }
   }
 

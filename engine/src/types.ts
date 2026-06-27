@@ -1031,7 +1031,9 @@ export interface FirmRoundResult {
   inventory: { begin: number; produced: number; sold: number; spoiled: number; end: number; turnover: number } | null;
   // Per-market performance (null unless geography is on). Drives the world-map / City View UI.
   // bySeg carries within-market per-segment standings (q_sold, within-market share, local price) for the per-city demand panel.
-  markets: Record<string, { revenue: number; q_sold: number; entered: boolean; bySeg?: Record<SegmentId, { q_sold: number; share: number; price: number }> }> | null;
+  // produced = producer capacity sited in the market; net = produced − q_sold; lanes = inbound
+  // shipments (shortfall from the nearest base) for the trade-lane viz. (consumed == q_sold.)
+  markets: Record<string, { revenue: number; q_sold: number; entered: boolean; bySeg?: Record<SegmentId, { q_sold: number; share: number; price: number }>; produced: number; net: number; lanes: { origin_market: string; units: number; cost: number }[] }> | null;
   scorecard_raw: { financial: number; market: number; intangible: number; stakeholder: number };
   scorecard_norm: { financial: number; market: number; intangible: number; stakeholder: number };
   scorecard_cumulative: number;
