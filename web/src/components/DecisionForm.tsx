@@ -39,6 +39,8 @@ const INVEST_FIELDS: { key: InvestKey; label: string; hint: string }[] = [
   { key: "invest_T_gov", label: STOCK_LABEL.T_gov, hint: "Standing with your distributors and regulators." },
 ];
 
+export type DeskId = "all" | "commercial" | "operations" | "finance" | "relations";
+
 export function DecisionForm({
   view,
   defaultDecision,
@@ -53,6 +55,7 @@ export function DecisionForm({
   cityActions,
   decision,
   setDecision,
+  desk = "all",
 }: {
   view: GameView;
   defaultDecision: () => Promise<FirmDecision>;
@@ -73,6 +76,9 @@ export function DecisionForm({
   // tab switches; when absent (multiplayer), the form keeps it locally as before.
   decision?: FirmDecision | null;
   setDecision?: (d: FirmDecision) => void;
+  // Pro-mode desk filter (also the future role-scoping hook): "all" shows every lever card;
+  // a desk shows only its cards. Hosted in Play; multiplayer leaves it "all".
+  desk?: DeskId;
 }) {
   const [localD, setLocalD] = useState<FirmDecision | null>(null);
   const lifted = setDecision !== undefined;
@@ -84,6 +90,8 @@ export function DecisionForm({
   const [detailFac, setDetailFac] = useState<string | null>(null);
   const [siteDistrict, setSiteDistrict] = useState<string>("");
   const activeSegs = view.segments.filter((s) => s.active).map((s) => s.id);
+  // Pro-mode desk filter: hide a lever card when a specific desk is selected and it isn't this one.
+  const deskCls = (dk: DeskId) => (desk === "all" || desk === dk ? "" : "hidden");
 
   // When lifted, the parent screen owns init/reset (so the draft survives tab switches);
   // only seed the LOCAL draft here for the multiplayer path.
@@ -337,7 +345,7 @@ export function DecisionForm({
       <div className={`grid content-start gap-4 ${twoCol ? "2xl:grid-cols-2" : ""}`}>
         <div className="grid min-w-0 content-start gap-4">
         {/* Pricing */}
-        <Card>
+        <Card className={deskCls("commercial")}>
           <Eyebrow>Lineup &amp; Pricing</Eyebrow>
           <div className="mb-3 text-sm text-inksoft">Set your price in each category. Est. unit cost {fmt.price(view.unitCostEst)}.</div>
           <div className="grid gap-3">
@@ -364,7 +372,7 @@ export function DecisionForm({
         </Card>
 
         {/* Capacity + presence */}
-        <Card>
+        <Card className={deskCls("operations")}>
           <Eyebrow>Tanks &amp; Allocation</Eyebrow>
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
@@ -416,7 +424,7 @@ export function DecisionForm({
         </Card>
 
         {/* Investments */}
-        <Card>
+        <Card className={deskCls("operations")}>
           <Eyebrow>Build the Brewery</Eyebrow>
           <div className="grid gap-3 sm:grid-cols-2">
             {INVEST_FIELDS.map((f) => (
@@ -434,7 +442,7 @@ export function DecisionForm({
         </Card>
 
         {/* Financing */}
-        <Card>
+        <Card className={deskCls("finance")}>
           <Eyebrow>Financing</Eyebrow>
           <div className="mb-2 flex flex-wrap gap-x-4 gap-y-0.5 text-[0.72rem] text-inksoft tnum">
             <span>debt {fmt.money(view.own.debt)}</span>
@@ -502,7 +510,7 @@ export function DecisionForm({
 
         {/* With geography on, the City View tab owns markets + facility siting — point there. */}
         {facOn && cityManaged && (
-          <Card>
+          <Card className={deskCls("operations")}>
             <Eyebrow>Facilities &amp; markets</Eyebrow>
             <p className="mt-1 text-sm text-inksoft">Your cities, districts, and facility siting now live on the <b className="text-ink">City View</b> tab — build, enter new markets, and route capacity there. Everything you queue is committed with this round when you brew.</p>
           </Card>
@@ -510,7 +518,7 @@ export function DecisionForm({
 
         {/* Facilities (MOD-B11) — owned physical capacity */}
         {facOn && !cityManaged && (
-          <Card>
+          <Card className={deskCls("operations")}>
             <div className="mb-2 flex items-center gap-2">
               <Eyebrow>Facilities</Eyebrow>
               <InfoDot title="Facilities" align="right">
@@ -618,7 +626,7 @@ export function DecisionForm({
 
         {/* Team (MOD-B12) — named human capital */}
         {empOn && (
-          <Card>
+          <Card className={deskCls("operations")}>
             <div className="mb-2 flex items-center gap-2">
               <Eyebrow>Team</Eyebrow>
               <InfoDot title="Your team" align="right">
@@ -727,7 +735,7 @@ export function DecisionForm({
         {/* Markets / worldview (MOD-B01 geography, MOD-B02 international). Hidden when the
             City View tab owns markets (single-player); still shown for multiplayer. */}
         {geoOn && markets.length > 1 && !cityManaged && (
-          <Card>
+          <Card className={deskCls("commercial")}>
             <div className="flex items-center gap-1.5">
               <Eyebrow>Markets</Eyebrow>
               <InfoDot title="Geographic strategy">Your capacity is split across the regions you run — entering a market trades home presence for reach. Regions have different tastes; your brand carries at a discount abroad. Export markets add tariffs &amp; currency swings.</InfoDot>
@@ -763,7 +771,7 @@ export function DecisionForm({
 
         {/* Expansion-module plays & programs (only the enabled ones render) */}
         {anyModuleControls && (
-          <Card>
+          <Card className={desk === "finance" ? "hidden" : ""}>
             <div className="flex items-center gap-1.5">
               <Eyebrow>Plays &amp; Programs</Eyebrow>
               <InfoDot title="Expansion modes">These controls appear because your instructor enabled extra modes for this game. They're off in a standard game.</InfoDot>
@@ -1009,7 +1017,7 @@ export function DecisionForm({
 
         {/* Alliances (MOD-A05 contingent contracts + MOD-A06 renegotiation) */}
         {coopOn && (
-          <Card>
+          <Card className={deskCls("relations")}>
             <div className="flex items-center gap-1.5">
               <Eyebrow>Alliances</Eyebrow>
               <InfoDot title="Coopetition">Form a pact with a rival — pool brand, coordinate capacity, or share supply. The governance form is the real choice: a handshake costs trust to break, a formal contract costs cash but supports contingent clauses and renegotiation, a guild is powerful but draws antitrust.</InfoDot>
@@ -1021,7 +1029,7 @@ export function DecisionForm({
         )}
 
         {/* Belief + reflection + info */}
-        <Card>
+        <Card className={deskCls("commercial")}>
           <Eyebrow>Read &amp; Reflect</Eyebrow>
           <div className="grid gap-3 sm:grid-cols-2">
             <div>

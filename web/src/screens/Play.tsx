@@ -3,7 +3,7 @@ import type { FirmDecision } from "drinkwars-engine";
 import type { GameView } from "../game/controller.js";
 import { SEG_TAG, SHOCK_META, fmt } from "../labels.js";
 import { Button, Card, Eyebrow, Stat, Tag } from "../components/ui.js";
-import { DecisionForm } from "../components/DecisionForm.js";
+import { DecisionForm, type DeskId } from "../components/DecisionForm.js";
 import { Diagnostics } from "../components/Diagnostics.js";
 import { Standings } from "../components/Standings.js";
 import { Events } from "../components/Events.js";
@@ -31,6 +31,16 @@ const NAV_ICON: Record<Dest, JSX.Element> = {
   map: <><path d="M9 4 4 6v14l5-2 6 2 5-2V4l-5 2-6-2Z" /><path d="M9 4v14M15 6v14" /></>,
 };
 
+/** Decide-tab desk filter (design's role lanes). "All" shows every lever; a desk focuses
+ *  one area. The future role system maps a player's role → a default desk here. */
+const DESKS: { id: DeskId; label: string; color: string }[] = [
+  { id: "all", label: "All", color: "var(--color-inksoft)" },
+  { id: "commercial", label: "Commercial", color: "var(--color-copper)" },
+  { id: "operations", label: "Operations", color: "var(--color-aero)" },
+  { id: "finance", label: "Finance", color: "var(--color-hop)" },
+  { id: "relations", label: "Relations", color: "var(--color-plum)" },
+];
+
 export function Play({
   view,
   busy,
@@ -48,6 +58,7 @@ export function Play({
 }) {
   const [dest, setDest] = useState<Dest>("decide");
   const [rtab, setRtab] = useState<RTab>("dispatch");
+  const [desk, setDesk] = useState<DeskId>("all");
   const [infoPreview, setInfoPreview] = useState(false);
   const [detailFirm, setDetailFirm] = useState<string | null>(null);
   // Talent raids are lifted here so they can be made from a rival's dossier AND the
@@ -186,10 +197,23 @@ export function Play({
             : <MarketMap view={view} onInspect={setDetailFirm} />)}
 
           {dest === "decide" && (
-            <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
+            <div className="grid gap-3">
+              {view.ownActive && !view.complete && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="flex items-center gap-1.5 rounded-full bg-ink px-2.5 py-1"><span className="h-1.5 w-1.5 rounded-full bg-hop" /><span className="font-mono text-[0.55rem] font-bold uppercase tracking-[0.08em] text-paper">Pro mode · all levers</span></span>
+                  <span className="flex-1" />
+                  <span className="hidden font-mono text-[0.55rem] uppercase tracking-wide text-inksoft sm:inline">Focus desk</span>
+                  {DESKS.map((dk) => { const on = desk === dk.id; return (
+                    <button key={dk.id} onClick={() => setDesk(dk.id)} className="flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 font-mono text-[0.6rem] font-bold uppercase tracking-wide transition-colors" style={{ borderColor: on ? dk.color : "var(--color-line2)", background: on ? `color-mix(in srgb, ${dk.color} 14%, var(--color-panel))` : "var(--color-panel)", color: on ? dk.color : "var(--color-inksoft)" }}>
+                      <span className="h-2 w-2 rounded-sm" style={{ background: dk.color }} />{dk.label}
+                    </button>
+                  ); })}
+                </div>
+              )}
+              <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
               <div className="min-w-0">
                 {view.ownActive && !view.complete && (
-                  <DecisionForm view={view} defaultDecision={defaultDecision} onPlay={handlePlay} busy={busy} infoCost={infoCost} onInfoChange={setInfoPreview} poaches={poaches} onPoach={queuePoach} cityActions={cityActions} decision={decision} setDecision={setDecision} />
+                  <DecisionForm view={view} defaultDecision={defaultDecision} onPlay={handlePlay} busy={busy} infoCost={infoCost} onInfoChange={setInfoPreview} poaches={poaches} onPoach={queuePoach} cityActions={cityActions} decision={decision} setDecision={setDecision} desk={desk} />
                 )}
                 {!view.ownActive && !view.complete && (
                   <Card>
@@ -217,6 +241,7 @@ export function Play({
                   </Card>
                 )}
                 <Events events={parseEvents(view.events, view.names[view.own.id] ?? "")} />
+              </div>
               </div>
             </div>
           )}
