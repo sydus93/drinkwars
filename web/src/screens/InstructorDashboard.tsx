@@ -7,11 +7,17 @@ import { Events } from "../components/Events.js";
 import { parseEvents } from "../components/eventFeed.js";
 import { SEG_LABEL, fmt } from "../labels.js";
 import { teamColor } from "../lib/teamColors.js";
+import { TuningBoard, tuningDefaults, type TuningVals } from "./TuningBoard.js";
 
-type DashTab = "overview" | "trajectories" | "score" | "market" | "strategy" | "coopetition" | "finance" | "team";
+type DashTab = "overview" | "monitor" | "balance" | "schedule" | "export" | "trajectories" | "score" | "market" | "strategy" | "coopetition" | "finance" | "team";
 
+// Design IA first (Overview · Monitor · Balance · Schedule · Export), then the deep analytics.
 const TABS: { id: DashTab; label: string }[] = [
   { id: "overview", label: "Overview" },
+  { id: "monitor", label: "Monitor" },
+  { id: "balance", label: "Balance" },
+  { id: "schedule", label: "Schedule" },
+  { id: "export", label: "Export" },
   { id: "trajectories", label: "Trajectories" },
   { id: "score", label: "Score anatomy" },
   { id: "market", label: "Market" },
@@ -20,6 +26,8 @@ const TABS: { id: DashTab; label: string }[] = [
   { id: "finance", label: "Finance & health" },
   { id: "team", label: "Team drill-down" },
 ];
+/** Tabs that need a resolved round; Monitor/Balance/Schedule/Export work from round 0. */
+const NEEDS_ROUND = new Set<DashTab>(["overview", "trajectories", "score", "market", "strategy", "coopetition", "finance", "team"]);
 
 const SCORE_KEYS = ["financial", "market", "intangible", "stakeholder"] as const;
 const SCORE_LABEL: Record<(typeof SCORE_KEYS)[number], string> = {
@@ -679,6 +687,83 @@ function TeamPanel({ d }: { d: Derived }) {
 // Dashboard shell
 // =============================================================================
 
+/** Monitor — where each team stands (joined/bot, last decision, cash, rank). Live this-round
+ *  submission status lives on the controls screen; this is the resolved-round snapshot. */
+function MonitorPanel({ d }: { d: Derived }) {
+  const lastEng = d.engByRound.get(d.latestRound) ?? [];
+  const engByFirm = new Map(lastEng.map((e) => [e.firmId, e]));
+  const panelByFirm = new Map(d.latest.map((p) => [p.firmId, p]));
+  return (
+    <Card>
+      <Eyebrow>Monitor · teams</Eyebrow>
+      <div className="mb-3 text-sm text-inksoft">Where each team stands{d.latestRound >= 0 ? ` after round ${d.latestRound + 1}` : ""}. Live this-round submission status is on the controls screen.</div>
+      <div className="grid grid-cols-[1.6fr_1.1fr_1fr_0.7fr] gap-2 border-b border-line pb-1 font-mono text-[0.55rem] uppercase tracking-wide text-inksoft"><span>Team</span><span>Last decision</span><span className="text-right">Cash</span><span className="text-right">Rank</span></div>
+      {d.teams.map((t) => {
+        const e = engByFirm.get(t.firmId); const p = panelByFirm.get(t.firmId);
+        return (
+          <div key={t.firmId} className="grid grid-cols-[1.6fr_1.1fr_1fr_0.7fr] items-center gap-2 border-b border-line py-1.5 last:border-0">
+            <span className="flex min-w-0 items-center gap-2"><ColorDot color={d.colorByFirm.get(t.firmId)!} /><span className="truncate text-sm font-semibold text-ink">{d.nameByFirm.get(t.firmId)}</span>{!t.joined && <Tag tone="ink">bot</Tag>}</span>
+            <span>{e ? <Tag tone={e.submitted ? "hop" : "ink"}>{e.submitted ? `submitted${e.revisionCount > 0 ? ` · ${e.revisionCount} rev` : ""}` : "no decision"}</Tag> : <span className="text-[0.7rem] text-inksoft">awaiting round 1</span>}</span>
+            <span className="tnum text-right text-sm text-ink">{p ? fmt.money(p.cash) : "—"}</span>
+            <span className="tnum text-right text-sm font-semibold text-copperdeep">{p ? `#${p.rank}` : "—"}</span>
+          </div>
+        );
+      })}
+    </Card>
+  );
+}
+
+/** Balance — the Tuning Board as a planning/reference surface. Game balance is fixed at
+ *  creation, so this doesn't mutate a running game; it's for noting settings to reuse. */
+function BalancePanel() {
+  const [vals, setVals] = useState<TuningVals>(() => tuningDefaults());
+  return (
+    <div className="grid gap-3">
+      <Card><Eyebrow>Balance · the Tuning Board</Eyebrow><div className="text-sm text-inksoft">Game balance is set when you create a game (New game → Balance &amp; tuning). Experiment here and save settings to reuse as a treatment condition next section — this board does not change a game already in progress.</div></Card>
+      <TuningBoard value={vals} onChange={setVals} />
+    </div>
+  );
+}
+
+/** Schedule — the disruption timeline: each round's resolved shocks, with the current round marked. */
+function SchedulePanel({ d }: { d: Derived }) {
+  const eventsByRound = new Map(d.data.events.map((e) => [e.round, e.events] as const));
+  return (
+    <Card>
+      <Eyebrow>Schedule · disruptions &amp; phases</Eyebrow>
+      <div className="mb-3 text-sm text-inksoft">Each round's shocks as they resolve. Severity &amp; frequency are set on the Tuning Board; the timeline fills in round by round.</div>
+      <div className="grid gap-1.5">
+        {Array.from({ length: d.data.meta.nRounds }, (_, r) => {
+          const resolved = r <= d.latestRound;
+          const cur = r === d.data.meta.currentRound && d.data.meta.lifecycle !== "complete";
+          const shocks = resolved ? parseEvents(eventsByRound.get(r) ?? []).filter((e) => e.kind === "shock") : [];
+          return (
+            <div key={r} className="flex items-start gap-3 rounded-md border px-3 py-2" style={{ borderColor: cur ? "var(--color-copper)" : "var(--color-line)", background: resolved ? "var(--color-panel)" : "color-mix(in srgb, var(--color-panel2) 40%, transparent)" }}>
+              <span className="w-12 font-mono text-[0.62rem] font-bold uppercase text-copperdeep">R{r + 1}</span>
+              <div className="min-w-0 flex-1">
+                {!resolved ? <span className="text-[0.72rem] italic text-inksoft">{cur ? "in progress" : "upcoming"}</span> : shocks.length ? <div className="flex flex-wrap gap-1.5">{shocks.map((e, i) => <Tag key={i} tone="brick">{e.title}</Tag>)}</div> : <span className="text-[0.72rem] text-inksoft">calm — no shocks</span>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
+const EXPORT_TABLES = ["firm_round — per firm × round panel", "agreements — coopetition pacts", "beliefs & reflections", "engagement & telemetry", "market evolution"];
+/** Export — research data download (the panel + agreements + beliefs + telemetry) for Stata/R. */
+function ExportPanel({ exporting, onExport }: { exporting: boolean; onExport: (f: "csv" | "json") => void }) {
+  return (
+    <Card>
+      <Eyebrow>Export · research data</Eyebrow>
+      <div className="mb-3 text-sm text-inksoft">The full per-firm-per-round panel for analysis — one row per firm per resolved round, plus agreements, beliefs, and telemetry.</div>
+      <div className="mb-3 grid gap-1">{EXPORT_TABLES.map((t) => <div key={t} className="flex items-center gap-2 text-[0.78rem] text-ink"><span className="h-1.5 w-1.5 flex-none rounded-full bg-copper" />{t}</div>)}</div>
+      <div className="flex gap-2"><Button variant="go" onClick={() => onExport("csv")} disabled={exporting}>Download CSV</Button><Button variant="ghost" onClick={() => onExport("json")} disabled={exporting}>Download JSON</Button></div>
+    </Card>
+  );
+}
+
 export function InstructorDashboard({ client, gameId, roundKey }: { client: InstructorClient; gameId: string; roundKey: string }) {
   const [data, setData] = useState<DashData | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -750,21 +835,29 @@ export function InstructorDashboard({ client, gameId, roundKey }: { client: Inst
 
       {!d ? (
         <Card><div className="text-sm text-inksoft">Loading dashboard…</div></Card>
-      ) : d.data.meta.resolvedRounds === 0 ? (
-        <Card>
-          <Eyebrow>No rounds resolved yet</Eyebrow>
-          <div className="text-sm text-inksoft">Lock and resolve the first round to populate trajectories, market evolution, and the strategy map. The class snapshot fills in from there.</div>
-        </Card>
       ) : (
         <>
-          {tab === "overview" && <OverviewPanel d={d} />}
-          {tab === "trajectories" && <TrajectoriesPanel d={d} />}
-          {tab === "score" && <ScorePanel d={d} />}
-          {tab === "market" && <MarketPanel d={d} />}
-          {tab === "strategy" && <StrategyPanel d={d} />}
-          {tab === "coopetition" && <CoopetitionPanel d={d} />}
-          {tab === "finance" && <FinancePanel d={d} />}
-          {tab === "team" && <TeamPanel d={d} />}
+          {tab === "monitor" && <MonitorPanel d={d} />}
+          {tab === "balance" && <BalancePanel />}
+          {tab === "schedule" && <SchedulePanel d={d} />}
+          {tab === "export" && <ExportPanel exporting={exporting} onExport={exportFile} />}
+          {NEEDS_ROUND.has(tab) && (d.data.meta.resolvedRounds === 0 ? (
+            <Card>
+              <Eyebrow>No rounds resolved yet</Eyebrow>
+              <div className="text-sm text-inksoft">Lock and resolve the first round to populate the analytics. Monitor, Balance, Schedule, and Export are available now.</div>
+            </Card>
+          ) : (
+            <>
+              {tab === "overview" && <OverviewPanel d={d} />}
+              {tab === "trajectories" && <TrajectoriesPanel d={d} />}
+              {tab === "score" && <ScorePanel d={d} />}
+              {tab === "market" && <MarketPanel d={d} />}
+              {tab === "strategy" && <StrategyPanel d={d} />}
+              {tab === "coopetition" && <CoopetitionPanel d={d} />}
+              {tab === "finance" && <FinancePanel d={d} />}
+              {tab === "team" && <TeamPanel d={d} />}
+            </>
+          ))}
         </>
       )}
     </div>
