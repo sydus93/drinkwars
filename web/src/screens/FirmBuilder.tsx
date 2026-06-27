@@ -5,15 +5,16 @@ import type { Difficulty } from "../game/controller.js";
 import type { ModuleSelection } from "../game/multiplayer.js";
 import { Button } from "../components/ui.js";
 import { ModeSelector } from "./ModeSelector.js";
-import { CategoryCoin } from "../components/CategoryIcons.js";
 import { Avatar, SkillStars } from "../components/People.js";
-import { FIRM_PALETTE } from "../lib/teamColors.js";
+import { FacilityChip, Emblem, EMBLEM_IDS } from "../components/FacilityGlyph.js";
+import { FIRM_COLORS } from "../lib/teamColors.js";
 import { fmt } from "../labels.js";
 
 export interface FoundingChoices {
   name: string;
   tagline: string;
   color: string;
+  emblem: string;
   difficulty: Difficulty;
   modules: ModuleSelection;
   founding: { facilities: string[]; hires: string[] };
@@ -34,8 +35,8 @@ const FOUNDING_HIRE_CAP = 3;
 export function FirmBuilder({ onStart, busy }: { onStart: (c: FoundingChoices) => void; busy: boolean }) {
   const [step, setStep] = useState(0);
   const [name, setName] = useState("");
-  const [tagline, setTagline] = useState("");
-  const [color, setColor] = useState<string>(FIRM_PALETTE[0]);
+  const [color, setColor] = useState<string>(FIRM_COLORS[0].hex);
+  const [emblem, setEmblem] = useState<string>(EMBLEM_IDS[0]);
   const [difficulty, setDifficulty] = useState<Difficulty>("competitive");
   const [modules, setModules] = useState<ModuleSelection>({});
   const [facPick, setFacPick] = useState<string[]>([]);
@@ -56,30 +57,60 @@ export function FirmBuilder({ onStart, busy }: { onStart: (c: FoundingChoices) =
 
   const display = name.trim() || "Your Brewery";
   const steps = ["Identity", "The field", "Founding", "Review"];
-  const finish = () => onStart({ name, tagline, color, difficulty, modules, founding: { facilities: facPick, hires: hirePick } });
+  const finish = () => onStart({ name, tagline: "", color, emblem, difficulty, modules, founding: { facilities: facPick, hires: hirePick } });
 
   const toggleFac = (id: string) => setFacPick((p) => (p.includes(id) ? p.filter((x) => x !== id) : p.length < facMax ? [...p, id] : p));
   const toggleHire = (id: string) => setHirePick((p) => (p.includes(id) ? p.filter((x) => x !== id) : p.length < FOUNDING_HIRE_CAP ? [...p, id] : p));
 
-  const BrandCard = (
-    <div className="card overflow-hidden">
-      <div className="h-2 w-full" style={{ background: color }} />
-      <div className="p-4">
-        <div className="flex items-center gap-3">
-          <span className="grid h-12 w-12 shrink-0 place-items-center rounded-lg text-xl font-bold text-paper shadow-inner" style={{ background: color }}>
-            {display.charAt(0).toUpperCase()}
-          </span>
-          <div className="min-w-0">
-            <div className="display truncate text-xl leading-tight">{display}</div>
-            {tagline.trim() && <div className="truncate text-[0.8rem] italic text-inksoft">"{tagline.trim()}"</div>}
+  // The live identity card + how the firm's sites read on the map — the design's
+  // right-rail preview; shape shows what a site does, colour + mark show it's yours.
+  const Preview = (
+    <div className="grid content-start gap-3.5">
+      <div className="overflow-hidden rounded-2xl border border-line2" style={{ boxShadow: "0 10px 26px rgba(40,25,8,.16)" }}>
+        <div className="relative flex h-[74px] items-center justify-center" style={{ background: color }}>
+          <div className="absolute inset-0 opacity-[.16]" style={{ background: "radial-gradient(circle at 30% 20%, #fff 0, transparent 50%)" }} />
+          <div className="grid h-[50px] w-[50px] place-items-center rounded-[13px]" style={{ background: "rgba(255,255,255,.16)", border: "1.5px solid rgba(255,255,255,.4)" }}>
+            <Emblem id={emblem} size={30} color="#fff" />
           </div>
         </div>
+        <div className="bg-panel px-4 py-3.5">
+          <div className="display text-2xl font-black uppercase leading-none text-ink">{display}</div>
+          <div className="mt-1 text-[0.72rem] text-inksoft">Home market · Front Range</div>
+          <span className="mt-2.5 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1" style={{ background: `color-mix(in srgb, ${color} 13%, var(--color-panel))`, border: `1px solid color-mix(in srgb, ${color} 40%, var(--color-line))` }}>
+            <span className="h-2 w-2 rounded-sm" style={{ background: color }} />
+            <span className="font-mono text-[0.55rem] font-bold uppercase" style={{ color }}>Your colour</span>
+          </span>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-line bg-panel p-4">
+        <div className="mb-2.5 font-mono text-[0.55rem] uppercase tracking-[0.1em] text-inksoft">How your sites read on the map</div>
+        <div className="flex justify-around">
+          {([["brewery_large", "brew"], ["brewpub", "mix"], ["taproom", "sell"]] as [string, string][]).map(([t, lbl]) => (
+            <div key={t} className="flex flex-col items-center gap-1.5">
+              <FacilityChip type={t} color={color} size={40} mine />
+              <span className="font-mono text-[0.5rem] uppercase text-inksoft">{lbl}</span>
+            </div>
+          ))}
+          <div className="flex flex-col items-center gap-1.5">
+            <span className="grid h-10 w-10 place-items-center rounded-[11px]" style={{ background: color, border: "2px solid #fff4e0", boxShadow: `0 0 0 1px ${color}, 0 3px 7px rgba(40,25,8,.3)` }}><Emblem id={emblem} size={22} color="#fff" /></span>
+            <span className="font-mono text-[0.5rem] uppercase text-inksoft">badge</span>
+          </div>
+        </div>
+        <div className="mt-3 text-[0.7rem] leading-snug text-inksoft">Shape shows what a site <b className="text-ink">does</b>; your colour and mark show it's <b className="text-ink">yours</b>.</div>
+      </div>
+
+      <div className="rounded-2xl border border-line bg-panel p-4">
+        <div className="mb-2 font-mono text-[0.55rem] uppercase tracking-[0.1em] text-inksoft">You open round 1 with</div>
+        {([["Seed capital", fmt.money(startCash)], ["Home lease", "1 lot"], ["Format", `${cfg.game.n_rounds ?? 16}-round season`]] as [string, string][]).map(([k, v]) => (
+          <div key={k} className="flex justify-between border-b border-line py-1.5 last:border-0"><span className="text-[0.8rem] text-ink">{k}</span><span className="font-mono text-[0.72rem] font-bold text-copperdeep">{v}</span></div>
+        ))}
       </div>
     </div>
   );
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-3xl flex-col justify-center px-6 py-12">
+    <div className="mx-auto flex min-h-screen max-w-4xl flex-col justify-center px-6 py-10">
       <div className="rise">
         <div className="eyebrow">Found your brewery</div>
         <h1 className="wordmark mt-1 text-5xl leading-[0.95] text-ink sm:text-6xl">
@@ -90,11 +121,7 @@ export function FirmBuilder({ onStart, busy }: { onStart: (c: FoundingChoices) =
         <div className="mt-6 flex items-center gap-2">
           {steps.map((s, i) => (
             <div key={s} className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => i < step && setStep(i)}
-                className={`flex items-center gap-1.5 text-[0.72rem] font-semibold uppercase tracking-[0.1em] transition-colors ${i === step ? "text-copperdeep" : i < step ? "text-inksoft hover:text-ink" : "text-line2"}`}
-              >
+              <button type="button" onClick={() => i < step && setStep(i)} className={`flex items-center gap-1.5 text-[0.72rem] font-semibold uppercase tracking-[0.1em] transition-colors ${i === step ? "text-copperdeep" : i < step ? "text-inksoft hover:text-ink" : "text-line2"}`}>
                 <span className={`grid h-5 w-5 place-items-center rounded-full border text-[0.62rem] ${i === step ? "border-copper bg-copper text-paper" : i < step ? "border-line2 text-inksoft" : "border-line text-line2"}`}>{i + 1}</span>
                 <span className="hidden sm:inline">{s}</span>
               </button>
@@ -103,35 +130,44 @@ export function FirmBuilder({ onStart, busy }: { onStart: (c: FoundingChoices) =
           ))}
         </div>
 
-        <div className="mt-6 min-h-[18rem]">
+        <div className="mt-6 min-h-[20rem]">
           {/* STEP 0 — Identity */}
           {step === 0 && (
-            <div className="grid gap-5 sm:grid-cols-[1fr_18rem]">
-              <div className="grid content-start gap-4">
-                <label className="grid gap-1">
-                  <span className="text-sm text-inksoft">Brewery name</span>
-                  <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Name your brewery" maxLength={28} className="w-full" />
-                </label>
-                <label className="grid gap-1">
-                  <span className="text-sm text-inksoft">Tagline <span className="text-inksoft/60">(optional)</span></span>
-                  <input type="text" value={tagline} onChange={(e) => setTagline(e.target.value)} placeholder="e.g. Small batch, big heart" maxLength={60} className="w-full" />
-                </label>
-                <div className="grid gap-1.5">
-                  <span className="text-sm text-inksoft">Brewery colors</span>
-                  <div className="flex flex-wrap gap-2">
-                    {FIRM_PALETTE.map((c) => (
-                      <button key={c} type="button" onClick={() => setColor(c)} aria-label="Pick color"
-                        className={`h-9 w-9 rounded-full border-2 transition-transform hover:scale-110 ${color === c ? "border-ink" : "border-line2"}`}
-                        style={{ background: c, boxShadow: color === c ? "0 0 0 3px color-mix(in srgb, var(--color-ink) 18%, transparent)" : undefined }} />
-                    ))}
+            <div className="grid gap-6 lg:grid-cols-[1fr_24rem]">
+              <div className="grid content-start gap-5">
+                <div>
+                  <div className="mb-1.5 font-mono text-[0.6rem] uppercase tracking-[0.12em] text-copperdeep">01 · Brewery name</div>
+                  <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Hopline Brewing" maxLength={24} className="display w-full !text-2xl !uppercase" style={{ fontWeight: 800 }} />
+                </div>
+                <div>
+                  <div className="mb-2 font-mono text-[0.6rem] uppercase tracking-[0.12em] text-copperdeep">02 · House colour</div>
+                  <div className="flex flex-wrap gap-2.5">
+                    {FIRM_COLORS.map((c) => {
+                      const on = color === c.hex;
+                      return (
+                        <button key={c.id} type="button" onClick={() => setColor(c.hex)} title={c.name} className="grid h-[52px] w-[52px] place-items-center rounded-[13px] transition-transform hover:scale-105" style={{ background: c.hex, border: on ? "3px solid var(--color-ink)" : "2px solid rgba(0,0,0,.12)", boxShadow: on ? "0 4px 12px rgba(40,25,8,.3)" : "inset 0 1px 0 rgba(255,255,255,.25)" }}>
+                          {on && <span className="text-xl text-white">✓</span>}
+                        </button>
+                      );
+                    })}
                   </div>
-                  <span className="text-[0.7rem] text-inksoft">Your color marks you on the map, the leaderboard, and every chart.</span>
+                </div>
+                <div>
+                  <div className="mb-2 font-mono text-[0.6rem] uppercase tracking-[0.12em] text-copperdeep">03 · House mark</div>
+                  <div className="flex flex-wrap gap-2.5">
+                    {EMBLEM_IDS.map((id) => {
+                      const on = id === emblem;
+                      return (
+                        <button key={id} type="button" onClick={() => setEmblem(id)} className="grid h-[50px] w-[50px] place-items-center rounded-[12px]" style={{ background: on ? color : "var(--color-panel2)", border: on ? "2px solid var(--color-ink)" : "1px solid var(--color-line)" }}>
+                          <Emblem id={id} size={26} color={on ? "#fff" : "var(--color-copperdeep)"} />
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="mt-2 text-[0.7rem] text-inksoft">Your colour and mark are how every rival reads you on the map all season.</div>
                 </div>
               </div>
-              <div className="grid content-start gap-2">
-                <span className="eyebrow">Your mark</span>
-                {BrandCard}
-              </div>
+              <div className="lg:border-l lg:border-line lg:pl-6">{Preview}</div>
             </div>
           )}
 
@@ -142,8 +178,7 @@ export function FirmBuilder({ onStart, busy }: { onStart: (c: FoundingChoices) =
                 <div className="eyebrow mb-2">Rival difficulty</div>
                 <div className="grid gap-2 sm:grid-cols-3">
                   {DIFFICULTIES.map((dd) => (
-                    <button key={dd.id} type="button" onClick={() => setDifficulty(dd.id)}
-                      className={`card p-3 text-left transition-all ${difficulty === dd.id ? "border-copper shadow-[0_0_0_1px_var(--color-copper)]" : "hover:border-line2"}`}>
+                    <button key={dd.id} type="button" onClick={() => setDifficulty(dd.id)} className={`card p-3 text-left transition-all ${difficulty === dd.id ? "border-copper shadow-[0_0_0_1px_var(--color-copper)]" : "hover:border-line2"}`}>
                       <div className={`font-semibold ${difficulty === dd.id ? "text-copperdeep" : ""}`}>{dd.label}</div>
                       <div className="text-[0.72rem] leading-snug text-inksoft">{dd.blurb}</div>
                     </button>
@@ -173,7 +208,6 @@ export function FirmBuilder({ onStart, busy }: { onStart: (c: FoundingChoices) =
                     <div className="eyebrow">Founding budget</div>
                     <div className={`tnum text-sm font-semibold ${remaining < 0 ? "text-brick" : "text-ink"}`}>{fmt.money(remaining)} <span className="text-inksoft">of {fmt.money(startCash)} left</span></div>
                   </div>
-
                   {facOn && (
                     <div>
                       <div className="mb-1.5 text-sm font-semibold text-ink">Starting facilities <span className="text-[0.7rem] font-normal text-inksoft">· {facPick.length}/{facMax}</span></div>
@@ -182,8 +216,8 @@ export function FirmBuilder({ onStart, busy }: { onStart: (c: FoundingChoices) =
                           const on = facPick.includes(t.id);
                           const afford = on || (remaining - t.base_cost >= 0 && facPick.length < facMax);
                           return (
-                            <button key={t.id} type="button" onClick={() => toggleFac(t.id)} disabled={!afford}
-                              className={`flex items-center gap-2 rounded-md border p-2.5 text-left transition-colors disabled:opacity-40 ${on ? "border-copper bg-copper/[0.06]" : "border-line hover:border-copper"}`}>
+                            <button key={t.id} type="button" onClick={() => toggleFac(t.id)} disabled={!afford} className={`flex items-center gap-2 rounded-md border p-2.5 text-left transition-colors disabled:opacity-40 ${on ? "border-copper bg-copper/[0.06]" : "border-line hover:border-copper"}`}>
+                              <FacilityChip type={t.id} color={color} size={26} mine />
                               <div className="min-w-0 flex-1">
                                 <div className="text-sm font-semibold text-ink">{t.label}</div>
                                 <div className="text-[0.64rem] text-inksoft">+{fmt.int(t.production_capacity ?? t.capacity_contribution ?? 0)} tanks{(t.retail_draw ?? 0) > 0 ? ` · +${fmt.int(t.retail_draw ?? 0)} retail` : ""} · {fmt.money(t.fixed_cost)}/rd</div>
@@ -196,7 +230,6 @@ export function FirmBuilder({ onStart, busy }: { onStart: (c: FoundingChoices) =
                       </div>
                     </div>
                   )}
-
                   {empOn && (
                     <div>
                       <div className="mb-1.5 text-sm font-semibold text-ink">Founding team <span className="text-[0.7rem] font-normal text-inksoft">· {hirePick.length}/{FOUNDING_HIRE_CAP}</span></div>
@@ -205,8 +238,7 @@ export function FirmBuilder({ onStart, busy }: { onStart: (c: FoundingChoices) =
                           const on = hirePick.includes(cnd.id);
                           const afford = on || (remaining - cnd.salary >= 0 && hirePick.length < FOUNDING_HIRE_CAP);
                           return (
-                            <button key={cnd.id} type="button" onClick={() => toggleHire(cnd.id)} disabled={!afford}
-                              className={`flex items-center gap-2 rounded-md border p-2 text-left transition-colors disabled:opacity-40 ${on ? "border-copper bg-copper/[0.06]" : "border-line hover:border-copper"}`}>
+                            <button key={cnd.id} type="button" onClick={() => toggleHire(cnd.id)} disabled={!afford} className={`flex items-center gap-2 rounded-md border p-2 text-left transition-colors disabled:opacity-40 ${on ? "border-copper bg-copper/[0.06]" : "border-line hover:border-copper"}`}>
                               <Avatar seed={cnd.avatar_seed} name={cnd.name} size={26} />
                               <div className="min-w-0 flex-1">
                                 <div className="flex items-center gap-1.5"><span className="truncate text-sm font-semibold text-ink">{cnd.name}</span><SkillStars n={cnd.skill} /></div>
@@ -226,8 +258,8 @@ export function FirmBuilder({ onStart, busy }: { onStart: (c: FoundingChoices) =
 
           {/* STEP 3 — Review */}
           {step === 3 && (
-            <div className="grid gap-4 sm:grid-cols-[18rem_1fr]">
-              {BrandCard}
+            <div className="grid gap-5 lg:grid-cols-[24rem_1fr]">
+              {Preview}
               <div className="grid content-start gap-2 text-sm">
                 <Row label="Rivals" value={DIFFICULTIES.find((d) => d.id === difficulty)?.label ?? difficulty} />
                 <Row label="Expansions" value={Object.keys(modules).length ? `${Object.keys(modules).length} on` : "Standard game"} />
@@ -244,13 +276,9 @@ export function FirmBuilder({ onStart, busy }: { onStart: (c: FoundingChoices) =
         <div className="mt-6 flex items-center justify-between border-t border-line pt-4">
           <Button variant="ghost" onClick={() => setStep((s) => Math.max(0, s - 1))} disabled={step === 0}>Back</Button>
           {step < steps.length - 1 ? (
-            <Button variant="go" onClick={() => setStep((s) => s + 1)} disabled={remaining < 0}>
-              {remaining < 0 ? "Over budget" : "Next →"}
-            </Button>
+            <Button variant="go" onClick={() => setStep((s) => s + 1)} disabled={remaining < 0}>{remaining < 0 ? "Over budget" : "Next →"}</Button>
           ) : (
-            <Button variant="go" onClick={finish} disabled={busy || remaining < 0} className="px-6 py-3 text-base">
-              {busy ? "Pouring…" : "Open for business →"}
-            </Button>
+            <Button variant="go" onClick={finish} disabled={busy || remaining < 0} className="px-6 py-3 text-base">{busy ? "Pouring…" : `Found ${display.split(" ")[0]} →`}</Button>
           )}
         </div>
         <p className="mt-4 font-mono text-[0.7rem] tracking-wide text-inksoft">Single-player · 16 rounds · 7 adaptive AI rivals · runs entirely in your browser</p>

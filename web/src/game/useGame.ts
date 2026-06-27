@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import type { ConfigOverride, FirmDecision } from "drinkwars-engine";
 import { SinglePlayerGame, type Difficulty, type GameView } from "./controller.js";
-import { setPlayerColor } from "../lib/teamColors.js";
+import { setPlayerColor, setPlayerEmblem } from "../lib/teamColors.js";
 
 export function useGame() {
   const ref = useRef<SinglePlayerGame | null>(null);
@@ -48,6 +48,7 @@ export function useGame() {
   const reset = useCallback(() => {
     ref.current = null;
     setPlayerColor(null); // back to the default palette until the next firm is founded
+    setPlayerEmblem(null);
     setView(null);
     setError(null);
   }, []);

@@ -31,6 +31,25 @@ export const FIRM_PALETTE = [
   "var(--color-gold)", "var(--color-plum)", "var(--color-brick)",
 ] as const;
 
+/** The eight named house colours offered in Create-a-Firm (design palette). Stored
+ *  as hex so setPlayerColor threads the choice straight through firmColor(). */
+export const FIRM_COLORS = [
+  { id: "copper", name: "Copper", hex: "#c0703a" },
+  { id: "plum", name: "Plum", hex: "#7c4f86" },
+  { id: "forest", name: "Forest", hex: "#5a8a2a" },
+  { id: "teal", name: "Teal", hex: "#1f8c93" },
+  { id: "gold", name: "Gold", hex: "#d99b2b" },
+  { id: "brick", name: "Brick", hex: "#b0533f" },
+  { id: "indigo", name: "Indigo", hex: "#4f5a9a" },
+  { id: "slate", name: "Slate", hex: "#5a6b72" },
+] as const;
+
+/** The player's chosen house mark (emblem id), set in the firm builder; null = none.
+ *  Mirrors setPlayerColor so the badge threads everywhere without prop drilling. */
+let playerEmblemOverride: string | null = null;
+export const setPlayerEmblem = (e: string | null): void => { playerEmblemOverride = e; };
+export const playerEmblem = (): string | null => playerEmblemOverride;
+
 export const firmColor = (firmId: string): string => {
   if (playerColorOverride && firmId === "firm_1") return playerColorOverride;
   const n = parseInt(String(firmId).replace(/^\D+/, ""), 10);

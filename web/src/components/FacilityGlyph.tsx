@@ -245,3 +245,28 @@ export function flowBadge(net: number, eps = 5): { text: string; tone: "in" | "o
   if (net < -eps) return { text: `↓ in ${Math.round(-net)}`, tone: "in" };
   return { text: "= balanced", tone: "neutral" };
 }
+
+// ───────────────────────── firm emblems (the per-firm mark) ─────────────────────────
+/** Eight house marks chosen in Create-a-Firm — the scaling/colour-blind-safe identity
+ *  layer beyond colour. Drawn in currentColor so they sit on any background. */
+export const EMBLEM_IDS = ["e-hops", "e-mtn", "e-anchor", "e-wheat", "e-star", "e-flame", "e-crown", "e-bolt"] as const;
+export type EmblemId = (typeof EMBLEM_IDS)[number];
+
+function emblemMark(id: string): ReactNode {
+  switch (id) {
+    case "e-hops": return <path d="M12 3c2 2 2 4 0 6-2-2-2-4 0-6ZM8 8c2.5 1 3.5 2.7 3 5.5C8.5 12.5 7.5 10.8 8 8ZM16 8c-2.5 1-3.5 2.7-3 5.5 2.5-1 3.5-2.7 3-5.5ZM7 14c2.5 1 3.5 2.7 3 5.5C7.5 18.5 6.5 16.8 7 14ZM17 14c-2.5 1-3.5 2.7-3 5.5 2.5-1 3.5-2.7 3-5.5Z" fill="currentColor" />;
+    case "e-mtn": return <><path d="M3 20 10 7l4 7 2-3 5 9Z" fill="currentColor" /><path d="m8.5 11 1.5 2.6L11.5 11 10 8.4Z" fill="#fff" opacity=".5" /></>;
+    case "e-anchor": return <><circle cx="12" cy="5" r="2.2" fill="currentColor" /><path d="M12 7v12M6 12a6 6 0 0 0 12 0M8 11H5M16 11h3" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" /></>;
+    case "e-wheat": return <><path d="M12 3v18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /><path d="M12 8c2-1 3.5-.5 4 1-2 1-3.5.5-4-1ZM12 8c-2-1-3.5-.5-4 1 2 1 3.5.5 4-1ZM12 13c2-1 3.5-.5 4 1-2 1-3.5.5-4-1ZM12 13c-2-1-3.5-.5-4 1 2 1 3.5.5 4-1Z" fill="currentColor" /></>;
+    case "e-star": return <path d="m12 3 2.6 5.6 6.1.7-4.5 4.1 1.2 6-5.4-3-5.4 3 1.2-6L3.3 9.3l6.1-.7Z" fill="currentColor" />;
+    case "e-flame": return <path d="M12 3c1 4 5 5 5 9a5 5 0 0 1-10 0c0-2 1-3 2-4 .5 1.5 1.5 2 2.5 1.5C12.5 8 11 6 12 3Z" fill="currentColor" />;
+    case "e-crown": return <path d="M3 8l3.5 9h11L21 8l-4.5 4L12 5 7.5 12Z" fill="currentColor" />;
+    case "e-bolt": return <path d="M13 2 4 14h7l-1 8 9-12h-7Z" fill="currentColor" />;
+    default: return <circle cx="12" cy="12" r="7" fill="currentColor" />;
+  }
+}
+
+/** A firm emblem, recolored via `color` (defaults to currentColor). */
+export function Emblem({ id, size = 24, color = "currentColor" }: { id: string; size?: number; color?: string }) {
+  return <svg viewBox="0 0 24 24" width={size} height={size} fill="none" style={{ color }} aria-hidden="true">{emblemMark(id)}</svg>;
+}

@@ -16,6 +16,8 @@ import { Field } from "../components/Field.js";
 import { MarketMap } from "../components/MarketMap.js";
 import { CityView } from "../components/CityView.js";
 import { TapDispatch } from "../components/TapDispatch.js";
+import { Emblem } from "../components/FacilityGlyph.js";
+import { firmColor, playerEmblem } from "../lib/teamColors.js";
 import { emptyCityActions, type CityActions } from "../game/cityActions.js";
 
 /** Primary destinations (design: Review · Decide · Map). Distribution is a drawer
@@ -134,7 +136,13 @@ export function Play({
       {/* top bar */}
       <header className="mb-3 flex flex-wrap items-end justify-between gap-3 border-b border-line2 pb-3">
         <div>
-          <div className="eyebrow">Drink Wars · {view.difficulty}</div>
+          <div className="flex items-center gap-2">
+            <div className="eyebrow">Drink Wars · {view.difficulty}</div>
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-panel px-2 py-0.5">
+              <span className="grid h-4 w-4 place-items-center rounded-[4px]" style={{ background: firmColor(view.own.id) }}>{playerEmblem() ? <Emblem id={playerEmblem()!} size={11} color="#fff" /> : <span className="text-[0.6rem] font-bold text-paper">{(view.names[view.own.id] ?? "B").charAt(0)}</span>}</span>
+              <span className="font-mono text-[0.6rem] font-bold uppercase tracking-wide text-ink">{view.names[view.own.id] ?? "Your Brewery"}</span>
+            </span>
+          </div>
           <h1 className="display text-2xl font-semibold sm:text-3xl">
             Round <span className="text-copper">{Math.min(view.round + 1, view.nRounds)}</span>
             <span className="text-inksoft"> / {view.nRounds}</span>

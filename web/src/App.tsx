@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useGame } from "./game/useGame.js";
 import { FirmBuilder } from "./screens/FirmBuilder.js";
-import { setPlayerColor } from "./lib/teamColors.js";
+import { setPlayerColor, setPlayerEmblem } from "./lib/teamColors.js";
 import { Play } from "./screens/Play.js";
 import { Lobby } from "./screens/Lobby.js";
 import { Join } from "./screens/Join.js";
@@ -60,6 +60,7 @@ function Solo() {
           busy={busy}
           onStart={(c) => {
             setPlayerColor(c.color);
+            setPlayerEmblem(c.emblem);
             start({ breweryName: c.name, difficulty: c.difficulty, tagline: c.tagline, founding: c.founding, override: Object.keys(c.modules).length ? ({ modules: c.modules } as never) : undefined });
           }}
         />
