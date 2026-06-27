@@ -18,7 +18,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { loadConfig } from "drinkwars-engine/node";
-import { deepMerge, projectMarkets, roleBriefings, summarizeAgreementsFor, summarizeLobbying } from "drinkwars-engine";
+import { deepMerge, projectMarkets, projectFirms, projectShocks, projectHistory, roleBriefings, summarizeAgreementsFor, summarizeLobbying } from "drinkwars-engine";
 import type { FirmDecision } from "drinkwars-engine";
 import { createClient } from "@supabase/supabase-js";
 import { GameOrchestrator, InMemoryAdapter, buildInstructorDashboard, createSupabaseAdapter, dashboardToCsv, randomBreweryNames, renameFirms, type StorageAdapter } from "./index.js";
@@ -103,7 +103,8 @@ async function viewFor(gameId: string, teamId: string) {
   const unitCostEst = own ? (own.unit_cost > 0 ? own.unit_cost : (config?.costs?.c_base ?? 0) * 0.85) : 0;
   // This team's own last-round diagnostics only (extracted server-side).
   let ownResult: any = null;
-  const lastFull = own ? (await store.getRoundResults(gameId)).at(-1) : null;
+  const allResults = own ? await store.getRoundResults(gameId) : [];
+  const lastFull = allResults.at(-1) ?? null;
   if (own) {
     ownResult = lastFull ? (lastFull.result.firm_results.find((f) => f.firm_id === own.id) ?? null) : null;
   }
@@ -119,6 +120,9 @@ async function viewFor(gameId: string, teamId: string) {
   let agreements: ReturnType<typeof summarizeAgreementsFor> = [];
   let lobbyInitiatives: ReturnType<typeof summarizeLobbying> = [];
   let markets: ReturnType<typeof projectMarkets> = []; // MOD-B01 per-team city view (same projection as single-player)
+  let firms: ReturnType<typeof projectFirms> = []; // public snapshots; rivals' private fields redacted unless this team bought market research
+  let shocks: ReturnType<typeof projectShocks> = [];
+  const history = own ? projectHistory(allResults, own.id) : []; // own trend + public field aggregate
   if (own) {
     const ws = await store.getLatestWorldState(gameId);
     if (ws && config?.modules?.teamRoles?.enabled) briefings = roleBriefings(ws.state, config, own.id) as never;
@@ -127,6 +131,8 @@ async function viewFor(gameId: string, teamId: string) {
       agreements = summarizeAgreementsFor(ws.state, own.id, nameOf);
       if (config) lobbyInitiatives = summarizeLobbying(config, ws.state);
       if (config) markets = projectMarkets(ws.state, config, own.id, pub.round, lastFull?.result.firm_results ?? [], nameOf);
+      if (config) firms = projectFirms(ws.state, config, own.id, lastFull?.result.firm_results ?? [], !!decision?.decision?.buy_info, nameOf);
+      shocks = projectShocks(ws.state, pub.round);
     }
   }
   return {
@@ -135,6 +141,9 @@ async function viewFor(gameId: string, teamId: string) {
     agreements,
     lobbyInitiatives,
     markets,
+    firms,
+    shocks,
+    history,
     names,
     round: pub.round,
     lifecycle: pub.lifecycle,

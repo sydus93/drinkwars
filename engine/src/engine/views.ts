@@ -7,9 +7,10 @@
  * so the engine stays free of presentation strings.
  */
 import type {
-  ClauseAction, ClauseCondition, Config, FirmId, FirmRoundResult, FirmState, GovernanceForm, MarketKind, RegulationType, SegmentId, TemplateId, WorldState,
+  ClauseAction, ClauseCondition, Config, FirmId, FirmRoundResult, FirmState, GovernanceForm, MarketKind, RegulationType, RoundResult, SegmentId, TemplateId, WorldState,
 } from "../types.js";
 import { activeMarkets } from "./geography.js";
+import { firmValuation } from "./finance.js";
 
 export interface AllianceClauseSummary {
   condition: ClauseCondition;
@@ -158,6 +159,85 @@ export function projectMarkets(
       yourSites: own ? sitesOf(own) : [],
       rivalSites: world.firms.filter((f) => f.id !== firmId && f.status === "active").flatMap(sitesOf),
       lots,
+    };
+  });
+}
+
+// ───────────────────────── shocks the viewer may know about ─────────────────────────
+export interface ShockSignalView { typeId: string; kind: string; target: SegmentId | "all"; round: number; roundsAway: number; active: boolean; signaled: boolean }
+/** Shocks currently in effect + any explicitly-telegraphed upcoming ones (within 3 rounds).
+ *  Unannounced shocks stay hidden until they fire — seeing them coming would break the game. */
+export function projectShocks(world: WorldState, round: number): ShockSignalView[] {
+  const out: ShockSignalView[] = [];
+  for (const s of world.shock_timeline ?? []) {
+    const active = s.fired && s.round <= round && round < s.round + s.duration;
+    const upcomingSignaled = !s.fired && s.signaling === "signaled_noisy" && s.round >= round && s.round <= round + 3;
+    if (!active && !upcomingSignaled) continue;
+    out.push({ typeId: s.type_id, kind: s.kind, target: s.target, round: s.round, roundsAway: s.round - round, active, signaled: s.signaling === "signaled_noisy" });
+  }
+  out.sort((a, b) => Number(b.active) - Number(a.active) || a.roundsAway - b.roundsAway);
+  return out;
+}
+
+// ───────────────────────── per-round history (own trend + public field aggregate) ─────────────────────────
+export interface OwnTrendView { round: number; cash: number; score: number; rank: number; share: number; Q: number; B: number; netIncome: number; equity: number }
+export interface FieldTrendView { round: number; topScore: number; medianScore: number; totalQ: number; activeFirms: number }
+const median = (xs: number[]): number => { if (!xs.length) return 0; const s = [...xs].sort((a, b) => a - b); const m = Math.floor(s.length / 2); return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+/** The viewer's own trajectory + the public field aggregate, per resolved round. All public
+ *  (own = the viewer's; field = league-wide aggregates already visible in standings). */
+export function projectHistory(records: { round: number; result: RoundResult }[], viewerId: FirmId): { own: OwnTrendView; field: FieldTrendView }[] {
+  return records.map((rr) => {
+    const ranked = [...rr.result.firm_results].sort((a, b) => b.scorecard_cumulative - a.scorecard_cumulative);
+    const ownFr = rr.result.firm_results.find((f) => f.firm_id === viewerId);
+    const scores = rr.result.firm_results.map((f) => f.scorecard_cumulative);
+    return {
+      own: { round: rr.round, cash: ownFr?.balance_sheet.cash ?? 0, score: ownFr?.scorecard_cumulative ?? 0, rank: ranked.findIndex((f) => f.firm_id === viewerId) + 1, share: ownFr ? Object.values(ownFr.segments).reduce((a, s) => a + s.share, 0) : 0, Q: ownFr?.state.Q ?? 0, B: ownFr?.state.B ?? 0, netIncome: ownFr?.pnl.net_income ?? 0, equity: ownFr?.balance_sheet.equity ?? 0 },
+      field: { round: rr.round, topScore: Math.max(...scores, 0), medianScore: median(scores), totalQ: rr.result.market.reduce((a, m) => a + m.total_q, 0), activeFirms: rr.result.firm_results.filter((f) => f.status === "active").length },
+    };
+  });
+}
+
+// ───────────────────────── per-firm snapshots (research-gated for rivals) ─────────────────────────
+export interface FirmSnapshotView {
+  firm_id: FirmId; name: string; status: string; isYou: boolean; score: number; share: number;
+  Q: number; B: number; cap: number; unitCost: number; T_emp: number; T_inv: number; T_gov: number;
+  leverage: number; netIncome: number; priceBySeg: Record<SegmentId, number>; shareBySeg: Record<SegmentId, number>;
+  focus: SegmentId[]; cash: number; debt: number; valuation: number; distressRounds: number;
+  keyHires: string[]; verticalAssets: string[];
+  employees: { id: string; name: string; role: string; skill: number; satisfaction: number; salary: number }[];
+  facilities: { type: string; location_id?: string; market_id?: string; active: boolean }[];
+}
+/** Latest snapshot of every firm. PUBLIC fields (id/name/status/score/share/focus/facilities/
+ *  distress) are always included; PRIVATE fields (stocks, cash, prices, employees, hires,
+ *  valuation) only for the viewer's own firm or when `reveal` (market research purchased) is
+ *  true — so rivals' private state never leaks to a student who hasn't paid for it. Solo passes
+ *  reveal=true (single human; the UI blurs cosmetically); multiplayer gates on the purchase. */
+export function projectFirms(world: WorldState, c: Config, viewerId: FirmId, lastFirmResults: FirmRoundResult[], reveal: boolean, nameOf: (id: FirmId) => string): FirmSnapshotView[] {
+  const lastByFirm = new Map(lastFirmResults.map((f) => [f.firm_id, f]));
+  return world.firms.map((f) => {
+    const isYou = f.id === viewerId;
+    const show = isYou || reveal;
+    const fr = lastByFirm.get(f.id);
+    const priceBySeg: Record<SegmentId, number> = {};
+    const shareBySeg: Record<SegmentId, number> = {};
+    const focus: SegmentId[] = [];
+    if (fr) for (const [seg, r] of Object.entries(fr.segments)) { if (r.share > 0.01) focus.push(seg as SegmentId); if (show) { priceBySeg[seg as SegmentId] = r.price; shareBySeg[seg as SegmentId] = r.share; } }
+    return {
+      firm_id: f.id, name: nameOf(f.id), status: f.status, isYou,
+      score: fr?.scorecard_cumulative ?? 0,
+      share: fr ? Object.values(fr.segments).reduce((a, s) => a + s.share, 0) : 0,
+      Q: show ? f.Q : 0, B: show ? f.B : 0, cap: show ? f.cap : 0, unitCost: show ? f.unit_cost : 0,
+      T_emp: show ? f.T_emp : 0, T_inv: show ? f.T_inv : 0, T_gov: show ? f.T_gov : 0,
+      leverage: show ? f.debt / Math.max(f.paid_in_capital + f.retained_earnings, 1e-6) : 0,
+      netIncome: show ? (fr?.pnl.net_income ?? 0) : 0,
+      priceBySeg, shareBySeg, focus,
+      cash: show ? f.cash : 0, debt: show ? f.debt : 0,
+      valuation: show ? firmValuation(f, c) : 0,
+      distressRounds: f.rounds_below_health ?? 0,
+      keyHires: show ? (f.key_hires ?? []).map((h) => h.role) : [],
+      verticalAssets: show ? (f.vertical_assets ?? []).map((a) => a.id) : [],
+      employees: show ? (f.employees ?? []).map((e) => ({ id: e.id, name: e.name, role: e.role, skill: e.skill, satisfaction: e.satisfaction, salary: e.salary })) : [],
+      facilities: (f.facilities ?? []).map((x) => ({ type: x.type, location_id: x.location_id, market_id: x.market_id, active: x.active })),
     };
   });
 }

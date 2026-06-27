@@ -5,7 +5,7 @@
  * adaptive best-response bots from the engine. This is app-spec §9 step 0.
  */
 import { GameOrchestrator, InMemoryAdapter, randomBreweryNames, renameFirms } from "drinkwars-server";
-import { resolveConfig, decideAdaptive, ADAPTIVE_LEANS, inventoryEnabled, roleBriefings, firmValuation, summarizeAgreementsFor, summarizeLobbying, generateHiringMarket, projectMarkets } from "drinkwars-engine";
+import { resolveConfig, decideAdaptive, ADAPTIVE_LEANS, inventoryEnabled, roleBriefings, summarizeAgreementsFor, summarizeLobbying, generateHiringMarket, projectMarkets, projectFirms, projectShocks, projectHistory } from "drinkwars-engine";
 import type { RoleBriefing, AllianceSummary, LobbySummary, Candidate } from "drinkwars-engine";
 import type { Config, ConfigOverride, FirmDecision, FirmId, FirmRoundResult, FirmState, Lean, ModulesConfig, RoundResult, SegmentId, WorldState } from "drinkwars-engine";
 
@@ -233,64 +233,10 @@ export class SinglePlayerGame {
       .map((f) => ({ firm_id: f.firm_id, name: this.nameOf(f.firm_id), score: f.scorecard_cumulative, status: f.status, isYou: f.firm_id === this.humanFirmId }))
       .sort((a, b) => b.score - a.score);
 
-    // History series across all resolved rounds.
-    const history = results.map((rr) => {
-      const ranked = [...rr.result.firm_results].sort((a, b) => b.scorecard_cumulative - a.scorecard_cumulative);
-      const ownFr = rr.result.firm_results.find((f) => f.firm_id === this.humanFirmId);
-      const scores = rr.result.firm_results.map((f) => f.scorecard_cumulative);
-      const ownTrend: OwnTrend = {
-        round: rr.round,
-        cash: ownFr?.balance_sheet.cash ?? 0,
-        score: ownFr?.scorecard_cumulative ?? 0,
-        rank: ranked.findIndex((f) => f.firm_id === this.humanFirmId) + 1,
-        share: ownFr ? Object.values(ownFr.segments).reduce((a, s) => a + s.share, 0) : 0,
-        Q: ownFr?.state.Q ?? 0,
-        B: ownFr?.state.B ?? 0,
-        netIncome: ownFr?.pnl.net_income ?? 0,
-        equity: ownFr?.balance_sheet.equity ?? 0,
-      };
-      const fieldTrend: FieldTrend = {
-        round: rr.round,
-        topScore: Math.max(...scores, 0),
-        medianScore: median(scores),
-        totalQ: rr.result.market.reduce((a, m) => a + m.total_q, 0),
-        activeFirms: rr.result.firm_results.filter((f) => f.status === "active").length,
-      };
-      return { own: ownTrend, field: fieldTrend };
-    });
-
-    // Latest snapshot of every firm (for benchmarks + strategy map).
-    const lastByFirm = new Map((last?.result.firm_results ?? []).map((f) => [f.firm_id, f]));
-    const firms: FirmSnapshot[] = world.firms.map((f) => {
-      const fr = lastByFirm.get(f.id);
-      const priceBySeg: Record<SegmentId, number> = {};
-      const shareBySeg: Record<SegmentId, number> = {};
-      const focus: SegmentId[] = [];
-      if (fr) {
-        for (const [seg, r] of Object.entries(fr.segments)) {
-          priceBySeg[seg] = r.price;
-          shareBySeg[seg] = r.share;
-          if (r.share > 0.01) focus.push(seg);
-        }
-      }
-      return {
-        firm_id: f.id, name: this.nameOf(f.id), status: f.status, isYou: f.id === this.humanFirmId,
-        score: fr?.scorecard_cumulative ?? 0,
-        share: fr ? Object.values(fr.segments).reduce((a, s) => a + s.share, 0) : 0,
-        Q: f.Q, B: f.B, cap: f.cap, unitCost: f.unit_cost,
-        T_emp: f.T_emp, T_inv: f.T_inv, T_gov: f.T_gov,
-        leverage: f.debt / Math.max(f.paid_in_capital + f.retained_earnings, 1e-6),
-        netIncome: fr?.pnl.net_income ?? 0,
-        priceBySeg, shareBySeg, focus,
-        cash: f.cash, debt: f.debt,
-        valuation: firmValuation(f, this.config),
-        distressRounds: f.rounds_below_health ?? 0,
-        keyHires: (f.key_hires ?? []).map((h) => h.role),
-        verticalAssets: (f.vertical_assets ?? []).map((a) => a.id),
-        employees: (f.employees ?? []).map((e) => ({ id: e.id, name: e.name, role: e.role, skill: e.skill, satisfaction: e.satisfaction, salary: e.salary })),
-        facilities: (f.facilities ?? []).map((x) => ({ type: x.type, location_id: x.location_id, market_id: x.market_id, active: x.active })),
-      };
-    });
+    // History series + latest per-firm snapshots — shared projections (engine views.ts) so solo
+    // and multiplayer match. Solo reveals all firm data (single human; the UI blurs cosmetically).
+    const history = projectHistory(results, this.humanFirmId);
+    const firms: FirmSnapshot[] = projectFirms(world, this.config, this.humanFirmId, last?.result.firm_results ?? [], true, (id) => this.nameOf(id));
 
     // Display names everywhere: engine event/briefing strings carry raw firm
     // ids; substitute brewery names before anything reaches a component.
@@ -303,15 +249,7 @@ export class SinglePlayerGame {
     // disruption is a genuine surprise and the lesson is standing preparedness, not
     // gaming a countdown. (The signaled_noisy path below still honors any shock an
     // instructor explicitly marks as telegraphed; none are by default.)
-    const cur = game.current_round;
-    const shocks: ShockSignal[] = [];
-    for (const s of world.shock_timeline) {
-      const active = s.fired && s.round <= cur && cur < s.round + s.duration;
-      const upcomingSignaled = !s.fired && s.signaling === "signaled_noisy" && s.round >= cur && s.round <= cur + 3;
-      if (!active && !upcomingSignaled) continue;
-      shocks.push({ typeId: s.type_id, kind: s.kind, target: s.target, round: s.round, roundsAway: s.round - cur, active, signaled: s.signaling === "signaled_noisy" });
-    }
-    shocks.sort((a, b) => Number(b.active) - Number(a.active) || a.roundsAway - b.roundsAway);
+    const shocks: ShockSignal[] = projectShocks(world, game.current_round);
 
     // Per-market ("city") view — the SHARED projection (engine views.ts) so single-player and
     // multiplayer render the same City View. Gated via activeMarkets (home/domestic always;

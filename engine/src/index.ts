@@ -22,7 +22,7 @@ export { activeMarkets } from "./engine/geography.js";
 export { roleBriefings } from "./engine/briefings.js";
 export type { RoleBriefing } from "./engine/briefings.js";
 // Coopetition (MOD-A05/A06) + lobbying (MOD-A09) presentation summaries.
-export { summarizeAgreementsFor, summarizeLobbying, projectMarkets } from "./engine/views.js";
+export { summarizeAgreementsFor, summarizeLobbying, projectMarkets, projectFirms, projectShocks, projectHistory } from "./engine/views.js";
 export type { AllianceSummary, AllianceClauseSummary, LobbySummary } from "./engine/views.js";
 export { generateHiringMarket } from "./engine/employees.js";
 export { RNG, deriveSeed } from "./rng.js";

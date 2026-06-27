@@ -40,6 +40,9 @@ export interface RawView {
   lobbyInitiatives?: LobbySummary[]; // MOD-A09
   names?: Record<string, string>; // firm_id → brewery name
   markets?: GameView["markets"]; // MOD-B01 per-team city view (projected server-side)
+  firms?: GameView["firms"]; // public per-firm snapshots (rivals redacted unless research bought)
+  shocks?: GameView["shocks"]; // active + telegraphed shocks
+  history?: GameView["history"]; // own trend + public field aggregate
 }
 
 async function api(base: string, path: string, opts: RequestInit = {}): Promise<any> {
@@ -143,8 +146,8 @@ export class StudentClient {
       result: null,
       standings,
       events: v.events,
-      history: [],
-      firms: [],
+      history: v.history ?? [],
+      firms: v.firms ?? [],
       infoActive: !!this.lastDecision?.buy_info,
       names: v.names ?? {},
       inventoryEnabled: this.config ? inventoryEnabled(this.config) : false,
@@ -154,7 +157,7 @@ export class StudentClient {
       markets: v.markets ?? [], // MOD-B01 per-team city view (projected server-side)
       agreements: v.agreements ?? [],
       lobbyInitiatives: v.lobbyInitiatives ?? [],
-      shocks: (v as { shocks?: GameView["shocks"] }).shocks ?? [], // transport doesn't project shocks yet → none
+      shocks: v.shocks ?? [],
       hiringMarket: (v as { hiringMarket?: GameView["hiringMarket"] }).hiringMarket ?? [],
       ownTagline: "",
     };
