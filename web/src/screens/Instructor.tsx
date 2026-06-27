@@ -209,9 +209,9 @@ export function Instructor({ onExit }: { onExit: () => void }) {
 
           {err && <div className="mt-3 text-sm text-brick">{err}</div>}
           <div className="mt-4 flex flex-wrap items-center gap-2">
-            <Button onClick={() => act(() => client!.lock(game.gameId))} disabled={busy || lc !== "open"}>Lock round</Button>
-            <Button onClick={() => act(() => client!.resolve(game.gameId))} disabled={busy || lc !== "locked"}>Resolve round</Button>
-            {lc === "complete" && <span className="text-sm text-inksoft">Season complete.</span>}
+            <Button onClick={() => act(() => client!.lock(game.gameId))} disabled={busy || lcRaw !== "open"}>Lock round</Button>
+            <Button onClick={() => act(() => client!.resolve(game.gameId))} disabled={busy || lcRaw !== "locked"}>Resolve round</Button>
+            {lcRaw === "complete" && <span className="text-sm text-inksoft">Season complete.</span>}
           </div>
           <div className="mt-2 text-[0.72rem] text-inksoft">Lock closes submissions (open slots play as adaptive NPCs); Resolve runs the engine and opens the next round.</div>
         </>

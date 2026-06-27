@@ -719,6 +719,14 @@ export function CityView({ view, actions, setActions, onInspect, extraBuilds = [
             {!sel.entered && (
               <button onClick={() => setEntering(sel.id)} className="mt-3.5 w-full rounded-[10px] border border-copperdeep py-2.5 font-mono text-[0.7rem] font-bold uppercase tracking-wide text-[#3a2206]" style={{ background: "linear-gradient(var(--color-gold),var(--color-copper))" }}>Enter {sel.name} · {fmt.money(sel.entryCost)}</button>
             )}
+            {sel.entered && flow && (() => { const fb = flowBadge(flow.net); const ship = (flow.lanes ?? []).reduce((a, L) => a + L.cost, 0); return (
+              <div className="rounded-[10px] border border-line bg-panel2 p-2.5">
+                <div className="font-mono text-[0.5rem] uppercase tracking-[0.12em] text-inksoft">This market · last round</div>
+                <div className="mt-1 flex items-center justify-between text-[0.72rem] text-inksoft"><span>Brewed here <b className="tnum text-ink">{fmt.int(flow.produced)}</b></span><span>Sold <b className="tnum text-ink">{fmt.int(flow.q_sold)}</b></span></div>
+                <div className="mt-1 flex items-center justify-between"><span className="font-mono text-[0.62rem] font-bold" style={{ color: fb.tone === "out" ? "var(--color-copper)" : fb.tone === "in" ? "var(--color-aero)" : "var(--color-inksoft)" }}>{fb.text}</span>{ship > 0 && <span className="font-mono text-[0.62rem] font-bold text-brick">−{fmt.money(ship)} shipping</span>}</div>
+                {flow.net < -5 && <div className="mt-1 text-[0.6rem] leading-snug text-inksoft">Short here — you're shipping in. A producer in {sel.name} would cut the lane.</div>}
+              </div>
+            ); })()}
             {sel.entered && <button onClick={() => { setLayer("trade"); setDrawerOpen(true); }} className="w-full rounded-[10px] border border-line2 bg-panel py-2 font-mono text-[0.62rem] font-bold uppercase tracking-wide text-inksoft">View distribution ↗</button>}
             <div className="mt-2 text-center font-mono text-[0.55rem] text-inksoft">Supply routed here: {fmt.pct((presence[sel.id] ?? 0) / Math.max(0.001, Object.values(presence).reduce((a, b) => a + b, 0)))}</div>
           </aside>
