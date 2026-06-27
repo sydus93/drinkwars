@@ -5,7 +5,7 @@
  * adaptive best-response bots from the engine. This is app-spec §9 step 0.
  */
 import { GameOrchestrator, InMemoryAdapter, randomBreweryNames, renameFirms } from "drinkwars-server";
-import { resolveConfig, decideAdaptive, ADAPTIVE_LEANS, inventoryEnabled, roleBriefings, firmValuation, summarizeAgreementsFor, summarizeLobbying, generateHiringMarket, activeMarkets } from "drinkwars-engine";
+import { resolveConfig, decideAdaptive, ADAPTIVE_LEANS, inventoryEnabled, roleBriefings, firmValuation, summarizeAgreementsFor, summarizeLobbying, generateHiringMarket, projectMarkets } from "drinkwars-engine";
 import type { RoleBriefing, AllianceSummary, LobbySummary, Candidate } from "drinkwars-engine";
 import type { Config, ConfigOverride, FirmDecision, FirmId, FirmRoundResult, FirmState, Lean, ModulesConfig, RoundResult, SegmentId, WorldState } from "drinkwars-engine";
 
@@ -313,67 +313,10 @@ export class SinglePlayerGame {
     }
     shocks.sort((a, b) => Number(b.active) - Number(a.active) || a.roundsAway - b.roundsAway);
 
-    // Per-market ("city") view data — gated identically to the engine via activeMarkets:
-    // home + domestic always; export cities only with international on AND past the unlock
-    // round, so single-market games stay untouched and exports hide until the go-global phase.
-    const geoMarkets = activeMarkets(this.config, game.current_round);
-    const ownEntered = new Set(own.markets_entered ?? ["home"]);
-    const homeMarketId = geoMarkets.find((m) => m.kind === "home")?.id ?? "home";
-    const lastFr = last?.result.firm_results ?? [];
-    const markets: MarketView[] = geoMarkets.map((m) => {
-      const segments: MarketSegmentStanding[] = world.segments
-        .filter((s) => s.active)
-        .map((s) => {
-          let leader: FirmId | null = null;
-          let leaderShare = 0;
-          let yourShare = 0;
-          for (const fr of lastFr) {
-            const bs = fr.markets?.[m.id]?.bySeg?.[s.id];
-            if (!bs) continue;
-            if (fr.firm_id === this.humanFirmId) yourShare = bs.share;
-            if (bs.share > leaderShare) { leaderShare = bs.share; leader = fr.firm_id; }
-          }
-          return { id: s.id, size: Math.round(s.D * m.demand_mult), leader, leaderShare, yourShare };
-        });
-      let totalQ = 0;
-      let yourQ = 0;
-      for (const fr of lastFr) {
-        const q = fr.markets?.[m.id]?.q_sold ?? 0;
-        totalQ += q;
-        if (fr.firm_id === this.humanFirmId) yourQ = q;
-      }
-      // A facility belongs to a city by its market_id; untagged (legacy/home-only) sit at home.
-      const sitesOf = (f: FirmState): MarketSite[] =>
-        (f.facilities ?? [])
-          .filter((x) => (x.market_id ?? homeMarketId) === m.id)
-          .map((x) => ({ id: x.id, firmId: f.id, name: this.nameOf(f.id), type: x.type, location_id: x.location_id, lot_id: x.lot_id, active: x.active }));
-      // Phase 2 parcels: availability (unlock-over-time) + who occupies each.
-      const occByLot = new Map<string, "you" | "rival">();
-      for (const f of world.firms) {
-        if (f.status !== "active") continue;
-        for (const fac of f.facilities ?? []) {
-          if ((fac.market_id ?? homeMarketId) === m.id && fac.lot_id) occByLot.set(fac.lot_id, f.id === this.humanFirmId ? "you" : "rival");
-        }
-      }
-      const lots: MarketLot[] = (m.lots ?? []).map((L) => ({
-        id: L.id, x: L.x, y: L.y, district: L.district,
-        unlocked: game.current_round >= (L.unlock_round ?? 0),
-        occupant: occByLot.get(L.id) ?? null,
-      }));
-      return {
-        id: m.id,
-        label: m.label,
-        kind: m.kind,
-        entered: m.kind === "home" || ownEntered.has(m.id),
-        entryCost: m.entry_cost,
-        fx: world.fx_rates?.[m.id] ?? 1,
-        yourShare: totalQ > 1e-9 ? yourQ / totalQ : 0,
-        segments,
-        yourSites: sitesOf(own),
-        rivalSites: world.firms.filter((f) => f.id !== this.humanFirmId && f.status === "active").flatMap(sitesOf),
-        lots,
-      };
-    });
+    // Per-market ("city") view — the SHARED projection (engine views.ts) so single-player and
+    // multiplayer render the same City View. Gated via activeMarkets (home/domestic always;
+    // exports only with international on + past the unlock round).
+    const markets: MarketView[] = projectMarkets(world, this.config, this.humanFirmId, game.current_round, last?.result.firm_results ?? [], (id) => this.nameOf(id));
 
     return {
       round: game.current_round,

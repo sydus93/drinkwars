@@ -39,6 +39,7 @@ export interface RawView {
   agreements?: AllianceSummary[]; // MOD-A05/A06
   lobbyInitiatives?: LobbySummary[]; // MOD-A09
   names?: Record<string, string>; // firm_id → brewery name
+  markets?: GameView["markets"]; // MOD-B01 per-team city view (projected server-side)
 }
 
 async function api(base: string, path: string, opts: RequestInit = {}): Promise<any> {
@@ -150,7 +151,7 @@ export class StudentClient {
       modules: this.config?.modules,
       briefings: v.briefings ?? [],
       fx: v.fx ?? {},
-      markets: [], // transport doesn't project per-city City View data yet → single-player only
+      markets: v.markets ?? [], // MOD-B01 per-team city view (projected server-side)
       agreements: v.agreements ?? [],
       lobbyInitiatives: v.lobbyInitiatives ?? [],
       shocks: (v as { shocks?: GameView["shocks"] }).shocks ?? [], // transport doesn't project shocks yet → none
