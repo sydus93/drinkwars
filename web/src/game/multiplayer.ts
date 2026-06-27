@@ -5,7 +5,7 @@
  * Diagnostics / Standings are reused unchanged. The instructor client drives
  * the passcode-gated create / lock / resolve endpoints.
  */
-import type { AllianceSummary, Config, FirmDecision, FirmId, FirmRoundResult, FirmState, LobbySummary, RoleBriefing, SegmentId } from "drinkwars-engine";
+import type { AllianceSummary, Config, ConfigOverride, FirmDecision, FirmId, FirmRoundResult, FirmState, LobbySummary, RoleBriefing, SegmentId } from "drinkwars-engine";
 import { inventoryEnabled } from "drinkwars-engine";
 
 /** Module-enable map sent to the create endpoint (id → { enabled }). */
@@ -224,8 +224,8 @@ export class InstructorClient {
   private headers() {
     return { "x-instructor-pass": this.pass };
   }
-  async createGame(nFirms: number, nRounds: number, modules: ModuleSelection = {}): Promise<{ gameId: string; joinCode: string }> {
-    return api(this.base, "/instructor/games", { method: "POST", headers: this.headers(), body: JSON.stringify({ nFirms, nRounds, modules }) });
+  async createGame(nFirms: number, nRounds: number, modules: ModuleSelection = {}, configOverride?: ConfigOverride): Promise<{ gameId: string; joinCode: string }> {
+    return api(this.base, "/instructor/games", { method: "POST", headers: this.headers(), body: JSON.stringify({ nFirms, nRounds, modules, configOverride }) });
   }
   status(gameId: string): Promise<InstructorStatus> {
     return api(this.base, `/instructor/games/${gameId}/status`, { headers: this.headers() });

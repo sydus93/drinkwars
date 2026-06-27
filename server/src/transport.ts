@@ -18,7 +18,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { loadConfig } from "drinkwars-engine/node";
-import { roleBriefings, summarizeAgreementsFor, summarizeLobbying } from "drinkwars-engine";
+import { deepMerge, roleBriefings, summarizeAgreementsFor, summarizeLobbying } from "drinkwars-engine";
 import type { FirmDecision } from "drinkwars-engine";
 import { createClient } from "@supabase/supabase-js";
 import { GameOrchestrator, InMemoryAdapter, buildInstructorDashboard, createSupabaseAdapter, dashboardToCsv, randomBreweryNames, renameFirms, type StorageAdapter } from "./index.js";
@@ -203,13 +203,16 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     const tier = instructorTier(req.headers["x-instructor-pass"]);
 
     if (method === "POST" && path === "/instructor/games") {
-      const { nFirms = 6, nRounds = 16, modules, inventory = false } = await readJson(req);
-      const override: Record<string, unknown> = { game: { n_firms: nFirms, n_rounds: nRounds } };
+      const { nFirms = 6, nRounds = 16, modules, inventory = false, configOverride } = await readJson(req);
+      let override: Record<string, unknown> = { game: { n_firms: nFirms, n_rounds: nRounds } };
       // Expansion modules: the instructor selector sends a `modules` override block
       // ({ asymmetricStarts: { enabled: true }, … }). Legacy `inventory` boolean still honored.
       const mods: Record<string, unknown> = modules && typeof modules === "object" ? { ...modules } : {};
       if (inventory) mods.inventory = { enabled: true };
       if (Object.keys(mods).length) override.modules = mods;
+      // Tuning Board: a full ConfigOverride (demand/spatial/trade/conduct/shock knobs) deep-merged
+      // over the module-enable block before the config is resolved + validated.
+      if (configOverride && typeof configOverride === "object") override = deepMerge(override, configOverride as Record<string, unknown>);
       const config = loadConfig(override as never);
       const code = GameOrchestrator.makeJoinCode();
       // Slots get real brewery names up front (students rename theirs on join),

@@ -3,6 +3,7 @@ import { Button, Card, Eyebrow } from "../components/ui.js";
 import { InstructorClient, type InstructorStatus, type ModuleSelection } from "../game/multiplayer.js";
 import { InstructorDashboard } from "./InstructorDashboard.js";
 import { ModeSelector } from "./ModeSelector.js";
+import { TuningBoard, tuningToOverride, tuningDefaults, type TuningVals } from "./TuningBoard.js";
 
 /** Instructor console: passcode → create a game → share the code → lock / resolve. */
 export function Instructor({ onExit }: { onExit: () => void }) {
@@ -13,6 +14,9 @@ export function Instructor({ onExit }: { onExit: () => void }) {
   const [nRounds, setNRounds] = useState(16);
   const [modules, setModules] = useState<ModuleSelection>({});
   const [modCount, setModCount] = useState(0);
+  const [tuneVals, setTuneVals] = useState<TuningVals>(() => tuningDefaults());
+  const [showTune, setShowTune] = useState(false);
+  const tuned = JSON.stringify(tuneVals) !== JSON.stringify(tuningDefaults());
   const [game, setGame] = useState<{ gameId: string; joinCode: string } | null>(null);
   const [status, setStatus] = useState<InstructorStatus | null>(null);
   const [busy, setBusy] = useState(false);
@@ -51,7 +55,7 @@ export function Instructor({ onExit }: { onExit: () => void }) {
     setErr(null);
     try {
       const c = new InstructorClient(pass);
-      const g = await c.createGame(nFirms, nRounds, modules);
+      const g = await c.createGame(nFirms, nRounds, modules, tuned ? tuningToOverride(tuneVals) : undefined);
       setClient(c);
       setGame(g);
       persist(g.gameId, g.joinCode);
@@ -94,6 +98,17 @@ export function Instructor({ onExit }: { onExit: () => void }) {
   if (!game) {
     return (
       <div className="mx-auto flex min-h-screen max-w-xl flex-col justify-center px-6 py-16">
+        {showTune && (
+          <div className="fixed inset-0 z-50 flex flex-col" style={{ background: "radial-gradient(120% 90% at 12% -10%, #fbf2df 0%, #ece0c4 55%, #e7d4af 100%)" }}>
+            <div className="flex flex-none items-center gap-3 border-b border-line2 bg-panel px-5 py-3">
+              <div><div className="font-mono text-[0.55rem] uppercase tracking-[0.16em] text-copperdeep">Instructor · balance &amp; tuning</div><div className="display text-xl font-extrabold uppercase text-ink">The Tuning Board</div></div>
+              <div className="flex-1" />
+              <button onClick={() => setTuneVals(tuningDefaults())} className="rounded-lg border border-line2 bg-panel2 px-3 py-2 font-mono text-[0.62rem] uppercase tracking-wide text-inksoft">Reset all</button>
+              <Button variant="go" onClick={() => setShowTune(false)}>Done</Button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto p-4"><TuningBoard value={tuneVals} onChange={setTuneVals} /></div>
+          </div>
+        )}
         <div className="rise">
           <div className="eyebrow">Instructor</div>
           <h1 className="display mt-2 text-4xl font-semibold">New game</h1>
@@ -115,6 +130,10 @@ export function Instructor({ onExit }: { onExit: () => void }) {
             <div className="rounded-md border border-line bg-paper2/40 p-3">
               <ModeSelector onChange={(m, n) => { setModules(m); setModCount(n); }} />
             </div>
+            <button onClick={() => setShowTune(true)} className="flex items-center justify-between rounded-md border border-line bg-paper2/40 px-3 py-2.5 text-left">
+              <span className="flex items-center gap-2"><span className="text-base">⚙</span><span><span className="block text-sm font-semibold text-ink">Balance &amp; tuning</span><span className="text-[0.7rem] text-inksoft">Optional — sliders for demand, trade, shocks &amp; conduct</span></span></span>
+              <span className="font-mono text-[0.62rem] uppercase tracking-wide text-copperdeep">{tuned ? "Customized →" : "Default →"}</span>
+            </button>
             <Button variant="go" onClick={create} disabled={busy || !pass} className="w-full">
               {busy ? "Creating…" : modCount > 0 ? `Create game · ${modCount} module${modCount === 1 ? "" : "s"}` : "Create game · standard"}
             </Button>
