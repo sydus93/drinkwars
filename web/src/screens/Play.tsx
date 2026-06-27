@@ -212,7 +212,7 @@ export function Play({
         {/* destination */}
         <main className="min-w-0 flex-1">
           {dest === "map" && (cityEnabled
-            ? <CityView view={view} actions={cityActions} setActions={setCityActions} onInspect={setDetailFirm} />
+            ? <CityView view={view} actions={cityActions} setActions={setCityActions} onInspect={setDetailFirm} extraBuilds={decision?.build_facilities ?? []} />
             : mp
               ? <Card><Eyebrow>Map</Eyebrow><div className="text-sm text-inksoft">The city map &amp; rival map come to multiplayer once the server projects per-team city + footprint data. For now, run your brewery from <b className="text-ink">Decide</b> &amp; <b className="text-ink">Review</b>.</div></Card>
               : <MarketMap view={view} onInspect={setDetailFirm} />)}

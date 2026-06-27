@@ -95,7 +95,10 @@ interface Plan {
   leases: { cx: number; cy: number; district: string; lot: string; crowd: number }[];
 }
 
-function buildCity(view: GameView, market: MarketView, actions: CityActions): CityModel {
+/** extraBuilds: builds already in the round decision but not in cityActions — e.g. the
+ *  firm-builder's founding facilities (auto-placed on home lots round 1). Shown as PENDING so
+ *  their lots read as taken (no land scramble); display-only, so they're not double-counted. */
+function buildCity(view: GameView, market: MarketView, actions: CityActions, extraBuilds: { type: string; location?: string; market?: string; lot?: string }[] = []): CityModel {
   const meta = MARKET_META[market.id] ?? { city: market.label, region: "", geo: [0, 0] as [number, number], coast: null, seed: 1 };
   const dCfg = view.modules?.facilities?.districts ?? [];
   const districts: DistrictModel[] = dCfg.map((d) => ({
@@ -108,9 +111,9 @@ function buildCity(view: GameView, market: MarketView, actions: CityActions): Ci
     active: actions.reactivations.includes(s.id) ? true : actions.mothballs.includes(s.id) ? false : s.active,
     pending: false,
   }));
-  const queued: MineModel[] = actions.builds
+  const queued: MineModel[] = [...actions.builds, ...extraBuilds]
     .filter((b) => b.market === market.id)
-    .map((b, i) => ({ id: `queued_${market.id}_${i}`, type: b.type, district: b.location, lot: b.lot, active: true, pending: true }));
+    .map((b, i) => ({ id: `queued_${market.id}_${i}`, type: b.type, district: b.location ?? (market.lots ?? []).find((L) => L.id === b.lot)?.district ?? fallbackDistrict, lot: b.lot, active: true, pending: true }));
   const rivals: RivalModel[] = market.rivalSites.map((s) => ({ firmId: s.firmId, name: s.name, district: s.location_id ?? fallbackDistrict, type: s.type, lot: s.lot_id }));
   // A market counts as entered if the engine has it (prior rounds) OR it was committed this
   // round in the City View — otherwise the just-entered market stays "locked" and its siting
@@ -418,8 +421,8 @@ function PanelGlobe({ cities, homeGeo, onSelect }: { cities: CityModel[]; homeGe
 }
 
 // ───────────────────────── main component ─────────────────────────
-export function CityView({ view, actions, setActions, onInspect }: { view: GameView; actions: CityActions; setActions: (u: (a: CityActions) => CityActions) => void; onInspect: (firmId: string) => void }) {
-  const cities = useMemo(() => view.markets.map((m) => buildCity(view, m, actions)), [view, actions]);
+export function CityView({ view, actions, setActions, onInspect, extraBuilds = [] }: { view: GameView; actions: CityActions; setActions: (u: (a: CityActions) => CityActions) => void; onInspect: (firmId: string) => void; extraBuilds?: { type: string; location?: string; market?: string; lot?: string }[] }) {
+  const cities = useMemo(() => view.markets.map((m) => buildCity(view, m, actions, extraBuilds)), [view, actions, extraBuilds]);
   const hasIntl = cities.some((c) => c.kind === "export");
   const homeGeo = cities.find((c) => c.kind === "home")?.geo ?? null;
   const youId = view.own.id;
