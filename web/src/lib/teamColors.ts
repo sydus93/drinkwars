@@ -24,6 +24,10 @@ export const teamColor = (i: number): string => TEAM_COLORS[((i % TEAM_COLORS.le
  *  (Multiplayer assigns by id; the builder override only applies to single-player.) */
 let playerColorOverride: string | null = null;
 export const setPlayerColor = (c: string | null): void => { playerColorOverride = c; };
+// Which firm id the local player controls — firm_1 in solo, the assigned id in multiplayer.
+// The colour override applies to this firm so a student sees their own chosen colour.
+let selfFirmId = "firm_1";
+export const setSelfFirm = (id: string): void => { selfFirmId = id || "firm_1"; };
 
 /** Firm-builder palette (curated to sit alongside the Tap House tokens). */
 export const FIRM_PALETTE = [
@@ -51,7 +55,7 @@ export const setPlayerEmblem = (e: string | null): void => { playerEmblemOverrid
 export const playerEmblem = (): string | null => playerEmblemOverride;
 
 export const firmColor = (firmId: string): string => {
-  if (playerColorOverride && firmId === "firm_1") return playerColorOverride;
+  if (playerColorOverride && firmId === selfFirmId) return playerColorOverride;
   const n = parseInt(String(firmId).replace(/^\D+/, ""), 10);
   return teamColor(Number.isFinite(n) ? n - 1 : 0);
 };

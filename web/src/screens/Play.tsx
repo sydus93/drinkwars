@@ -48,6 +48,11 @@ export function Play({
   onPlay,
   defaultDecision,
   onReset,
+  mp = false,
+  banner,
+  submitLabel,
+  footerNote,
+  onExit,
 }: {
   view: GameView;
   busy: boolean;
@@ -55,6 +60,14 @@ export function Play({
   onPlay: (d: FirmDecision) => Promise<void> | void;
   defaultDecision: () => Promise<FirmDecision>;
   onReset: () => void;
+  // Multiplayer (student) mode: submit-and-wait lifecycle — adds the round banner, a submit
+  // label + Leave action, and a graceful note for the Map (which awaits the per-student server
+  // projection of city + rival data). Solo leaves these undefined.
+  mp?: boolean;
+  banner?: string;
+  submitLabel?: string;
+  footerNote?: string;
+  onExit?: () => void;
 }) {
   const [dest, setDest] = useState<Dest>("decide");
   const [rtab, setRtab] = useState<RTab>("dispatch");
@@ -73,7 +86,7 @@ export function Play({
   // (Map ↔ Decide edit ONE round decision, merged at submit). Reset each round.
   const [cityActions, setCityActions] = useState<CityActions>(() => emptyCityActions(view));
   const [decision, setDecision] = useState<FirmDecision | null>(null);
-  const seenRound = useRef<number | null>(null);
+  const seenRound = useRef<string | null>(null);
 
   // New game (no results yet) → start on Decide.
   useEffect(() => {
@@ -96,15 +109,18 @@ export function Play({
   // On each resolution, surface the round in Review (the Tap Dispatch) — replaces the
   // old one-popup-per-event queue. Keyed on resolved-round COUNT (the round pointer
   // stops on the final round, but history still grows by one).
-  const resolved = view.history.length;
+  // Solo grows history each round; multiplayer advances the round / flips complete when the
+  // instructor resolves (history isn't projected to students). Either change ⇒ a round resolved.
+  const resolved = Math.max(view.history.length, mp ? view.round : 0);
+  const resolveSig = `${view.round}:${view.complete}:${view.history.length}`;
   useEffect(() => {
-    if (seenRound.current === null) { seenRound.current = resolved; return; }
-    if (resolved !== seenRound.current) {
-      seenRound.current = resolved;
+    if (seenRound.current === null) { seenRound.current = resolveSig; return; }
+    if (resolveSig !== seenRound.current) {
+      seenRound.current = resolveSig;
       setDest("review");
       setRtab("dispatch");
     }
-  }, [resolved]);
+  }, [resolveSig]);
 
   const myRank = view.standings.findIndex((s) => s.isYou) + 1;
   const hasHistory = view.history.length > 0;
@@ -181,8 +197,11 @@ export function Play({
             </span>
           )}
           <Stat label="Your rank" value={myRank > 0 ? `#${myRank}` : "—"} accent="copper" sub={view.ownActive ? undefined : "exited"} />
+          {onExit && <button onClick={onExit} className="self-center rounded-lg border border-line2 bg-panel2 px-3 py-2 font-mono text-[0.62rem] font-bold uppercase tracking-wide text-inksoft">Leave</button>}
         </div>
       </header>
+
+      {banner && <div className="mb-3 rounded-lg border px-3 py-2 text-sm text-inksoft" style={{ borderColor: mp && view.ownActive && !view.complete ? "var(--color-copper)" : "var(--color-line2)" }}>{banner}</div>}
 
       <div className="flex gap-4">
         {/* desktop nav rail */}
@@ -194,7 +213,9 @@ export function Play({
         <main className="min-w-0 flex-1">
           {dest === "map" && (cityEnabled
             ? <CityView view={view} actions={cityActions} setActions={setCityActions} onInspect={setDetailFirm} />
-            : <MarketMap view={view} onInspect={setDetailFirm} />)}
+            : mp
+              ? <Card><Eyebrow>Map</Eyebrow><div className="text-sm text-inksoft">The city map &amp; rival map come to multiplayer once the server projects per-team city + footprint data. For now, run your brewery from <b className="text-ink">Decide</b> &amp; <b className="text-ink">Review</b>.</div></Card>
+              : <MarketMap view={view} onInspect={setDetailFirm} />)}
 
           {dest === "decide" && (
             <div className="grid gap-3">
@@ -213,7 +234,7 @@ export function Play({
               <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
               <div className="min-w-0">
                 {view.ownActive && !view.complete && (
-                  <DecisionForm view={view} defaultDecision={defaultDecision} onPlay={handlePlay} busy={busy} infoCost={infoCost} onInfoChange={setInfoPreview} poaches={poaches} onPoach={queuePoach} cityActions={cityActions} decision={decision} setDecision={setDecision} desk={desk} />
+                  <DecisionForm view={view} defaultDecision={defaultDecision} onPlay={handlePlay} busy={busy} infoCost={infoCost} onInfoChange={setInfoPreview} poaches={poaches} onPoach={queuePoach} cityActions={cityActions} decision={decision} setDecision={setDecision} desk={desk} submitLabel={submitLabel} footerNote={footerNote} />
                 )}
                 {!view.ownActive && !view.complete && (
                   <Card>
