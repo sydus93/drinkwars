@@ -18,7 +18,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { loadConfig } from "drinkwars-engine/node";
-import { deepMerge, projectMarkets, projectFirms, projectShocks, projectHistory, roleBriefings, summarizeAgreementsFor, summarizeLobbying } from "drinkwars-engine";
+import { deepMerge, generateHiringMarket, projectMarkets, projectFirms, projectShocks, projectHistory, roleBriefings, summarizeAgreementsFor, summarizeLobbying } from "drinkwars-engine";
 import type { FirmDecision } from "drinkwars-engine";
 import { createClient } from "@supabase/supabase-js";
 import { GameOrchestrator, InMemoryAdapter, buildInstructorDashboard, createSupabaseAdapter, dashboardToCsv, randomBreweryNames, renameFirms, type StorageAdapter } from "./index.js";
@@ -122,6 +122,7 @@ async function viewFor(gameId: string, teamId: string) {
   let markets: ReturnType<typeof projectMarkets> = []; // MOD-B01 per-team city view (same projection as single-player)
   let firms: ReturnType<typeof projectFirms> = []; // public snapshots; rivals' private fields redacted unless this team bought market research
   let shocks: ReturnType<typeof projectShocks> = [];
+  let hiringMarket: ReturnType<typeof generateHiringMarket> = []; // MOD-B12 candidate pool (shared/public — same for every firm)
   const history = own ? projectHistory(allResults, own.id) : []; // own trend + public field aggregate
   if (own) {
     const ws = await store.getLatestWorldState(gameId);
@@ -133,6 +134,7 @@ async function viewFor(gameId: string, teamId: string) {
       if (config) markets = projectMarkets(ws.state, config, own.id, pub.round, lastFull?.result.firm_results ?? [], nameOf);
       if (config) firms = projectFirms(ws.state, config, own.id, lastFull?.result.firm_results ?? [], !!decision?.decision?.buy_info, nameOf);
       shocks = projectShocks(ws.state, pub.round);
+      if (config) hiringMarket = generateHiringMarket(config, ws.state.seed, pub.round);
     }
   }
   return {
@@ -144,6 +146,7 @@ async function viewFor(gameId: string, teamId: string) {
     firms,
     shocks,
     history,
+    hiringMarket,
     names,
     round: pub.round,
     lifecycle: pub.lifecycle,

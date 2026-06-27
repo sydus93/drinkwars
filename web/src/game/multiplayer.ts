@@ -43,6 +43,7 @@ export interface RawView {
   firms?: GameView["firms"]; // public per-firm snapshots (rivals redacted unless research bought)
   shocks?: GameView["shocks"]; // active + telegraphed shocks
   history?: GameView["history"]; // own trend + public field aggregate
+  hiringMarket?: GameView["hiringMarket"]; // MOD-B12 candidate pool (shared/public)
 }
 
 async function api(base: string, path: string, opts: RequestInit = {}): Promise<any> {
@@ -158,7 +159,7 @@ export class StudentClient {
       agreements: v.agreements ?? [],
       lobbyInitiatives: v.lobbyInitiatives ?? [],
       shocks: v.shocks ?? [],
-      hiringMarket: (v as { hiringMarket?: GameView["hiringMarket"] }).hiringMarket ?? [],
+      hiringMarket: v.hiringMarket ?? [],
       ownTagline: "",
     };
   }
