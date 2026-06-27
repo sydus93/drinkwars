@@ -13,6 +13,7 @@ export interface CityBuildOrder {
   location: string; // district id
   market: string; // MOD-B01 market/city id
   lot?: string; // Phase 2 parcel id (specific buildable lot)
+  bid?: number; // lease premium for a contested parcel — highest bid wins it (site competition)
 }
 
 export interface CityActions {
@@ -22,6 +23,7 @@ export interface CityActions {
   reactivations: string[]; // facility ids to reactivate
   divests: string[]; // facility ids to sell/demolish (frees the lot, recovers partial book value)
   maintain: Record<string, number>; // facility id → maintenance $ this round
+  supply: Record<string, number>; // Stage 2: explicit units to offer per market (overrides the presence split); empty ⇒ presence-weighted
 }
 
 /** Fresh actions for a round — seeded with the markets you already operate in. */
@@ -32,6 +34,7 @@ export const emptyCityActions = (view: GameView): CityActions => ({
   reactivations: [],
   divests: [],
   maintain: {},
+  supply: {},
 });
 
 /** Output (this round's online capacity) the firm has sited in a given market — used to
@@ -71,6 +74,8 @@ export function mergeDecision(
     reactivate_facilities: [...(base.reactivate_facilities ?? []), ...cityActions.reactivations],
     divest_facilities: [...(base.divest_facilities ?? []), ...cityActions.divests],
     maintain_facilities: { ...(base.maintain_facilities ?? {}), ...cityActions.maintain },
+    // Stage 2: explicit per-market supply overrides the presence split (only when the player set any).
+    market_supply: Object.keys(cityActions.supply ?? {}).length ? cityActions.supply : base.market_supply,
   };
 }
 

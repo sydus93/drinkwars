@@ -434,7 +434,7 @@ export function CityView({ view, actions, setActions, onInspect, extraBuilds = [
   const [layer, setLayer] = useState<"map" | "traffic" | "zoning" | "trade">("map");
   const [hoverSeg, setHoverSeg] = useState<string | null>(null);
   const [hoverFac, setHoverFac] = useState<string | null>(null);
-  const [siting, setSiting] = useState<{ lot: string | null; district: string | null; type: string | null } | null>(null);
+  const [siting, setSiting] = useState<{ lot: string | null; district: string | null; type: string | null; bid?: number } | null>(null);
   const [entering, setEntering] = useState<string | null>(null);
   const [facPop, setFacPop] = useState<string | null>(null);
   const [globeOpen, setGlobeOpen] = useState(false);
@@ -467,7 +467,7 @@ export function CityView({ view, actions, setActions, onInspect, extraBuilds = [
   const openSiting = (district?: string | null, lot?: string | null) => setSiting({ lot: lot ?? null, district: district ?? null, type: null });
   const build = () => {
     if (!siting?.lot || !siting.district || !siting.type) return;
-    const order = { type: siting.type, location: siting.district, market: sel.id, lot: siting.lot };
+    const order = { type: siting.type, location: siting.district, market: sel.id, lot: siting.lot, ...(siting.bid && siting.bid > 0 ? { bid: siting.bid } : {}) };
     setActions((a) => ({ ...a, builds: [...a.builds, order], markets: Array.from(new Set([...a.markets, sel.id])) }));
     setSiting(null);
   };
@@ -803,6 +803,12 @@ export function CityView({ view, actions, setActions, onInspect, extraBuilds = [
                         </button>
                       ); })}
                     </div>
+                    {selType && (
+                      <div className="mt-3 flex items-center justify-between gap-2 rounded-[10px] border border-line2 bg-panel2 px-3 py-2">
+                        <div><div className="font-mono text-[0.55rem] uppercase tracking-wide text-inksoft">Bid premium (optional)</div><div className="text-[0.62rem] text-inksoft">Outbid rivals for a contested parcel — highest bid wins it</div></div>
+                        <div className="flex items-center gap-1"><span className="text-inksoft">$</span><input type="number" min="0" step="10" value={siting.bid ?? 0} onChange={(e) => setSiting((s) => (s ? { ...s, bid: Math.max(0, +e.target.value) } : s))} className="w-20 text-right" /></div>
+                      </div>
+                    )}
                     <button onClick={build} disabled={!can} className="mt-4 w-full rounded-[11px] border border-copperdeep py-3 font-mono text-[0.78rem] font-bold uppercase tracking-wide" style={{ background: can ? "linear-gradient(var(--color-gold),var(--color-copper))" : "var(--color-panel2)", color: can ? "#3a2206" : "var(--color-inksoft)", cursor: can ? "pointer" : "not-allowed", opacity: can ? 1 : 0.7 }}>{!selType ? "Select a facility type" : !selOk ? "Not permitted in this zone" : !afford ? "Not enough cash" : `Build ${typeOf(selType)?.label} · ${fmt.money(capex)}`}</button>
                     <div className="mt-1.5 text-center font-mono text-[0.6rem] text-inksoft">{selOk ? `Capex commits when you brew this round` : ""}</div>
                   </div>
@@ -926,15 +932,22 @@ export function CityView({ view, actions, setActions, onInspect, extraBuilds = [
                 {rows.length === 0 ? <div className="text-xs italic text-inksoft">No resolved round yet — flows appear once you end the first round.</div> : (
                 <>
                   <div className="mb-2 flex justify-between"><span className="font-mono text-[0.55rem] uppercase text-copperdeep">◀ brewed</span><span className="font-mono text-[0.55rem] uppercase" style={{ color: "var(--color-aero)" }}>drunk ▶</span></div>
+                  <div className="mb-2 text-[0.62rem] leading-snug text-inksoft">Set <b className="text-ink">offer</b> to route supply to a market explicitly; leave blank for auto (split by presence). The gap from local production ships in.</div>
                   {rows.map((r) => { const fb = flowBadge(r.net); return (
-                    <button key={r.id} onClick={() => setSelId(r.id)} className="mb-3 block w-full text-left">
-                      <div className="mb-1 flex items-baseline justify-between"><span className="display text-sm font-bold uppercase tracking-wide" style={{ color: r.id === sel.id ? "var(--color-copperdeep)" : "var(--color-ink)" }}>{r.name}</span><span className="font-mono text-[0.6rem] font-bold" style={{ color: fb.tone === "out" ? "var(--color-copper)" : fb.tone === "in" ? "var(--color-aero)" : "var(--color-inksoft)" }}>{fb.text}</span></div>
+                    <div key={r.id} className="mb-3">
+                      <div className="mb-1 flex items-baseline justify-between gap-2">
+                        <button onClick={() => setSelId(r.id)} className="display text-sm font-bold uppercase tracking-wide" style={{ color: r.id === sel.id ? "var(--color-copperdeep)" : "var(--color-ink)" }}>{r.name}</button>
+                        <span className="flex items-center gap-1.5">
+                          <span className="font-mono text-[0.6rem] font-bold" style={{ color: fb.tone === "out" ? "var(--color-copper)" : fb.tone === "in" ? "var(--color-aero)" : "var(--color-inksoft)" }}>{fb.text}</span>
+                          <input type="number" min="0" step="10" placeholder="auto" value={actions.supply[r.id] ?? ""} onChange={(e) => { const v = e.target.value; setActions((a) => { const supply = { ...a.supply }; if (!v) delete supply[r.id]; else supply[r.id] = Math.max(0, +v); return { ...a, supply }; }); }} className="w-16 !py-0.5 text-right text-[0.7rem]" title="Units to offer here this round" />
+                        </span>
+                      </div>
                       <div className="relative h-3.5 rounded-[3px]" style={{ background: "var(--color-panel2)" }}>
                         <div className="absolute bottom-0 top-0 rounded-l-[3px]" style={{ right: "50%", width: `${(r.brewed / maxv) * 50}%`, background: "var(--color-copper)" }} />
                         <div className="absolute bottom-0 top-0 rounded-r-[3px]" style={{ left: "50%", width: `${(r.drunk / maxv) * 50}%`, background: "var(--color-aero)" }} />
                         <div className="absolute -bottom-0.5 -top-0.5 left-1/2 w-px -translate-x-1/2" style={{ background: "var(--color-inksoft)" }} />
                       </div>
-                    </button>
+                    </div>
                   ); })}
                   {selRow && (
                     <div className="mt-3 rounded-[11px] border border-line bg-panel2 p-3">
