@@ -388,6 +388,35 @@ function GlobeOverlay({ cities, homeGeo, onClose, onPick }: { cities: CityModel[
   );
 }
 
+// ───────────────────────── in-panel trade globe (City/Globe toggle) ─────────────────────────
+/** The map panel's "Globe" view: the trade network on a draggable orthographic globe
+ *  (shared paintGlobe painter, export lanes as arcs). Click a market to fly in. */
+function PanelGlobe({ cities, homeGeo, onSelect }: { cities: CityModel[]; homeGeo: [number, number] | null; onSelect: (id: string) => void }) {
+  const ref = useRef<HTMLCanvasElement | null>(null);
+  const rot = useRef(100); const tilt = useRef(30); const pins = useRef<GlobePin[]>([]);
+  const drag = useRef<{ x: number; y: number; rot: number; tilt: number; moved: boolean } | null>(null);
+  const mouse = useRef<{ x: number; y: number } | null>(null);
+  useEffect(() => {
+    let raf = 0; let alive = true;
+    const frame = () => {
+      if (!alive) return; const cv = ref.current;
+      if (cv) { if (!drag.current) rot.current += 0.08; try { pins.current = paintGlobe(cv, cities, homeGeo, rot.current, tilt.current, 1.5, { full: true, arcs: true }, mouse.current); } catch { /* ignore */ } }
+      raf = window.requestAnimationFrame(frame);
+    };
+    raf = window.requestAnimationFrame(frame);
+    return () => { alive = false; cancelAnimationFrame(raf); };
+  }, [cities, homeGeo]);
+  const down = (e: React.MouseEvent) => { drag.current = { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY, rot: rot.current, tilt: tilt.current, moved: false }; };
+  const move = (e: React.MouseEvent) => { mouse.current = { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY }; if (drag.current) { const dx = e.nativeEvent.offsetX - drag.current.x, dy = e.nativeEvent.offsetY - drag.current.y; if (Math.abs(dx) + Math.abs(dy) > 4) drag.current.moved = true; rot.current = drag.current.rot + dx * 0.4; tilt.current = Math.max(-10, Math.min(75, drag.current.tilt + dy * 0.3)); } };
+  const up = (e: React.MouseEvent) => { const dd = drag.current; drag.current = null; if (!dd || dd.moved) return; const mx = e.nativeEvent.offsetX, my = e.nativeEvent.offsetY; let best: string | null = null, bd = 18; for (const p of pins.current) { if (!p.front) continue; const di = Math.hypot(p.x - mx, p.y - my); if (di < bd) { bd = di; best = p.id; } } if (best) onSelect(best); };
+  return (
+    <div className="absolute inset-0 z-[9]" style={{ background: "radial-gradient(120% 100% at 50% 6%, #fbf2df 0%, #ece0c4 55%, #ddc9a0 100%)" }}>
+      <canvas ref={ref} onMouseDown={down} onMouseMove={move} onMouseUp={up} onMouseLeave={() => { drag.current = null; mouse.current = null; }} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", cursor: "grab" }} />
+      <div className="pointer-events-none absolute left-1/2 top-3 -translate-x-1/2 font-mono text-[0.55rem] uppercase tracking-[0.08em] text-inksoft">Drag to rotate the network · click a market to fly in</div>
+    </div>
+  );
+}
+
 // ───────────────────────── main component ─────────────────────────
 export function CityView({ view, actions, setActions, onInspect }: { view: GameView; actions: CityActions; setActions: (u: (a: CityActions) => CityActions) => void; onInspect: (firmId: string) => void }) {
   const cities = useMemo(() => view.markets.map((m) => buildCity(view, m, actions)), [view, actions]);
@@ -407,6 +436,7 @@ export function CityView({ view, actions, setActions, onInspect }: { view: GameV
   const [facPop, setFacPop] = useState<string | null>(null);
   const [globeOpen, setGlobeOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [mapView, setMapView] = useState<"city" | "globe">("city");
 
   const sel = cities.find((c) => c.id === selId) ?? cities[0];
   const plan = useMemo(() => (sel ? cityPlan(sel) : null), [sel?.id, sel?.mine.map((f) => f.id + f.lot + f.district + f.active).join(","), sel?.rivals.map((r) => r.firmId + r.lot).join(","), sel?.lots.map((L) => L.id + L.unlocked + L.occupant).join(",")]);
@@ -606,12 +636,23 @@ export function CityView({ view, actions, setActions, onInspect }: { view: GameV
                 );
               })()}
 
-              {/* layer toggle */}
+              {/* layer toggle (city view only) */}
+              {mapView === "city" && (
               <div className="absolute left-1/2 top-3 z-[8] flex -translate-x-1/2 gap-0.5 rounded-[9px] border border-line2 bg-panel/90 p-0.5 backdrop-blur">
                 {layerTabs.map((t) => (
                   <button key={t.id} onClick={() => setLayer(t.id)} className="rounded-[7px] px-2.5 py-1 font-mono text-[0.6rem] uppercase tracking-wide" style={{ background: layer === t.id ? "var(--color-copper)" : "transparent", color: layer === t.id ? "#fff4e0" : "var(--color-inksoft)", fontWeight: layer === t.id ? 700 : 500 }}>{t.label}</button>
                 ))}
               </div>
+              )}
+
+              {/* in-panel city / globe toggle */}
+              <div className="absolute right-3 top-3 z-[10] flex gap-0.5 rounded-[9px] border border-line2 bg-panel/90 p-0.5 backdrop-blur">
+                {(["city", "globe"] as const).map((v) => (
+                  <button key={v} onClick={() => setMapView(v)} className="rounded-[7px] px-2.5 py-1 font-mono text-[0.6rem] uppercase tracking-wide" style={{ background: mapView === v ? "var(--color-copper)" : "transparent", color: mapView === v ? "#fff4e0" : "var(--color-inksoft)", fontWeight: mapView === v ? 700 : 500 }}>{v}</button>
+                ))}
+              </div>
+
+              {mapView === "globe" && <PanelGlobe cities={cities} homeGeo={homeGeo} onSelect={(id) => { selectCity(id); setMapView("city"); }} />}
 
               {!sel.entered && (
                 <div className="absolute bottom-4 left-1/2 z-[8] flex -translate-x-1/2 items-center gap-2 rounded-lg px-4 py-2 text-xs" style={{ background: "var(--color-ink)", color: "var(--color-paper)" }}>
