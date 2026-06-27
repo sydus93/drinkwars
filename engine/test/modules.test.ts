@@ -327,6 +327,40 @@ test("MOD-B01 geography: entering a region costs entry, splits capacity, balance
   }
 });
 
+test("MOD-B01 market supply (Stage 2): explicit per-market allocation steers where you sell", () => {
+  const c = loadConfig(modulesOverride(["geography"]));
+  // Same firm, two worlds: push supply to coastal vs keep it home. Coastal sales rise with the
+  // coastal allocation — market_supply (units) overrides the presence-weighted split.
+  const wa = initGame(c);
+  const heavy = resolveRound(wa, wa.firms.map((f) => mkDecision(f.id, wa, f.id === "firm_1" ? { market_supply: { home: 30, coastal: 400 } } : {})), c);
+  const wb = initGame(c);
+  const light = resolveRound(wb, wb.firms.map((f) => mkDecision(f.id, wb, f.id === "firm_1" ? { market_supply: { home: 400, coastal: 30 } } : {})), c);
+  const coastalHeavy = heavy.result.firm_results.find((f) => f.firm_id === "firm_1")!.markets!.coastal?.q_sold ?? 0;
+  const coastalLight = light.result.firm_results.find((f) => f.firm_id === "firm_1")!.markets!.coastal?.q_sold ?? 0;
+  assert.ok(coastalHeavy > coastalLight, `allocating supply to coastal sells more there (${coastalHeavy} > ${coastalLight})`);
+  // A positive coastal supply also enters the market (entry triggered by supply, not just presence).
+  assert.ok(heavy.world.firms.find((f) => f.id === "firm_1")!.markets_entered.includes("coastal"), "supply allocation enters the market");
+  for (const fr of heavy.result.firm_results) assert.ok(Math.abs(fr.balance_sheet.assets - (fr.balance_sheet.debt + fr.balance_sheet.equity)) < 1e-3, `balance ${fr.firm_id}`);
+});
+
+test("site competition: the highest bid wins a contested parcel; the loser is outbid; invariants hold", () => {
+  const c = loadConfig(modulesOverride(["facilities", "geography"]));
+  const w = initGame(c);
+  const homeLots = c.modules!.geography!.markets.find((m) => m.id === "home")!.lots ?? [];
+  const lot = homeLots.find((L) => (L.unlock_round ?? 0) <= 0)!;
+  assert.ok(lot, "an unlocked home parcel exists");
+  const [a, b] = [w.firms[0].id, w.firms[1].id];
+  const r = resolveRound(w, w.firms.map((f) => mkDecision(f.id, w,
+    f.id === a ? { build_facilities: [{ type: "brewery_small", market: "home", lot: lot.id, bid: 40 }] } :
+    f.id === b ? { build_facilities: [{ type: "brewery_small", market: "home", lot: lot.id, bid: 600 }] } : {})), c);
+  const aFac = r.world.firms.find((f) => f.id === a)!.facilities ?? [];
+  const bFac = r.world.firms.find((f) => f.id === b)!.facilities ?? [];
+  assert.ok(bFac.some((x) => x.lot_id === lot.id), "higher bidder wins the contested parcel");
+  assert.ok(!aFac.some((x) => x.lot_id === lot.id), "lower bidder is outbid and doesn't take it");
+  assert.ok(r.result.events.some((e) => /OUTBID/.test(e)), "an outbid notice is emitted");
+  for (const fr of r.result.firm_results) assert.ok(Math.abs(fr.balance_sheet.assets - (fr.balance_sheet.debt + fr.balance_sheet.equity)) < 1e-3, `balance ${fr.firm_id}`);
+});
+
 test("MOD-B02 international: export markets activate + FX moves, deterministically", () => {
   const c = loadConfig(modulesOverride(["geography", "international"]));
   c.modules!.international!.export_unlock_round = 0; // isolate FX/activation from the round-gate (tested separately)

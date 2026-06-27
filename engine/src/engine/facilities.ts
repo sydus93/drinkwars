@@ -74,6 +74,28 @@ export function resolveFacilities(world: WorldState, decisions: Map<FirmId, Firm
   for (const f of world.firms) for (const fac of f.facilities ?? []) if (fac.lot_id) claim(fac.market_id ?? "home", fac.lot_id);
   const lotsOf = (mk: string) => c.modules?.geography?.markets.find((m) => m.id === mk)?.lots ?? [];
 
+  // Site competition: when more than one active firm bids for the same FREE parcel this round,
+  // the highest bid wins it; the losers' builds for that parcel are dropped (no capex) with a
+  // notice. Ties keep firm order (deterministic). The winner pays its bid as a lease premium.
+  const bidsByLot = new Map<string, { firmId: FirmId; bid: number }[]>();
+  for (const f of world.firms) {
+    if (f.status !== "active") continue;
+    for (const b of decisions.get(f.id)?.build_facilities ?? []) {
+      if (!b.lot) continue;
+      const mk = b.market ?? "home";
+      if (occupied.get(mk)?.has(b.lot)) continue; // already held by an existing facility — not contestable
+      const key = `${mk}::${b.lot}`;
+      const arr = bidsByLot.get(key) ?? [];
+      arr.push({ firmId: f.id, bid: Math.max(0, b.bid ?? 0) });
+      bidsByLot.set(key, arr);
+    }
+  }
+  const lotWinner = new Map<string, FirmId>();
+  for (const [key, bids] of bidsByLot) {
+    if (bids.length <= 1) continue; // uncontested
+    lotWinner.set(key, bids.reduce((a, x) => (x.bid > a.bid ? x : a), bids[0]).firmId);
+  }
+
   for (const f of world.firms) {
     if (f.status !== "active") continue;
     f.facilities ??= [];
@@ -125,7 +147,10 @@ export function resolveFacilities(world: WorldState, decisions: Map<FirmId, Firm
         const lot = lotsOf(mk).find((L) => L.id === b.lot);
         if (!lot) { out.events.push(`BUILD BLOCKED: ${f.id} — parcel ${b.lot} not found in ${mk}`); continue; }
         if (round < (lot.unlock_round ?? 0)) { out.events.push(`BUILD BLOCKED: ${f.id} — that parcel isn't available yet`); continue; }
+        const winner = lotWinner.get(`${mk}::${b.lot}`);
+        if (winner && winner !== f.id) { out.events.push(`OUTBID: ${f.id} lost a contested parcel in ${mk} to a higher bid`); continue; }
         if (occupied.get(mk)?.has(b.lot)) { out.events.push(`BUILD BLOCKED: ${f.id} — that parcel is already taken`); continue; }
+        if (winner === f.id && (b.bid ?? 0) > 0) { opex += Math.max(0, b.bid ?? 0); out.events.push(`PARCEL WON: ${f.id} wins a contested parcel in ${mk} (${Math.round(Math.max(0, b.bid ?? 0))} premium)`); }
         lot_id = lot.id;
         location_id = lot.district;
         claim(mk, lot.id);

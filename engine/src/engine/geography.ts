@@ -149,30 +149,41 @@ export function resolveGeography(
   for (const f of activeFirms) {
     f.markets_entered ??= ["home"];
     const weights = decisions.get(f.id)?.market_presence ?? {};
-    // A positive weight on a not-yet-entered market triggers entry (one-time cost).
+    const supply = decisions.get(f.id)?.market_supply; // Stage 2: explicit per-market units (overrides the split)
+    // A positive presence weight OR explicit supply on a not-yet-entered market triggers entry.
     for (const m of markets) {
       if (m.kind === "home") continue;
-      if ((weights[m.id] ?? 0) > 0 && !f.markets_entered.includes(m.id)) {
+      if (((weights[m.id] ?? 0) > 0 || (supply?.[m.id] ?? 0) > 0) && !f.markets_entered.includes(m.id)) {
         f.markets_entered.push(m.id);
         out.entryCostByFirm.set(f.id, (out.entryCostByFirm.get(f.id) ?? 0) + m.entry_cost);
         out.events.push(`EXPANSION: ${f.id} enters ${m.label}`);
       }
     }
-    // Allocation fractions over the markets the firm operates in. Home gets weight 1
-    // by default so a firm that sets no weights stays entirely at home (legacy-like).
     const operating = markets.filter((m) => m.kind === "home" || f.markets_entered.includes(m.id));
-    const raw = new Map<string, number>();
-    let total = 0;
-    for (const m of operating) {
-      const wRaw = m.kind === "home" ? (weights[m.id] ?? 1) : (weights[m.id] ?? 0);
-      const w = Math.max(0, wRaw);
-      raw.set(m.id, w);
-      total += w;
-    }
     const frac = new Map<string, number>();
-    // Degenerate (all weights 0) ⇒ everything home.
-    if (total <= 0) frac.set(home.id, 1);
-    else for (const [id, w] of raw) frac.set(id, w / total);
+    if (supply) {
+      // Explicit allocation: supplyOf(m) = market_supply[m] (units), scaled down to fit total
+      // sellable (supplyOf = sellable × frac ⇒ frac = clampedUnits / sellable).
+      const cap = sellableByFirm.get(f.id) ?? 0;
+      const raw = new Map<string, number>();
+      let total = 0;
+      for (const m of operating) { const u = Math.max(0, supply[m.id] ?? 0); raw.set(m.id, u); total += u; }
+      if (total <= 0) frac.set(home.id, 1);
+      else { const scale = cap > 0 && total > cap ? cap / total : 1; for (const [id, u] of raw) frac.set(id, cap > 0 ? (u * scale) / cap : 0); }
+    } else {
+      // Presence path (default): split the sellable pool by market-presence weights. Home gets
+      // weight 1 by default so a firm that sets no weights stays entirely at home (legacy-like).
+      const raw = new Map<string, number>();
+      let total = 0;
+      for (const m of operating) {
+        const wRaw = m.kind === "home" ? (weights[m.id] ?? 1) : (weights[m.id] ?? 0);
+        const w = Math.max(0, wRaw);
+        raw.set(m.id, w);
+        total += w;
+      }
+      if (total <= 0) frac.set(home.id, 1);
+      else for (const [id, w] of raw) frac.set(id, w / total);
+    }
     fracByFirm.set(f.id, frac);
   }
 

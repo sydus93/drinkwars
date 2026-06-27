@@ -910,12 +910,13 @@ export interface FirmDecision {
   invest_water_efficiency?: number; // MOD-A03: spend on water efficiency (expensed; builds the stock)
   public_good_contributions?: Record<string, number>; // MOD-A02: per-good voluntary contributions
   market_presence?: Record<string, number>; // MOD-B01: capacity split across markets (≥0 weights)
+  market_supply?: Record<string, number>; // Phase 3 (Stage 2): explicit units to offer per market, drawn from total sellable (overrides the presence split). Absent ⇒ presence-weighted.
   invest_rnd?: number; // MOD-B04: R&D spend toward the frontier category (expensed)
   buy_vertical?: string[]; // MOD-B06: vertical asset ids to purchase this round
   hire_roles?: string[]; // MOD-B03: key roles to hire this round
   fire_roles?: string[]; // MOD-B03: key roles to let go this round
   // MOD-B11 facilities (physical capacity assets)
-  build_facilities?: { type: string; name?: string; location?: string; market?: string; lot?: string }[]; // facility types to build this round (location = district id; market = MOD-B01 market/city id; lot = Phase 2 parcel id)
+  build_facilities?: { type: string; name?: string; location?: string; market?: string; lot?: string; bid?: number }[]; // facility types to build this round (location = district id; market = MOD-B01 market/city id; lot = Phase 2 parcel id; bid = lease premium for a contested parcel — highest bid wins it)
   maintain_facilities?: Record<string, number>; // facility id → maintenance $ this round
   mothball_facilities?: string[]; // facility ids to take offline (stop fixed cost + capacity)
   reactivate_facilities?: string[]; // mothballed facility ids to bring back online
