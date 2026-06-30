@@ -1058,29 +1058,43 @@ export function DecisionForm({
 
       {/* Pre-submission indicators — pinned on desktop so projected cash and the
           submit button never scroll away while tuning levers */}
-      <div className="grid content-start gap-4 lg:sticky lg:top-4 lg:self-start">
-        <Card>
-          <Eyebrow>Before You Brew</Eyebrow>
-          <Row label="Cash on hand" value={fmt.money(cash)} />
-          {invOn && <Row label="− Brewing this round" value={fmt.money(brewSpend)} />}
-          {moduleSpend > 0 && <Row label="− Plays, programs & entry" value={fmt.money(moduleSpend)} />}
-          {instrDraws > 0 && <Row label="+ Alternative financing" value={<span className="text-hop">{fmt.signed(instrDraws)}</span>} />}
-          <Row label="− Investment & research" value={fmt.money(investSpend + infoSpend)} />
-          <Row label={netFinancing >= 0 ? "+ Net financing" : "− Net financing"} value={<span className={netFinancing < 0 ? "text-brick" : "text-hop"}>{fmt.signed(netFinancing)}</span>} />
-          <Row label="Projected cash (pre-sales)" value={<span className={overcommit ? "text-brick" : ""}>{fmt.money(projectedCash)}</span>} strong />
-          {lastCov != null && <Row label="Interest coverage (last)" value={lastCov > 900 ? "—" : `${lastCov.toFixed(1)}×`} />}
-          {overcommit && <div className="mt-2 text-[0.72rem] text-brick">You'd run negative before any sales come in — revenue may cover it, but you risk forced exit.</div>}
-        </Card>
-        <Button
-          variant="go"
-          onClick={() => onPlay(mergeDecision(view, d, cityActions, poaches))}
-          disabled={busy}
-          className="w-full py-3 text-base"
-        >
-          {busy ? "Working…" : submitLabel ?? `Brew & Resolve Round ${view.round + 1}`}
-        </Button>
-        <div className="text-center text-[0.68rem] text-inksoft">{footerNote ?? "7 rival breweries (adaptive AI) brew at the same time."}</div>
+      {/* Commit panel — the design's persistent commit dial: big projected-cash readout,
+          live spend breakdown, overcommit guard, and the brew action. Pinned on desktop. */}
+      <div className="grid content-start gap-3 lg:sticky lg:top-4 lg:self-start">
+        <div className="overflow-hidden rounded-[14px] border border-line2 bg-panel" style={{ boxShadow: "inset 0 1px 0 var(--color-line), 0 10px 24px rgba(40,25,8,.18)" }}>
+          <div className="flex items-center justify-between border-b border-line2 px-4 py-2" style={{ background: "color-mix(in srgb, var(--color-copper) 10%, var(--color-panel))" }}>
+            <span className="font-mono text-[0.6rem] font-bold uppercase tracking-[0.14em] text-copperdeep">Commit the round</span>
+            <span className="font-mono text-[0.55rem] uppercase tracking-wide text-inksoft">Round {Math.min(view.round + 1, view.nRounds)}</span>
+          </div>
+          <div className="px-4 py-3">
+            <div className="font-mono text-[0.58rem] uppercase tracking-[0.1em] text-inksoft">Projected cash · pre-sales</div>
+            <div className="tnum text-[2.1rem] font-bold leading-none" style={{ color: overcommit ? "var(--color-brick)" : "var(--color-ink)" }}>{fmt.money(projectedCash)}</div>
+            <div className="mt-3 grid gap-1 border-t border-line pt-2.5">
+              <CommitRow label="Cash on hand" value={fmt.money(cash)} />
+              {invOn && brewSpend > 0 && <CommitRow label="Brewing" value={`−${fmt.money(brewSpend)}`} />}
+              {investSpend + infoSpend > 0 && <CommitRow label="Investment & research" value={`−${fmt.money(investSpend + infoSpend)}`} />}
+              {moduleSpend > 0 && <CommitRow label="Plays, programs & entry" value={`−${fmt.money(moduleSpend)}`} />}
+              {instrDraws > 0 && <CommitRow label="Alt. financing" value={`+${fmt.money(instrDraws)}`} tone="hop" />}
+              {netFinancing !== 0 && <CommitRow label="Net financing" value={fmt.signed(netFinancing)} tone={netFinancing < 0 ? "brick" : "hop"} />}
+              {lastCov != null && lastCov <= 900 && <CommitRow label="Interest coverage (last)" value={`${lastCov.toFixed(1)}×`} />}
+            </div>
+            {overcommit && <div className="mt-3 rounded-lg border border-brick px-3 py-2 text-[0.72rem]" style={{ background: "color-mix(in srgb, var(--color-brick) 12%, var(--color-panel))", color: "var(--color-brick)" }}>Spending exceeds cash on hand — draw financing or trim a desk before brewing.</div>}
+            <Button variant="go" onClick={() => onPlay(mergeDecision(view, d, cityActions, poaches))} disabled={busy} className="mt-3 w-full py-3 text-base">
+              {busy ? "Working…" : submitLabel ?? `Brew & Resolve Round ${Math.min(view.round + 1, view.nRounds)}`}
+            </Button>
+            <div className="mt-1.5 text-center text-[0.66rem] text-inksoft">{footerNote ?? "7 rival breweries (adaptive AI) brew at the same time."}</div>
+          </div>
+        </div>
       </div>
+    </div>
+  );
+}
+
+function CommitRow({ label, value, tone }: { label: string; value: string; tone?: "hop" | "brick" }) {
+  return (
+    <div className="flex items-baseline justify-between text-[0.78rem]">
+      <span className="text-inksoft">{label}</span>
+      <span className="tnum font-semibold" style={{ color: tone === "hop" ? "var(--color-hop)" : tone === "brick" ? "var(--color-brick)" : "var(--color-ink)" }}>{value}</span>
     </div>
   );
 }

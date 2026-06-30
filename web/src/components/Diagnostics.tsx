@@ -3,6 +3,7 @@ import type { GameView } from "../game/controller.js";
 import { SEG_LABEL, STOCK_LABEL, fmt } from "../labels.js";
 import { Bar, Card, Eyebrow, Row, Tag } from "./ui.js";
 import { WorldMap } from "./WorldMap.js";
+import { Waterfall, RadialScore, Distribution } from "./charts.js";
 
 const PALETTE = {
   copper: "var(--color-copper)",
@@ -19,6 +20,19 @@ export function Diagnostics({ result, view }: { result: FirmRoundResult; view: G
   const pnl = result.pnl;
   const bs = result.balance_sheet;
   const cf = result.cash_flow;
+
+  // Tufte band data — all from this resolved round + the public field.
+  const frs = view.result?.firm_results ?? [];
+  const scoreField = frs.length
+    ? {
+        financial: frs.reduce((a, f) => a + f.scorecard_norm.financial, 0) / frs.length,
+        market: frs.reduce((a, f) => a + f.scorecard_norm.market, 0) / frs.length,
+        intangible: frs.reduce((a, f) => a + f.scorecard_norm.intangible, 0) / frs.length,
+        stakeholder: frs.reduce((a, f) => a + f.scorecard_norm.stakeholder, 0) / frs.length,
+      }
+    : null;
+  const fieldScores = view.firms.map((f) => f.score);
+  const youScore = view.firms.find((f) => f.firm_id === view.own.id)?.score ?? result.scorecard_cumulative;
 
   const geoMarkets = result.markets && view.modules?.geography?.markets
     ? view.modules.geography.markets.filter((m) => m.kind !== "export" || view.modules?.international?.enabled)
@@ -46,6 +60,28 @@ export function Diagnostics({ result, view }: { result: FirmRoundResult; view: G
 
   return (
     <div className="grid gap-4">
+      {/* The round at a glance — editorial Tufte band (P&L bridge · scorecard radar · field rank) */}
+      <Card>
+        <Eyebrow>The Round at a Glance</Eyebrow>
+        <div className="mt-2 grid gap-5 md:grid-cols-3">
+          <div>
+            <div className="mb-1 font-mono text-[0.58rem] uppercase tracking-[0.12em] text-copperdeep">P&amp;L bridge</div>
+            <Waterfall revenue={pnl.revenue} cogs={pnl.cogs} opex={pnl.opex} other={pnl.depreciation + pnl.interest + (pnl.spoilage ?? 0)} net={pnl.net_income} />
+            <div className="mt-1 text-[0.66rem] text-inksoft">Revenue stepping down through costs to net income.</div>
+          </div>
+          <div>
+            <div className="mb-1 font-mono text-[0.58rem] uppercase tracking-[0.12em] text-copperdeep">Scorecard vs field</div>
+            <div className="grid place-items-center"><RadialScore you={result.scorecard_norm} field={scoreField} /></div>
+            <div className="mt-1 text-[0.66rem] text-inksoft"><span className="text-copperdeep">You</span> against the field average across the four pillars.</div>
+          </div>
+          <div>
+            <div className="mb-1 font-mono text-[0.58rem] uppercase tracking-[0.12em] text-copperdeep">Where you rank</div>
+            <Distribution vals={fieldScores} you={youScore} fmtTick={(n) => n.toFixed(2)} />
+            <div className="mt-1 text-[0.66rem] text-inksoft">Cumulative score across every firm — the sustained-advantage measure.</div>
+          </div>
+        </div>
+      </Card>
+
       {/* Per-market performance (geography) */}
       {geoMarkets && result.markets && (
         <Card>

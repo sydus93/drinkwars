@@ -8,7 +8,7 @@ import { ModeSelector } from "./ModeSelector.js";
 import { Avatar, SkillStars } from "../components/People.js";
 import { FacilityChip, Emblem, EMBLEM_IDS } from "../components/FacilityGlyph.js";
 import { FIRM_COLORS } from "../lib/teamColors.js";
-import { fmt, ZONE_OF, ZONE_TONE } from "../labels.js";
+import { fmt } from "../labels.js";
 
 /** A founding facility: a type, optionally sited on a specific home parcel (when geography
  *  is on, the player picks the parcel; otherwise it's a district-less legacy build). */
@@ -52,7 +52,6 @@ export function FirmBuilder({ onStart, busy }: { onStart: (c: FoundingChoices) =
   const cfg = useMemo(() => resolveConfig(Object.keys(modules).length ? ({ modules } as unknown as ConfigOverride) : undefined), [modules]);
   const facOn = !!cfg.modules?.facilities?.enabled;
   const empOn = !!cfg.modules?.employees?.enabled;
-  const geoOn = !!cfg.modules?.geography?.enabled;
   const facTypes = facOn ? cfg.modules?.facilities?.types ?? [] : [];
   const facMax = cfg.modules?.facilities?.max_facilities ?? 0;
   const candidates = empOn ? generateHiringMarket(cfg, cfg.game.seed, 0) : [];
@@ -64,26 +63,14 @@ export function FirmBuilder({ onStart, busy }: { onStart: (c: FoundingChoices) =
   const remaining = startCash - facCost - hireCost;
   const hasFounding = facOn || empOn;
 
-  // Geography on ⇒ found facilities are SITED on real home parcels (district is a true
-  // tradeoff — downtown brand draw vs south-side output), zoning-gated exactly like the
-  // City View. Geography off ⇒ a parcel-less legacy build (toggle types). Founding builds
-  // flow through the round-0 decision, so the engine sites + costs them normally.
-  const districts = cfg.modules?.facilities?.districts ?? [];
-  const homeLots = geoOn ? (cfg.modules?.geography?.markets.find((m) => m.kind === "home")?.lots ?? []).filter((L) => (L.unlock_round ?? 0) <= 0) : [];
-  const kindOfLot = (L: { district: string }) => districts.find((d) => d.id === L.district)?.kind ?? L.district;
-  const distLabel = (L: { district: string }) => districts.find((d) => d.id === L.district)?.label ?? L.district;
-  const allowAtLot = (L: { district: string }) => ZONE_OF[kindOfLot(L)]?.allow ?? facTypes.map((t) => t.id);
-  const pickAtLot = (lot: string) => facPick.find((f) => f.lot === lot);
-
   const display = name.trim() || "Your Brewery";
   const steps = ["Identity", "The field", "Founding", "Review"];
   const finish = () => onStart({ name, tagline: "", color, emblem, difficulty, modules, founding: { facilities: facPick, hires: hirePick } });
 
-  // Geography off: toggle a (parcel-less) type, one per type. Geography on: place/clear a
-  // facility on a specific parcel (a lot holds at most one).
+  // Founding sites a facility TYPE in the single home market (one per type). The lot is left
+  // unset — the controller auto-assigns a free home parcel — so founding stays a simple
+  // "what do you open with" choice; where each site sits is decided later in the City View.
   const toggleFac = (id: string) => setFacPick((p) => (p.some((f) => f.type === id) ? p.filter((f) => f.type !== id) : p.length < facMax ? [...p, { type: id }] : p));
-  const placeFac = (lot: string, type: string) => setFacPick((p) => [...p.filter((f) => f.lot !== lot), { type, lot }]);
-  const clearLot = (lot: string) => setFacPick((p) => p.filter((f) => f.lot !== lot));
   const toggleHire = (id: string) => setHirePick((p) => (p.includes(id) ? p.filter((x) => x !== id) : p.length < FOUNDING_HIRE_CAP ? [...p, id] : p));
 
   // The live identity card + how the firm's sites read on the map — the design's
@@ -232,53 +219,12 @@ export function FirmBuilder({ onStart, busy }: { onStart: (c: FoundingChoices) =
                     <div className="eyebrow">Founding budget</div>
                     <div className={`tnum text-sm font-semibold ${remaining < 0 ? "text-brick" : "text-ink"}`}>{fmt.money(remaining)} <span className="text-inksoft">of {fmt.money(startCash)} left</span></div>
                   </div>
-                  {facOn && geoOn && (
+                  {facOn && (
                     <div>
                       <div className="mb-1.5 flex items-baseline justify-between">
-                        <div className="text-sm font-semibold text-ink">Starting sites <span className="text-[0.7rem] font-normal text-inksoft">· {facPick.length} placed</span></div>
-                        <div className="text-[0.66rem] text-inksoft">Pick a home parcel — district sets the rent, output &amp; brand tradeoff</div>
+                        <div className="text-sm font-semibold text-ink">Starting facilities <span className="text-[0.7rem] font-normal text-inksoft">· {facPick.length}/{facMax}</span></div>
+                        <div className="text-[0.66rem] text-inksoft">Open in your home market · Front Range</div>
                       </div>
-                      <div className="grid gap-1.5 sm:grid-cols-2">
-                        {homeLots.map((L) => {
-                          const pick = pickAtLot(L.id);
-                          const z = ZONE_OF[kindOfLot(L)];
-                          const allowed = allowAtLot(L);
-                          return (
-                            <div key={L.id} className={`rounded-md border p-2.5 ${pick ? "border-copper bg-copper/[0.06]" : "border-line"}`}>
-                              <div className="flex items-baseline justify-between">
-                                <span className="text-sm font-semibold text-ink">{distLabel(L)}</span>
-                                <span className="font-mono text-[0.55rem] font-bold uppercase tracking-wide" style={{ color: ZONE_TONE[z?.zone ?? ""] ?? "var(--color-inksoft)" }}>{z?.zone ?? "Open"} zone</span>
-                              </div>
-                              {pick ? (
-                                <div className="mt-1.5 flex items-center gap-2">
-                                  <FacilityChip type={pick.type} color={color} size={24} mine />
-                                  <span className="min-w-0 flex-1 truncate text-[0.78rem] font-medium text-ink">{typeOf(pick.type)?.label}</span>
-                                  <span className="tnum font-mono text-[0.68rem] text-copperdeep">{fmt.money(typeOf(pick.type)?.base_cost ?? 0)}</span>
-                                  <button type="button" onClick={() => clearLot(L.id)} title="Clear this parcel" className="text-[0.8rem] leading-none text-inksoft transition-colors hover:text-brick">✕</button>
-                                </div>
-                              ) : (
-                                <div className="mt-1.5 flex flex-wrap gap-1">
-                                  {facTypes.filter((t) => allowed.includes(t.id)).map((t) => {
-                                    const afford = remaining - t.base_cost >= 0 && facPick.length < facMax;
-                                    return (
-                                      <button key={t.id} type="button" disabled={!afford} onClick={() => placeFac(L.id, t.id)} title={`${t.label} · ${fmt.money(t.base_cost)}`} className="flex items-center gap-1 rounded border border-line px-1.5 py-1 text-[0.64rem] transition-colors hover:border-copper disabled:opacity-40">
-                                        <FacilityChip type={t.id} color={color} size={15} mine />
-                                        <span className="text-ink">{t.label}</span>
-                                        <span className="tnum font-mono text-copperdeep">{fmt.money(t.base_cost)}</span>
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                  {facOn && !geoOn && (
-                    <div>
-                      <div className="mb-1.5 text-sm font-semibold text-ink">Starting facilities <span className="text-[0.7rem] font-normal text-inksoft">· {facPick.length}/{facMax}</span></div>
                       <div className="grid gap-1.5 sm:grid-cols-2">
                         {facTypes.map((t) => {
                           const on = facPick.some((f) => f.type === t.id);
@@ -331,7 +277,7 @@ export function FirmBuilder({ onStart, busy }: { onStart: (c: FoundingChoices) =
               <div className="grid content-start gap-2 text-sm">
                 <Row label="Rivals" value={DIFFICULTIES.find((d) => d.id === difficulty)?.label ?? difficulty} />
                 <Row label="Expansions" value={Object.keys(modules).length ? `${Object.keys(modules).length} on` : "Standard game"} />
-                {facOn && <Row label={geoOn ? "Starting sites" : "Starting facilities"} value={facPick.length ? facPick.map((f) => { const L = homeLots.find((x) => x.id === f.lot); return (typeOf(f.type)?.label ?? f.type) + (L ? ` · ${distLabel(L)}` : ""); }).join(", ") : "None"} />}
+                {facOn && <Row label="Starting facilities" value={facPick.length ? facPick.map((f) => typeOf(f.type)?.label ?? f.type).join(", ") : "None"} />}
                 {empOn && <Row label="Founding team" value={hirePick.length ? `${hirePick.length} hired` : "None"} />}
                 {hasFounding && <Row label="Opening cash after founding" value={fmt.money(remaining)} strong />}
                 <p className="mt-2 text-[0.74rem] leading-snug text-inksoft">Your founding picks are queued into round one — you can still adjust them before you brew.</p>

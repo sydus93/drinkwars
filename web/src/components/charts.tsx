@@ -1,4 +1,5 @@
 /** Minimal dependency-free SVG charts, styled to the palette. */
+import type { ReactNode } from "react";
 
 const W = 320;
 const H = 110;
@@ -117,5 +118,104 @@ export function CompareBar({ label, you, ref_, max, fmt }: { label: string; you:
         <div className="absolute top-[-2px] h-3 w-[2px] bg-ink" style={{ left: `${Math.min(100, (ref_ / m) * 100)}%` }} title="field median" />
       </div>
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Editorial Tufte suite — ported from the Claude Design "Core Loop" prototype.
+// Hand-drawn SVG, direct-labeled, palette-themed. Fed by real round results.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const moneyK = (n: number): string => {
+  const a = Math.abs(n);
+  return (n < 0 ? "−$" : "$") + (a >= 1000 ? (a / 1000).toFixed(a >= 10000 ? 0 : 1) + "k" : `${Math.round(a)}`);
+};
+
+type TxtProps = { x: number; y: number; children: ReactNode; fill?: string; size?: number; weight?: number; anchor?: "start" | "middle" | "end"; italic?: boolean; tab?: boolean };
+function Txt({ x, y, children, fill = "var(--color-ink)", size = 10, weight = 500, anchor = "start", italic = false, tab = false }: TxtProps) {
+  return (
+    <text x={x} y={y} fill={fill} fontSize={size} fontWeight={weight} textAnchor={anchor} fontStyle={italic ? "italic" : undefined} fontFamily="'IBM Plex Sans', sans-serif" style={tab ? { fontVariantNumeric: "tabular-nums lining-nums" } : undefined}>{children}</text>
+  );
+}
+
+/** P&L bridge — revenue stepping down through costs to net income. */
+export function Waterfall({ revenue, cogs, opex, other, net }: { revenue: number; cogs: number; opex: number; other: number; net: number }) {
+  const VW = 300, VH = 168, padL = 8, padB = 26, padT = 18;
+  const steps = [
+    { label: "Revenue", val: revenue, color: "var(--color-copper)", total: false },
+    { label: "COGS", val: -cogs, color: "var(--color-clay)", total: false },
+    { label: "Opex", val: -opex, color: "var(--color-plum)", total: false },
+    { label: "Other", val: -other, color: "var(--color-aero)", total: false },
+    { label: "Net", val: net, color: net >= 0 ? "var(--color-hop)" : "var(--color-brick)", total: true },
+  ];
+  let run = 0;
+  const tops: [number, number][] = [];
+  steps.forEach((s) => { if (s.total) tops.push([0, net]); else { tops.push([run, run + s.val]); run += s.val; } });
+  const allv = [0, revenue, run, net];
+  const mx = Math.max(...allv) * 1.08, mn = Math.min(0, ...allv), span = mx - mn || 1;
+  const yOf = (v: number) => padT + (1 - (v - mn) / span) * (VH - padT - padB);
+  const bw = ((VW - padL * 2) / steps.length) * 0.62, gap = (VW - padL * 2) / steps.length;
+  return (
+    <svg width="100%" viewBox={`0 0 ${VW} ${VH}`} style={{ display: "block" }}>
+      <line x1={padL} y1={yOf(0)} x2={VW - padL} y2={yOf(0)} stroke="var(--color-line2)" strokeWidth={1} />
+      {steps.map((s, i) => {
+        const cx = padL + gap * i + gap / 2; const [a, b] = tops[i];
+        const y1 = yOf(Math.max(a, b)), y2 = yOf(Math.min(a, b));
+        const connector = i < steps.length - 1 && !steps[i + 1].total;
+        return (
+          <g key={s.label}>
+            <rect x={cx - bw / 2} y={y1} width={bw} height={Math.max(2, y2 - y1)} fill={s.color} rx={2} opacity={s.total ? 1 : 0.9} />
+            <Txt x={cx} y={y1 - 4} anchor="middle" size={10} weight={600} tab>{moneyK(s.val)}</Txt>
+            <Txt x={cx} y={VH - 9} anchor="middle" size={10} weight={500} fill="var(--color-inksoft)">{s.label}</Txt>
+            {connector && <line x1={cx + bw / 2} y1={yOf(b)} x2={cx + gap - bw / 2} y2={yOf(b)} stroke="var(--color-inksoft)" strokeWidth={1} strokeDasharray="2 2" opacity={0.55} />}
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+type Score = { financial: number; market: number; intangible: number; stakeholder: number };
+/** Scorecard radar — your four normalized pillars (vs the field average when supplied). */
+export function RadialScore({ you, field }: { you: Score; field?: Score | null }) {
+  const S = 200, c = S / 2, R = 70;
+  const axes: [keyof Score, string][] = [["financial", "Financial"], ["market", "Market"], ["intangible", "Intangible"], ["stakeholder", "Stakeholder"]];
+  const ang = (i: number) => (Math.PI * 2 * i) / axes.length - Math.PI / 2;
+  const pt = (i: number, v: number): [number, number] => [c + Math.cos(ang(i)) * R * v, c + Math.sin(ang(i)) * R * v];
+  const ringPath = (g: number) => axes.map((_, i) => { const q = pt(i, g); return `${i ? "L" : "M"}${q[0].toFixed(1)} ${q[1].toFixed(1)}`; }).join(" ") + " Z";
+  const polyPath = (vals: Score) => axes.map(([k], i) => { const q = pt(i, Math.max(0, Math.min(1, vals[k]))); return `${i ? "L" : "M"}${q[0].toFixed(1)} ${q[1].toFixed(1)}`; }).join(" ") + " Z";
+  return (
+    <svg width={250} height={165} viewBox="-64 -4 318 210" style={{ overflow: "visible", maxWidth: "100%" }}>
+      {[0.25, 0.5, 0.75, 1].map((g) => <path key={g} d={ringPath(g)} fill="none" stroke="var(--color-line2)" strokeWidth={0.75} opacity={0.55} />)}
+      {axes.map((_, i) => { const q = pt(i, 1); return <line key={i} x1={c} y1={c} x2={q[0]} y2={q[1]} stroke="var(--color-line2)" strokeWidth={0.75} opacity={0.55} />; })}
+      {field && <path d={polyPath(field)} fill="none" stroke="var(--color-inksoft)" strokeWidth={1.5} strokeDasharray="3 2" strokeLinejoin="round" />}
+      <path d={polyPath(you)} fill="var(--color-copper)" fillOpacity={0.16} stroke="var(--color-copper)" strokeWidth={2} strokeLinejoin="round" />
+      {axes.map(([k], i) => { const q = pt(i, Math.max(0, Math.min(1, you[k]))); return <circle key={k} cx={q[0]} cy={q[1]} r={2.6} fill="var(--color-copper)" />; })}
+      {axes.map(([, lab], i) => { const q = pt(i, 1.24); const anchor = Math.abs(Math.cos(ang(i))) < 0.3 ? "middle" : Math.cos(ang(i)) > 0 ? "start" : "end"; return <Txt key={lab} x={q[0]} y={q[1] + 3} anchor={anchor} size={10} weight={600} fill="var(--color-inksoft)">{lab}</Txt>; })}
+    </svg>
+  );
+}
+
+/** Where you stand in the field — histogram of a public metric with your bin lit. */
+export function Distribution({ vals, you, fmtTick = (n) => n.toFixed(1) }: { vals: number[]; you: number; fmtTick?: (n: number) => string }) {
+  const VW = 300, VH = 140, padL = 8, padB = 26, padT = 10;
+  if (vals.length === 0) return null;
+  const mn = Math.min(...vals, you), mx = Math.max(...vals, you);
+  const nb = 6, step = (mx - mn) / nb || 1;
+  const bins = new Array(nb).fill(0);
+  vals.forEach((v) => { let i = Math.floor((v - mn) / step); if (i >= nb) i = nb - 1; if (i < 0) i = 0; bins[i]++; });
+  const bmx = Math.max(...bins) || 1, bw = (VW - padL * 2) / nb;
+  const yOf = (count: number) => padT + (1 - count / bmx) * (VH - padT - padB);
+  const youBin = Math.min(nb - 1, Math.max(0, Math.floor((you - mn) / step)));
+  return (
+    <svg width="100%" viewBox={`0 0 ${VW} ${VH}`} style={{ display: "block" }}>
+      {bins.map((count, i) => { const x = padL + bw * i, y = yOf(count); return (
+        <g key={i}>
+          <rect x={x + 1.5} y={y} width={bw - 3} height={VH - padB - y} fill={i === youBin ? "var(--color-copper)" : "var(--color-clay)"} opacity={i === youBin ? 1 : 0.5} rx={2} />
+          <Txt x={x + bw / 2} y={VH - 13} anchor="middle" size={9} fill="var(--color-inksoft)" tab>{fmtTick(mn + step * i)}</Txt>
+        </g>
+      ); })}
+      <Txt x={padL + bw * youBin + bw / 2} y={yOf(bins[youBin]) - 5} anchor="middle" size={9.5} weight={700} fill="var(--color-copperdeep)">you</Txt>
+    </svg>
   );
 }
