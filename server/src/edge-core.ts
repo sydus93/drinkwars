@@ -12,4 +12,10 @@ export { GameOrchestrator } from "./lifecycle.js";
 export { SupabaseAdapter } from "./adapters/supabase.js";
 export { buildInstructorDashboard, dashboardToCsv } from "./dashboard.js";
 export { randomBreweryNames, renameFirms } from "./names.js";
-export { resolveConfig, roleBriefings, summarizeAgreementsFor, summarizeLobbying } from "drinkwars-engine";
+export {
+  resolveConfig, roleBriefings, summarizeAgreementsFor, summarizeLobbying,
+  // Per-team projections + helpers the Edge transport needs at parity with the
+  // local dev transport (src/transport.ts) — city view, research-gated rival
+  // snapshots, shocks, history, the hiring pool, and the Tuning-Board merge.
+  deepMerge, generateHiringMarket, projectMarkets, projectFirms, projectShocks, projectHistory,
+} from "drinkwars-engine";

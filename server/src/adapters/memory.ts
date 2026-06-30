@@ -5,7 +5,7 @@
  */
 import type {
   AgreementRow, BeliefRow, DecisionRecord, DistinctivenessRow, FirmRoundRow, GameRecord,
-  Lifecycle, PublicRoundRecord, ReflectionRow, RoundResultRecord, StorageAdapter, TeamRecord, TelemetryRow,
+  Lifecycle, MemberDecisionRecord, PublicRoundRecord, ReflectionRow, RoundResultRecord, StorageAdapter, TeamRecord, TelemetryRow,
   UserRecord, WorldStateRecord,
 } from "../types.js";
 
@@ -20,6 +20,7 @@ export class InMemoryAdapter implements StorageAdapter {
   private decisions = new Map<string, DecisionRecord>(); // key game::round::team
   private roundResults = new Map<string, RoundResultRecord>(); // key game::round
   private publicRounds = new Map<string, PublicRoundRecord>(); // key game::round (append-only)
+  private memberDecisions = new Map<string, MemberDecisionRecord>(); // key game::round::user
   private firmRounds: FirmRoundRow[] = [];
   private agreements = new Map<string, AgreementRow>(); // key game::agreementId
   private beliefs: BeliefRow[] = [];
@@ -48,8 +49,19 @@ export class InMemoryAdapter implements StorageAdapter {
   async createUser(u: UserRecord): Promise<void> {
     this.users.set(u.id, clone(u));
   }
+  async upsertUser(u: UserRecord): Promise<void> {
+    this.users.set(u.id, clone(u));
+  }
   async getUser(id: string): Promise<UserRecord | null> {
     return this.users.has(id) ? clone(this.users.get(id)!) : null;
+  }
+  async getUserByExternalId(externalId: string): Promise<UserRecord | null> {
+    for (const u of this.users.values()) if (u.external_id && u.external_id === externalId) return clone(u);
+    return null;
+  }
+  async getUserByClaim(claimCode: string): Promise<UserRecord | null> {
+    for (const u of this.users.values()) if (u.claim_code && u.claim_code === claimCode) return clone(u);
+    return null;
   }
   async createTeam(t: TeamRecord): Promise<void> {
     this.teams.set(t.id, clone(t));
@@ -60,6 +72,16 @@ export class InMemoryAdapter implements StorageAdapter {
   async getTeam(id: string): Promise<TeamRecord | null> {
     return this.teams.has(id) ? clone(this.teams.get(id)!) : null;
   }
+  async getTeamsForUser(userId: string): Promise<TeamRecord[]> {
+    return [...this.teams.values()].filter((t) => t.member_user_ids.includes(userId)).map(clone);
+  }
+
+  async upsertMemberDecision(rec: MemberDecisionRecord): Promise<void> {
+    this.memberDecisions.set(key(rec.game_id, rec.round, rec.user_id), clone(rec));
+  }
+  async getMemberDecisions(gameId: string, round: number, teamId: string): Promise<MemberDecisionRecord[]> {
+    return [...this.memberDecisions.values()].filter((m) => m.game_id === gameId && m.round === round && m.team_id === teamId).map(clone);
+  }
   async addTeamMember(teamId: string, userId: string): Promise<void> {
     const t = this.teams.get(teamId);
     if (!t) throw new Error(`no team ${teamId}`);
@@ -69,6 +91,14 @@ export class InMemoryAdapter implements StorageAdapter {
     const t = this.teams.get(teamId);
     if (!t) throw new Error(`no team ${teamId}`);
     t.name = name;
+  }
+  private memberRoles = new Map<string, string>(); // key team::user → role
+  async setMemberRole(teamId: string, userId: string, role: string | null): Promise<void> {
+    if (role) this.memberRoles.set(key(teamId, userId), role);
+    else this.memberRoles.delete(key(teamId, userId));
+  }
+  async getMemberRole(teamId: string, userId: string): Promise<string | null> {
+    return this.memberRoles.get(key(teamId, userId)) ?? null;
   }
 
   async appendWorldState(rec: WorldStateRecord): Promise<void> {

@@ -5,6 +5,7 @@ import { setPlayerColor, setPlayerEmblem } from "./lib/teamColors.js";
 import { Play } from "./screens/Play.js";
 import { Lobby } from "./screens/Lobby.js";
 import { Join } from "./screens/Join.js";
+import { PlayerHome } from "./screens/PlayerHome.js";
 import { MultiplayerPlay } from "./screens/MultiplayerPlay.js";
 import { Instructor } from "./screens/Instructor.js";
 import { MP_ENABLED, StudentClient } from "./game/multiplayer.js";
@@ -69,7 +70,7 @@ function Solo() {
   return <Play view={view} busy={busy} infoCost={infoCost()} onPlay={play} defaultDecision={defaultDecision} onReset={reset} />;
 }
 
-type Screen = "lobby" | "solo" | "join" | "instructor";
+type Screen = "lobby" | "solo" | "join" | "instructor" | "player";
 
 export function App() {
   // Resume a saved student session on load (refresh → same firm, not a new slot).
@@ -85,6 +86,12 @@ export function App() {
           <MultiplayerPlay client={student} onExit={() => { setStudent(null); setScreen("lobby"); }} />
         ) : (
           <Join onJoined={setStudent} onBack={() => setScreen("lobby")} />
+        ))}
+      {screen === "player" && MP_ENABLED &&
+        (student ? (
+          <MultiplayerPlay client={student} onExit={() => { setStudent(null); setScreen("player"); }} />
+        ) : (
+          <PlayerHome onJoined={setStudent} onBack={() => setScreen("lobby")} />
         ))}
       {screen === "instructor" && MP_ENABLED && <Instructor onExit={() => setScreen("lobby")} />}
       <ModeToggle />

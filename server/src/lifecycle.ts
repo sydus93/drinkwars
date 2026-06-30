@@ -12,12 +12,14 @@
  * pure function of (state, decisions, config, seed), so any round is replayable
  * (§3.3) — `replay()` verifies that against the persisted history.
  */
-import { ADAPTIVE_LEANS, decideAdaptive, initGame, resolveRound as engineResolve } from "drinkwars-engine";
+import { ADAPTIVE_LEANS, decideAdaptive, initGame, mergeMemberDecisions, resolveRound as engineResolve, ROLE_DESK } from "drinkwars-engine";
 import type { Config, FirmDecision, FirmId, RoundResult, SegmentId, WorldState } from "drinkwars-engine";
 import type {
-  AgreementRow, BeliefRow, DecisionRecord, DistinctivenessRow, FirmRoundRow, GameRecord,
+  AgreementRow, BeliefRow, DecisionRecord, DistinctivenessRow, FirmMode, FirmRoundRow, GameRecord,
   ReflectionRow, StorageAdapter, TeamRecord, TelemetryRow,
 } from "./types.js";
+
+const MAX_SEATS_PER_FIRM = 6; // team mode: C-suite + a couple extra
 
 export interface CreateGameInput {
   config: Config;
@@ -25,7 +27,18 @@ export interface CreateGameInput {
   gameId?: string;
   joinCode?: string; // multiplayer: students enter this to claim an open slot
   ownerTag?: string | null; // instructor passcode tier that owns this game (control scoping)
+  firmMode?: FirmMode; // "solo" (default) | "team" (multi-seat firms)
+  title?: string | null; // human title for the game (player's game list)
 }
+
+/** Per-student roster entry for instructor provisioning. */
+export interface RosterEntry { external_id: string; name: string; email?: string | null; user_id?: string }
+/** What provisioning returns per student — the durable claim_code is the credential to distribute. */
+export interface ProvisionedStudent { external_id: string; name: string; claim_code: string; user_id: string; existing: boolean }
+/** A game in a player's "my games" / return-to-game list, with their latest standing. */
+export interface MyGame { gameId: string; title: string | null; joinCode: string | null; firmId: FirmId; teamName: string; round: number; lifecycle: GameRecord["lifecycle"]; nRounds: number; rank: number | null; score: number | null; status: string | null; complete: boolean }
+/** A seat at one firm (team mode): who holds it, which desk, and whether they've submitted. */
+export interface TeamSeat { name: string; role: string | null; desk: string | null; submitted: boolean }
 
 export class LifecycleError extends Error {
   constructor(msg: string) {
@@ -73,7 +86,7 @@ export class GameOrchestrator {
     if (input.teams.length > config.game.n_firms) throw new LifecycleError(`${input.teams.length} teams exceeds n_firms ${config.game.n_firms}`);
     const gameId = input.gameId ?? this.id();
     const world = initGame(config);
-    const game: GameRecord = { id: gameId, config, n_rounds: config.game.n_rounds, current_round: 0, lifecycle: "open", join_code: input.joinCode ?? null, owner_tag: input.ownerTag ?? null, created_at: this.clock() };
+    const game: GameRecord = { id: gameId, config, n_rounds: config.game.n_rounds, current_round: 0, lifecycle: "open", join_code: input.joinCode ?? null, owner_tag: input.ownerTag ?? null, firm_mode: input.firmMode ?? "solo", title: input.title ?? null, created_at: this.clock() };
     await this.store.createGame(game);
     for (let i = 0; i < input.teams.length; i++) {
       const t = input.teams[i];
@@ -91,27 +104,114 @@ export class GameOrchestrator {
     for (let i = 0; i < 6; i++) s += alphabet[Math.floor(Math.random() * alphabet.length)];
     return s;
   }
+  /** A durable per-student claim credential (8 chars). The instructor distributes it;
+   *  the student uses it to claim a seat AND to return to / list their games. */
+  static makeClaimCode(): string {
+    const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    let s = "";
+    for (let i = 0; i < 8; i++) s += alphabet[Math.floor(Math.random() * alphabet.length)];
+    return s;
+  }
 
   /**
-   * A student joins by code + display name: claim an open team slot (an unclaimed
-   * firm), create the user row if new, and name the brewery. Idempotent — rejoining
-   * returns the same team. Server-side only (service role); a student can never
-   * read the join code or another team via RLS.
+   * A student joins by code + display name. Solo games: claim an unclaimed firm.
+   * Team games (firm_mode="team"): join a specific firm (opts.teamId) or the emptiest
+   * under-capacity firm, sharing it with teammates as a C-suite seat. Idempotent —
+   * rejoining returns the same team. Server-side only (service role); RLS blocks a
+   * student from reading the join code or another team. `userId` is the caller's
+   * resolved identity (a roster user via claim_code, or an ephemeral anon user).
    */
-  async joinGame(code: string, displayName: string, userId: string): Promise<{ gameId: string; teamId: string; firmId: FirmId }> {
+  async joinGame(code: string, displayName: string, userId: string, opts: { teamId?: string; role?: string } = {}): Promise<{ gameId: string; teamId: string; firmId: FirmId; role?: string }> {
     const game = await this.store.getGameByCode(code);
     if (!game) throw new LifecycleError(`no game found for join code "${code}"`);
     const teams = await this.store.getTeams(game.id);
     const mine = teams.find((t) => t.member_user_ids.includes(userId));
-    if (mine) return { gameId: game.id, teamId: mine.id, firmId: mine.firm_id };
-    const open = teams.find((t) => t.member_user_ids.length === 0);
-    if (!open) throw new LifecycleError(`game "${code}" is full`);
+    if (mine) {
+      // Returning player keeps their seat (recovered from storage) unless they pick a new one.
+      if (opts.role) await this.store.setMemberRole(mine.id, userId, opts.role);
+      const role = opts.role ?? (await this.store.getMemberRole(mine.id, userId)) ?? undefined;
+      return { gameId: game.id, teamId: mine.id, firmId: mine.firm_id, role };
+    }
     if (!(await this.store.getUser(userId))) {
       await this.store.createUser({ id: userId, role: "student", email: null, consent: false, deid_code: `deid_${userId.slice(0, 8)}` });
     }
-    await this.store.addTeamMember(open.id, userId);
-    await this.store.setTeamName(open.id, displayName);
-    return { gameId: game.id, teamId: open.id, firmId: open.firm_id };
+    let target: TeamRecord | undefined;
+    if (game.firm_mode === "team") {
+      // Join a specific firm, else the emptiest firm with an open seat.
+      const open = teams.filter((t) => t.member_user_ids.length < MAX_SEATS_PER_FIRM);
+      target = opts.teamId ? open.find((t) => t.id === opts.teamId) : [...open].sort((a, b) => a.member_user_ids.length - b.member_user_ids.length)[0];
+      if (!target) throw new LifecycleError(`game "${code}" has no open seats`);
+    } else {
+      target = teams.find((t) => t.member_user_ids.length === 0);
+      if (!target) throw new LifecycleError(`game "${code}" is full`);
+    }
+    const wasEmpty = target.member_user_ids.length === 0;
+    await this.store.addTeamMember(target.id, userId);
+    if (opts.role) await this.store.setMemberRole(target.id, userId, opts.role); // persist the seat (authoritative across devices)
+    if (wasEmpty) await this.store.setTeamName(target.id, displayName); // the first member names the firm
+    return { gameId: game.id, teamId: target.id, firmId: target.firm_id, role: opts.role };
+  }
+
+  /**
+   * Instructor roster provisioning: create/refresh a persistent user per roster entry,
+   * keyed by external_id (NetID) so a student's identity — and career — is stable across
+   * games. Returns each student's durable claim_code (the credential the instructor
+   * distributes). In Supabase mode the caller pre-creates the auth user and passes its id;
+   * in memory mode a fresh id is minted. Idempotent: an existing NetID keeps its claim_code.
+   */
+  async provisionRoster(roster: RosterEntry[], opts: { cohort?: string | null } = {}): Promise<ProvisionedStudent[]> {
+    const out: ProvisionedStudent[] = [];
+    for (const r of roster) {
+      const existing = await this.store.getUserByExternalId(r.external_id);
+      if (existing) {
+        const claim = existing.claim_code ?? GameOrchestrator.makeClaimCode();
+        await this.store.upsertUser({ ...existing, display_name: r.name ?? existing.display_name ?? null, cohort: opts.cohort ?? existing.cohort ?? null, claim_code: claim });
+        out.push({ external_id: r.external_id, name: r.name, claim_code: claim, user_id: existing.id, existing: true });
+      } else {
+        const userId = r.user_id ?? this.id();
+        const claim = GameOrchestrator.makeClaimCode();
+        await this.store.upsertUser({ id: userId, role: "student", email: r.email ?? null, consent: false, deid_code: `deid_${userId.slice(0, 8)}`, external_id: r.external_id, display_name: r.name ?? null, cohort: opts.cohort ?? null, claim_code: claim });
+        out.push({ external_id: r.external_id, name: r.name, claim_code: claim, user_id: userId, existing: false });
+      }
+    }
+    return out;
+  }
+
+  /** Every game a player is in, with their latest standing — the return-to-game picker
+   *  + career list. Standing comes from the public_round projection (no rival privates). */
+  async getMyGames(userId: string): Promise<MyGame[]> {
+    const teams = await this.store.getTeamsForUser(userId);
+    const out: MyGame[] = [];
+    for (const t of teams) {
+      const g = await this.store.getGame(t.game_id);
+      if (!g) continue;
+      const pubs = await this.store.getPublicRounds(t.game_id);
+      const standing = pubs.at(-1)?.standings.find((s) => s.firm_id === t.firm_id) ?? null;
+      out.push({
+        gameId: g.id, title: g.title ?? null, joinCode: g.join_code, firmId: t.firm_id, teamName: t.name,
+        round: g.current_round, lifecycle: g.lifecycle, nRounds: g.n_rounds,
+        rank: standing?.rank ?? null, score: standing?.score ?? null, status: standing?.status ?? null, complete: g.lifecycle === "complete",
+      });
+    }
+    // Newest activity first.
+    return out.sort((a, b) => b.round - a.round);
+  }
+
+  /** The seats at a player's firm (team mode): who holds each, their desk, and whether
+   *  they've submitted this round — for the live "your firm's desks" panel. */
+  async getTeamSeats(gameId: string, teamId: string): Promise<TeamSeat[]> {
+    const game = await this.requireGame(gameId);
+    const team = await this.store.getTeam(teamId);
+    if (!team) return [];
+    const mds = await this.store.getMemberDecisions(gameId, game.current_round, teamId);
+    const out: TeamSeat[] = [];
+    for (const uid of team.member_user_ids) {
+      const u = await this.store.getUser(uid);
+      const role = await this.store.getMemberRole(teamId, uid);
+      const md = mds.find((m) => m.user_id === uid);
+      out.push({ name: u?.display_name ?? "Player", role, desk: md?.desk ?? (role ? (ROLE_DESK[role] ?? "all") : null), submitted: md?.submitted ?? false });
+    }
+    return out;
   }
 
   /** Submit (or revise) a team's decision while the window is open. */
@@ -131,6 +231,41 @@ export class GameOrchestrator {
       revision_count: existing ? existing.revision_count + 1 : 0,
       submitted_at: now,
       first_opened_at: existing?.first_opened_at ?? now,
+    });
+  }
+
+  /**
+   * Submit one C-suite seat's slice of a team firm's decision (firm_mode="team").
+   * Upserts the seat's partial, then RE-MERGES all of the team's seats into the single
+   * per-team DecisionRecord (via the engine's mergeMemberDecisions over a zero base), so
+   * lock / resolve / status read the composed decision with no change. The firm counts as
+   * submitted once any seat has submitted; desks with no seat keep their zero default.
+   */
+  async submitMemberDecision(gameId: string, teamId: string, userId: string, partial: Partial<FirmDecision>, role?: string): Promise<void> {
+    const game = await this.requireGame(gameId);
+    if (game.lifecycle !== "open") throw new LifecycleError(`cannot submit: round is "${game.lifecycle}", not open`);
+    const team = await this.store.getTeam(teamId);
+    if (!team || team.game_id !== gameId) throw new LifecycleError(`no team ${teamId} in game ${gameId}`);
+    const round = game.current_round;
+    // Use the passed role, else the seat persisted at join — so a returning player never
+    // falls back to "all" (which would clobber teammates' desks).
+    const effRole = role ?? (await this.store.getMemberRole(teamId, userId)) ?? undefined;
+    const desk = effRole ? (ROLE_DESK[effRole] ?? "all") : "all";
+    const now = this.clock();
+    await this.store.upsertMemberDecision({ game_id: gameId, round, team_id: teamId, user_id: userId, desk, partial, submitted: true, updated_at: now });
+
+    // Compose the team's seats → the per-team decision the engine will resolve.
+    const seats = await this.store.getMemberDecisions(gameId, round, teamId);
+    const ws = (await this.store.getWorldState(gameId, round)) ?? (await this.store.getLatestWorldState(gameId));
+    const segs = (ws?.state.segments ?? []).map((s) => s.id);
+    const merged = mergeMemberDecisions(zeroFirmDecision(team.firm_id, segs), seats.map((s) => ({ desk: (s.desk as never) ?? "all", partial: s.partial })));
+    const existing = await this.store.getDecision(gameId, round, teamId);
+    if (existing?.locked) throw new LifecycleError("decision is locked");
+    await this.store.upsertDecision({
+      game_id: gameId, round, team_id: teamId, firm_id: team.firm_id, decision: merged,
+      submitted: seats.some((s) => s.submitted), locked: false,
+      revision_count: existing ? existing.revision_count + 1 : 0,
+      submitted_at: now, first_opened_at: existing?.first_opened_at ?? now,
     });
   }
 

@@ -18,7 +18,10 @@ import { CityView } from "../components/CityView.js";
 import { TapDispatch } from "../components/TapDispatch.js";
 import { Emblem } from "../components/FacilityGlyph.js";
 import { firmColor, playerEmblem } from "../lib/teamColors.js";
+import { ROLE_DESK } from "drinkwars-engine";
 import { emptyCityActions, type CityActions } from "../game/cityActions.js";
+
+const SEAT_LABEL: Record<string, string> = { ceo: "CEO", cfo: "CFO", cmo: "CMO", coo: "COO", chro: "CHRO" };
 
 /** Primary destinations (design: Review · Decide · Map). Distribution is a drawer
  *  inside Map / a panel inside Decide, NOT a destination. */
@@ -49,6 +52,7 @@ export function Play({
   defaultDecision,
   onReset,
   mp = false,
+  seatRole,
   banner,
   submitLabel,
   footerNote,
@@ -60,9 +64,10 @@ export function Play({
   onPlay: (d: FirmDecision) => Promise<void> | void;
   defaultDecision: () => Promise<FirmDecision>;
   onReset: () => void;
+  seatRole?: string | null; // team firms: this player's C-suite seat (defaults the desk focus)
   // Multiplayer (student) mode: submit-and-wait lifecycle — adds the round banner, a submit
-  // label + Leave action, and a graceful note for the Map (which awaits the per-student server
-  // projection of city + rival data). Solo leaves these undefined.
+  // label + Leave action. The Map (CityView / MarketMap) now renders the same as solo, fed by
+  // the transport's per-team projections (markets/firms/shocks). Solo leaves these undefined.
   mp?: boolean;
   banner?: string;
   submitLabel?: string;
@@ -71,7 +76,8 @@ export function Play({
 }) {
   const [dest, setDest] = useState<Dest>("decide");
   const [rtab, setRtab] = useState<RTab>("dispatch");
-  const [desk, setDesk] = useState<DeskId>("all");
+  // A team-firm seat opens focused on its own desk (CFO → finance, etc.); solo opens on All.
+  const [desk, setDesk] = useState<DeskId>(seatRole ? ((ROLE_DESK[seatRole] as DeskId) ?? "all") : "all");
   const [infoPreview, setInfoPreview] = useState(false);
   const [detailFirm, setDetailFirm] = useState<string | null>(null);
   // Talent raids are lifted here so they can be made from a rival's dossier AND the
@@ -202,6 +208,11 @@ export function Play({
       </header>
 
       {banner && <div className="mb-3 rounded-lg border px-3 py-2 text-sm text-inksoft" style={{ borderColor: mp && view.ownActive && !view.complete ? "var(--color-copper)" : "var(--color-line2)" }}>{banner}</div>}
+      {mp && seatRole && (
+        <div className="mb-3 rounded-lg border border-line2 bg-panel/60 px-3 py-2 text-[0.8rem] text-inksoft">
+          You're the <b className="text-copperdeep">{SEAT_LABEL[seatRole] ?? seatRole}</b> — your <b className="text-ink">{(ROLE_DESK[seatRole] ?? "all") === "all" ? "whole-firm" : ROLE_DESK[seatRole]}</b> levers compose this firm's decision with your teammates'. Other desks are theirs to set.
+        </div>
+      )}
 
       <div className="flex gap-4">
         {/* desktop nav rail */}
@@ -213,9 +224,7 @@ export function Play({
         <main className="min-w-0 flex-1">
           {dest === "map" && (cityEnabled
             ? <CityView view={view} actions={cityActions} setActions={setCityActions} onInspect={setDetailFirm} extraBuilds={decision?.build_facilities ?? []} />
-            : mp
-              ? <Card><Eyebrow>Map</Eyebrow><div className="text-sm text-inksoft">The city map &amp; rival map come to multiplayer once the server projects per-team city + footprint data. For now, run your brewery from <b className="text-ink">Decide</b> &amp; <b className="text-ink">Review</b>.</div></Card>
-              : <MarketMap view={view} onInspect={setDetailFirm} />)}
+            : <MarketMap view={view} onInspect={setDetailFirm} />)}
 
           {dest === "decide" && (
             <div className="grid gap-3">
@@ -250,6 +259,19 @@ export function Play({
               </div>
               <div className="grid content-start gap-4 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:self-start lg:overflow-y-auto">
                 <Standings view={view} onSelect={setDetailFirm} />
+                {view.seats.length > 0 && (
+                  <Card>
+                    <Eyebrow>Your firm's desks</Eyebrow>
+                    <div className="mt-1 grid gap-1">
+                      {view.seats.map((st, i) => (
+                        <div key={i} className="flex items-center justify-between text-[0.78rem]">
+                          <span className="truncate text-ink">{st.name} {st.role && <span className="font-mono text-[0.6rem] uppercase text-copperdeep">{st.role}</span>}{st.desk && st.desk !== "all" && <span className="text-[0.66rem] text-inksoft"> · {st.desk}</span>}</span>
+                          <span className="font-mono text-[0.58rem] font-bold uppercase tracking-wide" style={{ color: st.submitted ? "var(--color-hop)" : "var(--color-inksoft)" }}>{st.submitted ? "✓ in" : "waiting"}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </Card>
+                )}
                 {view.briefings.length > 0 && <Boardroom briefings={view.briefings} />}
                 {view.history.length > 1 && (
                   <Card>

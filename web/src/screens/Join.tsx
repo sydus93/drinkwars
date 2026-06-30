@@ -6,9 +6,20 @@ import { Emblem, EMBLEM_IDS, FacilityChip } from "../components/FacilityGlyph.js
 
 /** Student join + create-a-firm: code + name, then house colour + mark with a live preview.
  *  Colour/emblem apply to this student's own firm (setSelfFirm runs in MultiplayerPlay). */
+/** C-suite seats for team games. The server slices each seat's submit by its desk. */
+const SEATS: { id: string; label: string; desk: string }[] = [
+  { id: "ceo", label: "CEO", desk: "all desks" },
+  { id: "cfo", label: "CFO", desk: "finance" },
+  { id: "cmo", label: "CMO", desk: "commercial" },
+  { id: "coo", label: "COO", desk: "operations" },
+  { id: "chro", label: "CHRO", desk: "people" },
+];
+
 export function Join({ onJoined, onBack }: { onJoined: (c: StudentClient) => void; onBack: () => void }) {
   const [code, setCode] = useState("");
   const [name, setName] = useState("");
+  const [claim, setClaim] = useState("");
+  const [role, setRole] = useState<string>("");
   const [color, setColor] = useState<string>(FIRM_COLORS[0].hex);
   const [emblem, setEmblem] = useState<string>(EMBLEM_IDS[0]);
   const [busy, setBusy] = useState(false);
@@ -21,11 +32,14 @@ export function Join({ onJoined, onBack }: { onJoined: (c: StudentClient) => voi
       setPlayerColor(color);
       setPlayerEmblem(emblem);
       const c = new StudentClient();
-      await c.join(code.trim().toUpperCase(), name.trim() || "Anonymous");
+      await c.join(code.trim().toUpperCase(), name.trim(), { claim: claim.trim() || undefined, role: role || undefined });
       await c.fetchView();
       onJoined(c);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      // Always clear busy — a thrown join left "Joining…" stuck forever (same class
+      // of hang as the solo "Pouring…" bug). On success onJoined unmounts us; harmless.
       setBusy(false);
     }
   };
@@ -41,6 +55,21 @@ export function Join({ onJoined, onBack }: { onJoined: (c: StudentClient) => voi
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="grid gap-1"><span className="text-sm text-inksoft">Join code</span><input value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} maxLength={6} placeholder="6 characters" className="uppercase tracking-[0.3em]" /></label>
             <label className="grid gap-1"><span className="text-sm text-inksoft">Brewery name</span><input value={name} onChange={(e) => setName(e.target.value)} maxLength={40} placeholder="e.g. Sediment Co." /></label>
+          </div>
+          <label className="grid gap-1">
+            <span className="text-sm text-inksoft">Claim code <span className="text-[0.7rem]">· if your instructor gave you one (keeps your games &amp; history)</span></span>
+            <input value={claim} onChange={(e) => setClaim(e.target.value.toUpperCase())} maxLength={8} placeholder="optional" className="uppercase tracking-[0.2em]" />
+          </label>
+          <div>
+            <div className="mb-2 font-mono text-[0.6rem] uppercase tracking-[0.12em] text-copperdeep">Your seat <span className="text-[0.7rem] lowercase tracking-normal text-inksoft">· team games only — leave blank to run the whole firm</span></div>
+            <div className="flex flex-wrap gap-1.5">
+              {SEATS.map((s) => { const on = role === s.id; return (
+                <button key={s.id} type="button" onClick={() => setRole(on ? "" : s.id)} title={`${s.label} — ${s.desk}`} className="rounded-lg border px-2.5 py-1.5 text-left transition-colors" style={{ borderColor: on ? "var(--color-copper)" : "var(--color-line2)", background: on ? "color-mix(in srgb, var(--color-copper) 12%, var(--color-panel))" : "var(--color-panel)" }}>
+                  <span className="font-mono text-[0.66rem] font-bold" style={{ color: on ? "var(--color-copperdeep)" : "var(--color-ink)" }}>{s.label}</span>
+                  <span className="ml-1 text-[0.62rem] text-inksoft">{s.desk}</span>
+                </button>
+              ); })}
+            </div>
           </div>
           <div>
             <div className="mb-2 font-mono text-[0.6rem] uppercase tracking-[0.12em] text-copperdeep">House colour</div>

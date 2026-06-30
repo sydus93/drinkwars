@@ -11,7 +11,7 @@ export function useGame() {
   // forever with no feedback — the button resets and the reason is shown.
   const [error, setError] = useState<string | null>(null);
 
-  const start = useCallback(async (opts: { breweryName?: string; difficulty?: Difficulty; override?: ConfigOverride; tagline?: string; founding?: { facilities: string[]; hires: string[] } } = {}) => {
+  const start = useCallback(async (opts: { breweryName?: string; difficulty?: Difficulty; override?: ConfigOverride; tagline?: string; founding?: { facilities: { type: string; lot?: string }[]; hires: string[] } } = {}) => {
     setBusy(true);
     setError(null);
     try {

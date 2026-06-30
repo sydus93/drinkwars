@@ -40,6 +40,7 @@ export interface RawView {
   lobbyInitiatives?: LobbySummary[]; // MOD-A09
   names?: Record<string, string>; // firm_id → brewery name
   markets?: GameView["markets"]; // MOD-B01 per-team city view (projected server-side)
+  seats?: GameView["seats"]; // team firms: this firm's C-suite seats + submit status
   firms?: GameView["firms"]; // public per-firm snapshots (rivals redacted unless research bought)
   shocks?: GameView["shocks"]; // active + telegraphed shocks
   history?: GameView["history"]; // own trend + public field aggregate
@@ -61,6 +62,18 @@ const labelFor = (firmId: FirmId): string => {
   return n ? `Brewery ${n}` : firmId;
 };
 
+/** A roster student's issued credential (from instructor provisioning). */
+export interface ProvisionedStudent { external_id: string; name: string; claim_code: string; user_id: string; existing: boolean }
+/** A game in a player's return-to-game / career list. */
+export interface MyGame { gameId: string; title: string | null; joinCode: string | null; firmId: string; teamName: string; round: number; lifecycle: string; nRounds: number; rank: number | null; score: number | null; status: string | null; complete: boolean }
+
+/** A player's games, by their durable claim code (return-to-game + career). */
+export async function fetchMyGames(claim: string, base: string = TRANSPORT_URL): Promise<{ player: { name: string | null; external_id: string | null }; games: MyGame[] }> {
+  const res = await fetch(`${base}/me/games?claim=${encodeURIComponent(claim)}`);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || "unknown claim code");
+  return res.json();
+}
+
 export class StudentClient {
   constructor(private base: string = TRANSPORT_URL) {}
   token = "";
@@ -68,23 +81,29 @@ export class StudentClient {
   firmId: FirmId = "";
   config!: Config;
   nRounds = 0;
+  firmMode: "solo" | "team" = "solo"; // team ⇒ this client submits its SEAT's slice
+  role: string | null = null; // the player's C-suite seat in a team firm (null = solo controller)
   private last: RawView | null = null;
   private lastDecision: FirmDecision | null = null;
 
-  async join(code: string, name: string): Promise<void> {
-    const r = await api(this.base, "/join", { method: "POST", body: JSON.stringify({ code, name }) });
+  /** Join by code. Roster students pass their `claim` code (persistent identity); team
+   *  games take a `role` (C-suite seat) and optional `teamId` (which firm to join). */
+  async join(code: string, name: string, opts: { claim?: string; teamId?: string; role?: string } = {}): Promise<void> {
+    const r = await api(this.base, "/join", { method: "POST", body: JSON.stringify({ code, name, claim: opts.claim, teamId: opts.teamId, role: opts.role }) });
     this.token = r.token;
     this.gameId = r.gameId;
     this.firmId = r.firmId;
     this.config = r.config;
     this.nRounds = r.nRounds;
+    this.firmMode = r.firmMode === "team" ? "team" : "solo";
+    this.role = r.role ?? opts.role ?? null;
     this.save();
   }
 
   /** Persist the (stateless, signed) token + config so a refresh resumes the SAME firm. */
   private save() {
     try {
-      localStorage.setItem("dw_mp", JSON.stringify({ token: this.token, config: this.config, firmId: this.firmId, nRounds: this.nRounds }));
+      localStorage.setItem("dw_mp", JSON.stringify({ token: this.token, config: this.config, firmId: this.firmId, nRounds: this.nRounds, firmMode: this.firmMode, role: this.role }));
     } catch {
       /* localStorage unavailable — just no resume */
     }
@@ -105,6 +124,8 @@ export class StudentClient {
       c.config = s.config;
       c.firmId = s.firmId;
       c.nRounds = s.nRounds ?? 0;
+      c.firmMode = s.firmMode === "team" ? "team" : "solo";
+      c.role = s.role ?? null;
       return c;
     } catch {
       return null;
@@ -156,6 +177,7 @@ export class StudentClient {
       briefings: v.briefings ?? [],
       fx: v.fx ?? {},
       markets: v.markets ?? [], // MOD-B01 per-team city view (projected server-side)
+      seats: v.seats ?? [], // team firms: C-suite seats + submit status
       agreements: v.agreements ?? [],
       lobbyInitiatives: v.lobbyInitiatives ?? [],
       shocks: v.shocks ?? [],
@@ -229,8 +251,12 @@ export class InstructorClient {
   private headers() {
     return { "x-instructor-pass": this.pass };
   }
-  async createGame(nFirms: number, nRounds: number, modules: ModuleSelection = {}, configOverride?: ConfigOverride): Promise<{ gameId: string; joinCode: string }> {
-    return api(this.base, "/instructor/games", { method: "POST", headers: this.headers(), body: JSON.stringify({ nFirms, nRounds, modules, configOverride }) });
+  async createGame(nFirms: number, nRounds: number, modules: ModuleSelection = {}, configOverride?: ConfigOverride, opts: { firmMode?: "solo" | "team"; title?: string } = {}): Promise<{ gameId: string; joinCode: string; firmMode?: string }> {
+    return api(this.base, "/instructor/games", { method: "POST", headers: this.headers(), body: JSON.stringify({ nFirms, nRounds, modules, configOverride, firmMode: opts.firmMode ?? "solo", title: opts.title }) });
+  }
+  /** Provision a roster (NetID + name per student) → durable claim codes to distribute. */
+  async provisionRoster(roster: { external_id: string; name: string; email?: string }[], cohort?: string): Promise<{ students: ProvisionedStudent[] }> {
+    return api(this.base, "/instructor/roster", { method: "POST", headers: this.headers(), body: JSON.stringify({ roster, cohort }) });
   }
   status(gameId: string): Promise<InstructorStatus> {
     return api(this.base, `/instructor/games/${gameId}/status`, { headers: this.headers() });

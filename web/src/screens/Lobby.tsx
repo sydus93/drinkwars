@@ -2,13 +2,14 @@ import { MP_ENABLED } from "../game/multiplayer.js";
 
 /** Entry screen: solo practice always; live join/instructor only where a game
  *  server is reachable (local dev / hosted), gated on the public static build. */
-export function Lobby({ onPick }: { onPick: (s: "solo" | "join" | "instructor") => void }) {
-  const choices: { id: "solo" | "join" | "instructor"; title: string; blurb: string }[] = [
+export function Lobby({ onPick }: { onPick: (s: "solo" | "join" | "instructor" | "player") => void }) {
+  const choices: { id: "solo" | "join" | "instructor" | "player"; title: string; blurb: string }[] = [
     { id: "solo", title: "Play solo", blurb: "Practice against 7 adaptive AI rivals. No sign-in." },
     ...(MP_ENABLED
       ? ([
           { id: "join", title: "Join a game →", blurb: "Enter a 6-character code from your instructor." },
-          { id: "instructor", title: "Instructor", blurb: "Create a game and run the rounds." },
+          { id: "player", title: "My games", blurb: "Returning? Enter your claim code for your games & history." },
+          { id: "instructor", title: "Instructor", blurb: "Create a game, provision a roster, run the rounds." },
         ] as const)
       : []),
   ];
@@ -23,7 +24,7 @@ export function Lobby({ onPick }: { onPick: (s: "solo" | "join" | "instructor") 
         <p className="mt-6 max-w-xl text-lg leading-relaxed text-inksoft">
           Run a craft beverage company against adaptive rivals — set your prices, build the brewery, and out-strategize the field across a 16-round season.
         </p>
-        <div className={`mt-8 grid gap-3 ${MP_ENABLED ? "sm:grid-cols-3" : "sm:grid-cols-1"}`}>
+        <div className={`mt-8 grid gap-3 ${MP_ENABLED ? "sm:grid-cols-2" : "sm:grid-cols-1"}`}>
           {choices.map((c) => (
             <button key={c.id} onClick={() => onPick(c.id)} className="card p-4 text-left transition-all hover:-translate-y-0.5">
               <div className="display text-lg">{c.title}</div>

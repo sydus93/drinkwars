@@ -9,7 +9,8 @@ import { setSelfFirm } from "../lib/teamColors.js";
  * single-player (Review · Decide · Map, the pro-mode desk filter, the Tap Dispatch) via
  * Play's `mp` mode — a submit-and-wait lifecycle with a round banner and a Leave action.
  * `setSelfFirm` makes the student's chosen colour/emblem apply to their own firm. The Map
- * shows a "coming to multiplayer" note until the server projects per-team city + rival data.
+ * (City View / Market map) renders the same as single-player, fed by the transport's per-team
+ * projections (markets / research-gated rival firms / shocks / hiring pool).
  */
 export function MultiplayerPlay({ client, onExit }: { client: StudentClient; onExit: () => void }) {
   const [raw, setRaw] = useState<RawView | null>(client.raw());
@@ -77,6 +78,7 @@ export function MultiplayerPlay({ client, onExit }: { client: StudentClient; onE
       defaultDecision={defaultDecision}
       onReset={onExit}
       mp
+      seatRole={client.role}
       banner={banner}
       submitLabel={submitLabel}
       footerNote="Your classmates (and adaptive NPCs in any open slots) brew at the same time. The instructor resolves the round."

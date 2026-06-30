@@ -19,6 +19,10 @@ export interface UserRecord {
   email: string | null;
   consent: boolean; // §18 — research-use consent; off by default
   deid_code: string; // de-identification mapping for export
+  external_id?: string | null; // NetID — the durable cross-game career key (roster provisioning)
+  display_name?: string | null; // stable human handle across games
+  cohort?: string | null; // roster grouping, e.g. "F26-CAPSTONE"
+  claim_code?: string | null; // durable per-student credential to claim a seat + return to a game
 }
 
 export interface TeamRecord {
@@ -37,8 +41,12 @@ export interface GameRecord {
   lifecycle: Lifecycle;
   join_code: string | null; // multiplayer: code a student enters to join (server-validated)
   owner_tag: string | null; // instructor passcode tier that created it ("primary"|"test"); null = legacy/primary-owned
+  firm_mode?: FirmMode; // "solo" (one player/firm, default) | "team" (C-suite seats, merged at lock)
+  title?: string | null; // optional human title for a player's game list
   created_at: number;
 }
+
+export type FirmMode = "solo" | "team";
 
 /** Append-only per-round world snapshot (§3.1, §3.3). Stored before resolution:
  *  world_state[r] is the pre-resolution state of round r; resolving r writes [r+1]. */
@@ -61,6 +69,19 @@ export interface DecisionRecord {
   revision_count: number; // telemetry §15.3
   submitted_at: number | null;
   first_opened_at: number | null; // for time-to-decide
+}
+
+/** One C-suite seat's slice of a team firm's round decision (firm_mode="team").
+ *  Mutable until lock; merged into the per-team DecisionRecord via mergeMemberDecisions. */
+export interface MemberDecisionRecord {
+  game_id: string;
+  round: number;
+  team_id: string;
+  user_id: string;
+  desk: string | null; // the seat's desk (commercial|operations|finance|relations|all), from its role
+  partial: Partial<FirmDecision>;
+  submitted: boolean;
+  updated_at: number;
 }
 
 export interface RoundResultRecord {
@@ -159,12 +180,22 @@ export interface StorageAdapter {
 
   // Users & teams
   createUser(u: UserRecord): Promise<void>;
+  upsertUser(u: UserRecord): Promise<void>; // roster provisioning (insert or update by id)
   getUser(id: string): Promise<UserRecord | null>;
+  getUserByExternalId(externalId: string): Promise<UserRecord | null>; // NetID lookup
+  getUserByClaim(claimCode: string): Promise<UserRecord | null>; // claim-code login
   createTeam(t: TeamRecord): Promise<void>;
   getTeams(gameId: string): Promise<TeamRecord[]>;
   getTeam(id: string): Promise<TeamRecord | null>;
+  getTeamsForUser(userId: string): Promise<TeamRecord[]>; // "my games" / return-to-game
   addTeamMember(teamId: string, userId: string): Promise<void>;
   setTeamName(teamId: string, name: string): Promise<void>;
+  setMemberRole(teamId: string, userId: string, role: string | null): Promise<void>; // C-suite seat (team_members.role)
+  getMemberRole(teamId: string, userId: string): Promise<string | null>;
+
+  // Member (per-seat) decisions — firm_mode="team" multi-seat composition (mutable until lock)
+  upsertMemberDecision(rec: MemberDecisionRecord): Promise<void>;
+  getMemberDecisions(gameId: string, round: number, teamId: string): Promise<MemberDecisionRecord[]>;
 
   // World states (append-only)
   appendWorldState(rec: WorldStateRecord): Promise<void>;

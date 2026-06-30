@@ -161,8 +161,12 @@ export interface GameView {
   lobbyInitiatives: LobbySummary[]; // MOD-A09 regulation initiatives + progress (empty when off)
   shocks: ShockSignal[]; // active + foreseeable upcoming shocks, for the map/header
   hiringMarket: Candidate[]; // MOD-B12 this round's hireable candidates (empty when off)
+  seats: TeamSeat[]; // multiplayer team firms: this firm's C-suite seats + submit status (empty solo)
   ownTagline: string; // firm-builder tagline (cosmetic)
 }
+
+/** A seat at the player's firm (team mode): who holds it, their desk, and submit status. */
+export interface TeamSeat { name: string; role: string | null; desk: string | null; submitted: boolean }
 
 const median = (xs: number[]): number => {
   if (!xs.length) return 0;
@@ -187,9 +191,9 @@ export class SinglePlayerGame {
   private tagline = "";
   // Firm-builder founding choices, pre-filled into the round-0 decision (so starting
   // facilities/hires flow through the normal pipeline rather than mutating append-only state).
-  private founding: { facilities: string[]; hires: string[] } | null = null;
+  private founding: { facilities: { type: string; lot?: string }[]; hires: string[] } | null = null;
 
-  async start(opts: { breweryName?: string; difficulty?: Difficulty; override?: ConfigOverride; tagline?: string; founding?: { facilities: string[]; hires: string[] } } = {}): Promise<void> {
+  async start(opts: { breweryName?: string; difficulty?: Difficulty; override?: ConfigOverride; tagline?: string; founding?: { facilities: { type: string; lot?: string }[]; hires: string[] } } = {}): Promise<void> {
     this.config = resolveConfig(opts.override);
     this.difficulty = opts.difficulty ?? "competitive";
     this.tagline = opts.tagline ?? "";
@@ -283,6 +287,7 @@ export class SinglePlayerGame {
       lobbyInitiatives: summarizeLobbying(this.config, world),
       shocks,
       hiringMarket: generateHiringMarket(this.config, world.seed, game.current_round),
+      seats: [], // solo play has no shared seats
       ownTagline: this.tagline,
     };
   }
@@ -349,10 +354,20 @@ export class SinglePlayerGame {
       debt_draw: 0, debt_repay: 0, equity_raise: 0, dividend: 0,
       buy_info: false, agreement_actions: [], exit_action: null, beliefs: {}, reflection: "",
       // Founding choices from the firm builder seed the opening round (then never repeat).
-      // Founding facilities take real home parcels (so a starting site is a true spatial lot —
-      // catchment-aware + correctly placed on the map — not a ghost at a district centroid).
-      // Picking the parcel yourself is part of the deferred firm-builder rework.
-      build_facilities: (this.founding?.facilities ?? []).map((t, i) => ({ type: t, market: "home", lot: homeFoundingLots[i]?.id })),
+      // Each founding facility carries the parcel the player sited it on (geography on); any
+      // without an explicit lot (legacy / geography-off / unpicked) auto-takes the next free
+      // home parcel so a starting site is a true spatial lot, not a district-centroid ghost.
+      build_facilities: ((): { type: string; market: string; lot?: string }[] => {
+        const used = new Set((this.founding?.facilities ?? []).map((f) => f.lot).filter(Boolean) as string[]);
+        let next = 0;
+        const nextFreeLot = (): string | undefined => {
+          while (next < homeFoundingLots.length && used.has(homeFoundingLots[next].id)) next++;
+          const L = homeFoundingLots[next];
+          if (L) { used.add(L.id); next++; }
+          return L?.id;
+        };
+        return (this.founding?.facilities ?? []).map((f) => ({ type: f.type, market: "home", lot: f.lot ?? nextFreeLot() }));
+      })(),
       hire_employees: this.founding?.hires ?? [],
     };
   }

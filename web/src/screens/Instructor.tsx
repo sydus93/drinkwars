@@ -22,6 +22,12 @@ export function Instructor({ onExit }: { onExit: () => void }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [view, setView] = useState<"controls" | "dashboard">("controls");
+  const [firmMode, setFirmMode] = useState<"solo" | "team">("solo");
+  const [title, setTitle] = useState("");
+  const [rosterText, setRosterText] = useState("");
+  const [cohort, setCohort] = useState("");
+  const [provisioned, setProvisioned] = useState<{ external_id: string; name: string; claim_code: string; existing: boolean }[] | null>(null);
+  const [provBusy, setProvBusy] = useState(false);
 
   useEffect(() => {
     if (!client || !game) return;
@@ -55,7 +61,7 @@ export function Instructor({ onExit }: { onExit: () => void }) {
     setErr(null);
     try {
       const c = new InstructorClient(pass);
-      const g = await c.createGame(nFirms, nRounds, modules, tuned ? tuningToOverride(tuneVals) : undefined);
+      const g = await c.createGame(nFirms, nRounds, modules, tuned ? tuningToOverride(tuneVals) : undefined, { firmMode, title: title.trim() || undefined });
       setClient(c);
       setGame(g);
       persist(g.gameId, g.joinCode);
@@ -63,6 +69,26 @@ export function Instructor({ onExit }: { onExit: () => void }) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
+    }
+  };
+
+  /** Provision a class roster → persistent accounts + durable claim codes to hand out. */
+  const provision = async () => {
+    setProvBusy(true);
+    setErr(null);
+    try {
+      const roster = rosterText.split("\n").map((l) => l.trim()).filter(Boolean).map((l) => {
+        const parts = l.split(/[,\t]/).map((p) => p.trim());
+        return { external_id: parts[0], name: parts.slice(1).join(" ").trim() || parts[0] };
+      }).filter((r) => r.external_id);
+      if (!roster.length) { setErr("Add at least one NetID, Name line"); return; }
+      const c = new InstructorClient(pass);
+      const r = await c.provisionRoster(roster, cohort.trim() || undefined);
+      setProvisioned(r.students);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setProvBusy(false);
     }
   };
 
@@ -127,8 +153,43 @@ export function Instructor({ onExit }: { onExit: () => void }) {
                 <input type="number" min={1} max={30} value={nRounds} onChange={(e) => setNRounds(Math.max(1, Math.min(30, +e.target.value)))} />
               </label>
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="grid gap-1">
+                <span className="text-sm text-inksoft">Game title <span className="text-[0.7rem]">· optional</span></span>
+                <input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={60} placeholder="Fall 26 Capstone · Game 1" />
+              </label>
+              <div className="grid gap-1">
+                <span className="text-sm text-inksoft">Firm type</span>
+                <div className="flex gap-1.5">
+                  {(["solo", "team"] as const).map((m) => { const on = firmMode === m; return (
+                    <button key={m} type="button" onClick={() => setFirmMode(m)} title={m === "team" ? "Several students share a firm as CEO/CFO/CMO/COO" : "One student per firm"} className="flex-1 rounded-md border px-2 py-2 font-mono text-[0.6rem] font-bold uppercase tracking-wide transition-colors" style={{ borderColor: on ? "var(--color-copper)" : "var(--color-line2)", background: on ? "color-mix(in srgb, var(--color-copper) 12%, var(--color-panel))" : "var(--color-panel)", color: on ? "var(--color-copperdeep)" : "var(--color-inksoft)" }}>{m === "solo" ? "Solo" : "Team · C-suite"}</button>
+                  ); })}
+                </div>
+              </div>
+            </div>
             <div className="rounded-md border border-line bg-paper2/40 p-3">
               <ModeSelector onChange={(m, n) => { setModules(m); setModCount(n); }} />
+            </div>
+            <div className="rounded-md border border-line bg-paper2/40 p-3">
+              <div className="font-mono text-[0.6rem] uppercase tracking-[0.12em] text-copperdeep">Roster provisioning <span className="lowercase tracking-normal text-inksoft">· optional — create accounts + claim codes for return-to-game &amp; history</span></div>
+              <textarea value={rosterText} onChange={(e) => setRosterText(e.target.value)} rows={3} placeholder={"NetID, Name  (one per line)\njdoe123, Jane Doe\nbsmith, Ben Smith"} className="mt-2 w-full rounded border border-line bg-panel p-2 font-mono text-[0.72rem]" />
+              <div className="mt-2 flex items-center gap-2">
+                <input value={cohort} onChange={(e) => setCohort(e.target.value)} maxLength={32} placeholder="Cohort (e.g. F26-CAP)" className="flex-1 text-sm" />
+                <Button onClick={provision} disabled={provBusy || !pass || !rosterText.trim()}>{provBusy ? "Provisioning…" : "Provision"}</Button>
+              </div>
+              {provisioned && (
+                <div className="mt-3">
+                  <div className="mb-1 font-mono text-[0.58rem] uppercase tracking-wide text-inksoft">Distribute these claim codes — each student enters theirs on Join:</div>
+                  <div className="max-h-40 overflow-y-auto rounded border border-line bg-panel">
+                    {provisioned.map((s) => (
+                      <div key={s.external_id} className="flex items-center justify-between border-b border-line px-2 py-1 text-[0.72rem] last:border-0">
+                        <span className="text-ink">{s.name} <span className="text-inksoft">· {s.external_id}</span></span>
+                        <span className="font-mono font-bold tracking-[0.15em] text-copperdeep">{s.claim_code}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
             <button onClick={() => setShowTune(true)} className="flex items-center justify-between rounded-md border border-line bg-paper2/40 px-3 py-2.5 text-left">
               <span className="flex items-center gap-2"><span className="text-base">⚙</span><span><span className="block text-sm font-semibold text-ink">Balance &amp; tuning</span><span className="text-[0.7rem] text-inksoft">Optional — sliders for demand, trade, shocks &amp; conduct</span></span></span>

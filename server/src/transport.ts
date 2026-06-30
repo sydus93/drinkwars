@@ -60,7 +60,7 @@ const admin = useSupabase
   : null;
 
 // token -> student session. In-memory; fine for a single-process local transport.
-const sessions = new Map<string, { gameId: string; teamId: string; userId: string }>();
+const sessions = new Map<string, { gameId: string; teamId: string; userId: string; role?: string }>();
 
 const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -123,6 +123,7 @@ async function viewFor(gameId: string, teamId: string) {
   let firms: ReturnType<typeof projectFirms> = []; // public snapshots; rivals' private fields redacted unless this team bought market research
   let shocks: ReturnType<typeof projectShocks> = [];
   let hiringMarket: ReturnType<typeof generateHiringMarket> = []; // MOD-B12 candidate pool (shared/public — same for every firm)
+  const seats = own && game?.firm_mode === "team" ? await orch.getTeamSeats(gameId, teamId) : []; // team firms: this firm's C-suite seats + submit status
   const history = own ? projectHistory(allResults, own.id) : []; // own trend + public field aggregate
   if (own) {
     const ws = await store.getLatestWorldState(gameId);
@@ -147,6 +148,7 @@ async function viewFor(gameId: string, teamId: string) {
     shocks,
     history,
     hiringMarket,
+    seats,
     names,
     round: pub.round,
     lifecycle: pub.lifecycle,
@@ -171,29 +173,46 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
 
   // ---- student ----
   if (method === "POST" && path === "/join") {
-    const { code, name } = await readJson(req);
-    if (!code || !name) return send(res, 400, { error: "code and name required" });
+    const { code, name, claim, teamId, role } = await readJson(req);
+    if (!code) return send(res, 400, { error: "code required" });
     const codeUp = String(code).toUpperCase();
     // Validate BEFORE creating an auth user, so a bad/typo code leaves no orphan.
     const game = await store.getGameByCode(codeUp);
     if (!game) return send(res, 400, { error: "no game found for that code" });
-    const teams = await store.getTeams(game.id);
-    if (!teams.some((t) => t.member_user_ids.length === 0)) return send(res, 400, { error: "that game is full" });
-    let userId: string = randomUUID();
-    if (admin) {
-      const { data, error } = await admin.auth.admin.createUser({ email: `anon-${userId}@drinkwars.local`, email_confirm: true });
-      if (error || !data.user) return send(res, 500, { error: `auth: ${error?.message ?? "could not create player"}` });
-      userId = data.user.id;
+    // Identity: a roster-provisioned student (claim code) → their persistent user;
+    // otherwise an ephemeral anonymous user (casual play). joinGame enforces fullness.
+    let userId: string;
+    let displayName = String(name ?? "").slice(0, 40);
+    if (claim) {
+      const u = await store.getUserByClaim(String(claim));
+      if (!u) return send(res, 400, { error: "unknown claim code" });
+      userId = u.id;
+      displayName = displayName || u.display_name || "Player";
+    } else {
+      if (!displayName) return send(res, 400, { error: "name required" });
+      userId = randomUUID();
+      if (admin) {
+        const { data, error } = await admin.auth.admin.createUser({ email: `anon-${userId}@drinkwars.local`, email_confirm: true });
+        if (error || !data.user) return send(res, 500, { error: `auth: ${error?.message ?? "could not create player"}` });
+        userId = data.user.id;
+      }
     }
     let joined;
     try {
-      joined = await orch.joinGame(codeUp, String(name).slice(0, 40), userId);
+      joined = await orch.joinGame(codeUp, displayName, userId, { teamId, role });
     } catch (e) {
       return send(res, 400, { error: msg(e) });
     }
     const token = randomUUID();
-    sessions.set(token, { gameId: joined.gameId, teamId: joined.teamId, userId });
-    return send(res, 200, { token, gameId: joined.gameId, teamId: joined.teamId, firmId: joined.firmId, nRounds: game.n_rounds, config: game.config });
+    sessions.set(token, { gameId: joined.gameId, teamId: joined.teamId, userId, role: joined.role });
+    return send(res, 200, { token, gameId: joined.gameId, teamId: joined.teamId, firmId: joined.firmId, nRounds: game.n_rounds, config: game.config, firmMode: game.firm_mode ?? "solo", role: joined.role ?? null });
+  }
+  // A player's games (return-to-game / career), resolved by their durable claim code.
+  if (method === "GET" && path === "/me/games") {
+    const claim = url.searchParams.get("claim") ?? "";
+    const u = claim ? await store.getUserByClaim(claim) : null;
+    if (!u) return send(res, 401, { error: "unknown claim code" });
+    return send(res, 200, { player: { name: u.display_name, external_id: u.external_id }, games: await orch.getMyGames(u.id) });
   }
   if (method === "GET" && path === "/view") {
     const s = sessions.get(url.searchParams.get("token") ?? "");
@@ -205,7 +224,10 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     const s = sessions.get(token);
     if (!s) return send(res, 401, { error: "invalid or expired token" });
     try {
-      await orch.submitDecision(s.gameId, s.teamId, decision as FirmDecision);
+      const game = await store.getGame(s.gameId);
+      // Team firms: a submit is this SEAT's slice, merged server-side. Solo: the full decision.
+      if (game?.firm_mode === "team") await orch.submitMemberDecision(s.gameId, s.teamId, s.userId, decision as Partial<FirmDecision>, s.role);
+      else await orch.submitDecision(s.gameId, s.teamId, decision as FirmDecision);
     } catch (e) {
       return send(res, 400, { error: msg(e) });
     }
@@ -218,7 +240,7 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     const tier = instructorTier(req.headers["x-instructor-pass"]);
 
     if (method === "POST" && path === "/instructor/games") {
-      const { nFirms = 6, nRounds = 16, modules, inventory = false, configOverride } = await readJson(req);
+      const { nFirms = 6, nRounds = 16, modules, inventory = false, configOverride, firmMode = "solo", title } = await readJson(req);
       let override: Record<string, unknown> = { game: { n_firms: nFirms, n_rounds: nRounds } };
       // Expansion modules: the instructor selector sends a `modules` override block
       // ({ asymmetricStarts: { enabled: true }, … }). Legacy `inventory` boolean still honored.
@@ -233,8 +255,33 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
       // Slots get real brewery names up front (students rename theirs on join),
       // so an unfilled bot slot never reads as "Open slot 3" mid-game.
       const teams = randomBreweryNames(nFirms).map((name) => ({ name }));
-      const gameId = await orch.createGame({ config, joinCode: code, teams, ownerTag: tier });
-      return send(res, 200, { gameId, joinCode: code, nFirms, nRounds });
+      const gameId = await orch.createGame({ config, joinCode: code, teams, ownerTag: tier, firmMode: firmMode === "team" ? "team" : "solo", title: title ?? null });
+      return send(res, 200, { gameId, joinCode: code, nFirms, nRounds, firmMode });
+    }
+
+    // Roster provisioning: create/refresh persistent users (NetID = career key) and
+    // return each student's durable claim code for the instructor to distribute.
+    if (method === "POST" && path === "/instructor/roster") {
+      const { roster, cohort } = await readJson(req);
+      if (!Array.isArray(roster) || !roster.length) return send(res, 400, { error: "roster array required" });
+      const entries: { external_id: string; name: string; email?: string | null; user_id?: string }[] = [];
+      for (const r of roster) {
+        if (!r?.external_id || !r?.name) continue;
+        let user_id: string | undefined;
+        if (admin) {
+          const existing = await store.getUserByExternalId(String(r.external_id));
+          if (existing) user_id = existing.id;
+          else {
+            const email = r.email || `${String(r.external_id).toLowerCase().replace(/[^a-z0-9._-]/g, "")}@roster.drinkwars.local`;
+            const { data, error } = await admin.auth.admin.createUser({ email, email_confirm: true });
+            if (error || !data.user) return send(res, 500, { error: `auth: ${error?.message ?? "could not create roster user"}` });
+            user_id = data.user.id;
+          }
+        }
+        entries.push({ external_id: String(r.external_id), name: String(r.name), email: r.email ?? null, user_id });
+      }
+      const students = await orch.provisionRoster(entries, { cohort: cohort ?? null });
+      return send(res, 200, { students });
     }
 
     // Re-enter a running game by its join code (instructor reconnect after a drop).

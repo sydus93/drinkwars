@@ -19,7 +19,7 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type {
   AgreementRow, BeliefRow, DecisionRecord, DistinctivenessRow, FirmRoundRow, GameRecord,
-  Lifecycle, PublicRoundRecord, ReflectionRow, RoundResultRecord, StorageAdapter, TeamRecord, TelemetryRow,
+  Lifecycle, MemberDecisionRecord, PublicRoundRecord, ReflectionRow, RoundResultRecord, StorageAdapter, TeamRecord, TelemetryRow,
   UserRecord, WorldStateRecord,
 } from "../types.js";
 
@@ -36,8 +36,18 @@ function must<T>(res: { data: T; error: { message?: string } | null }): T {
 
 const mapGame = (r: any): GameRecord => ({
   id: r.id, config: r.config, n_rounds: r.n_rounds, current_round: r.current_round,
-  lifecycle: r.lifecycle as Lifecycle, join_code: r.join_code ?? null, owner_tag: r.owner_tag ?? null, created_at: fromTs(r.created_at),
+  lifecycle: r.lifecycle as Lifecycle, join_code: r.join_code ?? null, owner_tag: r.owner_tag ?? null,
+  firm_mode: (r.firm_mode ?? "solo") as GameRecord["firm_mode"], title: r.title ?? null, created_at: fromTs(r.created_at),
 });
+const mapUser = (r: any): UserRecord => ({
+  id: r.id, role: r.role, email: r.email, consent: r.consent, deid_code: r.deid_code,
+  external_id: r.external_id ?? null, display_name: r.display_name ?? null, cohort: r.cohort ?? null, claim_code: r.claim_code ?? null,
+});
+const mapMemberDecision = (r: any): MemberDecisionRecord => ({
+  game_id: r.game_id, round: r.round, team_id: r.team_id, user_id: r.user_id,
+  desk: r.desk ?? null, partial: r.partial ?? {}, submitted: r.submitted, updated_at: fromTs(r.updated_at),
+});
+const USER_COLS = "id, role, email, consent, deid_code, external_id, display_name, cohort, claim_code";
 const mapTeam = (r: any): TeamRecord => ({
   id: r.id, game_id: r.game_id, firm_id: r.firm_id, name: r.name,
   member_user_ids: (r.team_members ?? []).map((m: any) => m.user_id),
@@ -64,7 +74,8 @@ export class SupabaseAdapter implements StorageAdapter {
   async createGame(g: GameRecord): Promise<void> {
     must(await this.db.from("games").insert({
       id: g.id, config: g.config, n_rounds: g.n_rounds, current_round: g.current_round,
-      lifecycle: g.lifecycle, join_code: g.join_code, owner_tag: g.owner_tag, created_at: toTs(g.created_at),
+      lifecycle: g.lifecycle, join_code: g.join_code, owner_tag: g.owner_tag,
+      firm_mode: g.firm_mode ?? "solo", title: g.title ?? null, created_at: toTs(g.created_at),
     }));
   }
   async getGame(id: string): Promise<GameRecord | null> {
@@ -80,14 +91,29 @@ export class SupabaseAdapter implements StorageAdapter {
   }
 
   // ── Users & teams ─────────────────────────────────────────────────────────
-  async createUser(u: UserRecord): Promise<void> {
-    must(await this.db.from("users").insert({
+  private userRow(u: UserRecord) {
+    return {
       id: u.id, role: u.role, email: u.email, consent: u.consent, deid_code: u.deid_code,
-    }));
+      external_id: u.external_id ?? null, display_name: u.display_name ?? null, cohort: u.cohort ?? null, claim_code: u.claim_code ?? null,
+    };
+  }
+  async createUser(u: UserRecord): Promise<void> {
+    must(await this.db.from("users").insert(this.userRow(u)));
+  }
+  async upsertUser(u: UserRecord): Promise<void> {
+    must(await this.db.from("users").upsert(this.userRow(u), { onConflict: "id" }));
   }
   async getUser(id: string): Promise<UserRecord | null> {
-    const r = must(await this.db.from("users").select("id, role, email, consent, deid_code").eq("id", id).maybeSingle());
-    return r ? { id: r.id, role: r.role, email: r.email, consent: r.consent, deid_code: r.deid_code } : null;
+    const r = must(await this.db.from("users").select(USER_COLS).eq("id", id).maybeSingle());
+    return r ? mapUser(r) : null;
+  }
+  async getUserByExternalId(externalId: string): Promise<UserRecord | null> {
+    const r = must(await this.db.from("users").select(USER_COLS).eq("external_id", externalId).maybeSingle());
+    return r ? mapUser(r) : null;
+  }
+  async getUserByClaim(claimCode: string): Promise<UserRecord | null> {
+    const r = must(await this.db.from("users").select(USER_COLS).eq("claim_code", claimCode).maybeSingle());
+    return r ? mapUser(r) : null;
   }
   async createTeam(t: TeamRecord): Promise<void> {
     must(await this.db.from("teams").insert({ id: t.id, game_id: t.game_id, firm_id: t.firm_id, name: t.name }));
@@ -108,6 +134,33 @@ export class SupabaseAdapter implements StorageAdapter {
   }
   async setTeamName(teamId: string, name: string): Promise<void> {
     must(await this.db.from("teams").update({ name }).eq("id", teamId));
+  }
+  async setMemberRole(teamId: string, userId: string, role: string | null): Promise<void> {
+    must(await this.db.from("team_members").update({ role }).eq("team_id", teamId).eq("user_id", userId));
+  }
+  async getMemberRole(teamId: string, userId: string): Promise<string | null> {
+    const r = must(await this.db.from("team_members").select("role").eq("team_id", teamId).eq("user_id", userId).maybeSingle());
+    return r?.role ?? null;
+  }
+  async getTeamsForUser(userId: string): Promise<TeamRecord[]> {
+    // team_members → the teams this user belongs to (each with its full membership).
+    const mine = must(await this.db.from("team_members").select("team_id").eq("user_id", userId));
+    const ids = (mine ?? []).map((m: any) => m.team_id);
+    if (!ids.length) return [];
+    const rows = must(await this.db.from("teams").select("id, game_id, firm_id, name, team_members(user_id)").in("id", ids));
+    return (rows ?? []).map(mapTeam);
+  }
+
+  // ── Member (per-seat) decisions — multi-seat composition (mutable until lock) ──
+  async upsertMemberDecision(rec: MemberDecisionRecord): Promise<void> {
+    must(await this.db.from("member_decisions").upsert({
+      game_id: rec.game_id, round: rec.round, team_id: rec.team_id, user_id: rec.user_id,
+      desk: rec.desk, partial: rec.partial, submitted: rec.submitted, updated_at: toTs(rec.updated_at),
+    }, { onConflict: "game_id,round,user_id" }));
+  }
+  async getMemberDecisions(gameId: string, round: number, teamId: string): Promise<MemberDecisionRecord[]> {
+    const rows = must(await this.db.from("member_decisions").select("*").eq("game_id", gameId).eq("round", round).eq("team_id", teamId));
+    return (rows ?? []).map(mapMemberDecision);
   }
 
   // ── World states (append-only) ──────────────────────────────────────────────

@@ -25,6 +25,8 @@ export type { RoleBriefing } from "./engine/briefings.js";
 export { summarizeAgreementsFor, summarizeLobbying, projectMarkets, projectFirms, projectShocks, projectHistory } from "./engine/views.js";
 export type { AllianceSummary, AllianceClauseSummary, LobbySummary } from "./engine/views.js";
 export { generateHiringMarket } from "./engine/employees.js";
+export { mergeMemberDecisions, DESK_LEVERS, ALL_LEVERS, ROLE_DESK } from "./engine/seats.js";
+export type { SeatDesk, SeatPartial } from "./engine/seats.js";
 export { RNG, deriveSeed } from "./rng.js";
 // Adaptive best-response bot (single-player NPCs, harness, student onboarding).
 export { decideAdaptive, ADAPTIVE_LEANS } from "./bots/adaptive.js";
