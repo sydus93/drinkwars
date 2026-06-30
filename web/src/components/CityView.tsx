@@ -15,7 +15,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { GameView, MarketView, MarketSegmentStanding, MarketLot } from "../game/controller.js";
 import type { CityActions } from "../game/cityActions.js";
-import { capacityInMarket, marketPresenceFrom } from "../game/cityActions.js";
+import { marketPresenceFrom } from "../game/cityActions.js";
 import { SEG_LABEL, SEG_CHARACTER, DISTRICT_BEST, MARKET_META, ZONE_OF, ZONE_TONE, FAC_TAG, FAC_NOTE, fmt } from "../labels.js";
 import { firmColor } from "../lib/teamColors.js";
 import { FacilityChip, flowBadge } from "./FacilityGlyph.js";
@@ -256,7 +256,7 @@ function drawCity(cv: HTMLCanvasElement, plan: Plan, layer: string) {
   ctx.fillStyle = "rgba(252,245,231,0.5)"; ctx.beginPath(); ctx.arc(ox, oy, rr + 8, 0, 7); ctx.fill();
   ctx.strokeStyle = "#9a7a45"; ctx.lineWidth = 1.1; ctx.beginPath(); ctx.arc(ox, oy, rr, 0, 7); ctx.stroke();
   ctx.fillStyle = "#9a5024"; ctx.beginPath(); ctx.moveTo(ox, oy - rr); ctx.lineTo(ox - 5, oy); ctx.lineTo(ox + 5, oy); ctx.closePath(); ctx.fill();
-  ctx.fillStyle = "#2c1d11"; ctx.font = "700 14px 'Space Mono',monospace"; ctx.textAlign = "center"; ctx.fillText("N", ox, oy - rr - 6);
+  ctx.fillStyle = "#2c1d11"; ctx.font = "700 14px 'IBM Plex Sans',sans-serif"; ctx.textAlign = "center"; ctx.fillText("N", ox, oy - rr - 6);
 }
 
 // ───────────────────────── globe (shared painter) ─────────────────────────
@@ -315,8 +315,8 @@ function paintGlobe(cv: HTMLCanvasElement, cities: CityModel[], homeGeo: [number
       ctx.globalAlpha = front ? 1 : 0.4; ctx.beginPath(); ctx.arc(q.x, q.y, opts.full ? (hov ? 8 : 6) : hov ? 5.5 : 4.2, 0, 7); ctx.fillStyle = col; ctx.fill(); ctx.lineWidth = opts.full ? 2 : 1.4; ctx.strokeStyle = "#fff4e0"; ctx.stroke();
       if (c.entered && opts.full) { ctx.beginPath(); ctx.arc(q.x, q.y, 11, 0, 7); ctx.strokeStyle = "rgba(192,112,58,0.5)"; ctx.lineWidth = 1.4; ctx.stroke(); }
       ctx.globalAlpha = 1;
-      if (front && opts.full) { ctx.font = "800 13px 'Big Shoulders Display',sans-serif"; ctx.textAlign = "center"; const ty = q.y - 14; ctx.lineWidth = 3.5; ctx.lineJoin = "round"; ctx.strokeStyle = "rgba(244,236,216,0.92)"; ctx.strokeText(c.name.toUpperCase(), q.x, ty); ctx.fillStyle = "#2c1d11"; ctx.fillText(c.name.toUpperCase(), q.x, ty); }
-      else if (front && opts.mini && (c.entered || hov)) { ctx.font = "700 8px 'Space Mono',monospace"; ctx.textAlign = "center"; const ty = q.y - 8; ctx.lineWidth = 2.6; ctx.lineJoin = "round"; ctx.strokeStyle = "rgba(244,236,216,0.92)"; ctx.strokeText(c.name.toUpperCase(), q.x, ty); ctx.fillStyle = "#2c1d11"; ctx.fillText(c.name.toUpperCase(), q.x, ty); }
+      if (front && opts.full) { ctx.font = "800 14px 'EB Garamond',Georgia,serif"; ctx.textAlign = "center"; const ty = q.y - 14; ctx.lineWidth = 3.5; ctx.lineJoin = "round"; ctx.strokeStyle = "rgba(244,236,216,0.92)"; ctx.strokeText(c.name.toUpperCase(), q.x, ty); ctx.fillStyle = "#2c1d11"; ctx.fillText(c.name.toUpperCase(), q.x, ty); }
+      else if (front && opts.mini && (c.entered || hov)) { ctx.font = "700 9px 'IBM Plex Sans',sans-serif"; ctx.textAlign = "center"; const ty = q.y - 8; ctx.lineWidth = 2.6; ctx.lineJoin = "round"; ctx.strokeStyle = "rgba(244,236,216,0.92)"; ctx.strokeText(c.name.toUpperCase(), q.x, ty); ctx.fillStyle = "#2c1d11"; ctx.fillText(c.name.toUpperCase(), q.x, ty); }
     }
   }
   return pins;
@@ -363,7 +363,7 @@ function GlobeOverlay({ cities, homeGeo, onClose, onPick }: { cities: CityModel[
   const move = (e: React.MouseEvent) => { mouse.current = { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY }; if (drag.current) { const dx = e.nativeEvent.offsetX - drag.current.x, dy = e.nativeEvent.offsetY - drag.current.y; if (Math.abs(dx) + Math.abs(dy) > 4) drag.current.moved = true; rot.current = drag.current.rot + dx * 0.32; tilt.current = Math.max(-8, Math.min(78, drag.current.tilt + dy * 0.3)); } };
   const up = (e: React.MouseEvent) => { const d = drag.current; drag.current = null; if (d && d.moved) return; const id = hit(e.nativeEvent.offsetX, e.nativeEvent.offsetY); if (id) { const c = cities.find((x) => x.id === id); if (c) fly.current = { id, t0: performance.now(), rot0: rot.current, tilt0: tilt.current, lon: c.geo[0], lat: c.geo[1] }; } };
   return (
-    <div className="absolute inset-0 z-40" style={{ background: "radial-gradient(120% 100% at 50% 8%, #fbf2df 0%, #ece0c4 52%, #ddc9a0 100%)" }}>
+    <div className="fixed inset-0 z-50" style={{ background: "radial-gradient(120% 100% at 50% 8%, #fbf2df 0%, #ece0c4 52%, #ddc9a0 100%)" }}>
       <canvas ref={ref} onMouseDown={down} onMouseMove={move} onMouseUp={up} onMouseLeave={() => { drag.current = null; mouse.current = null; }} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", display: "block", cursor: "grab" }} />
       <div className="pointer-events-none absolute left-5 top-4">
         <div className="font-mono text-[0.6rem] uppercase tracking-[0.18em] text-copperdeep">Drink Wars · global markets</div>
@@ -391,35 +391,6 @@ function GlobeOverlay({ cities, homeGeo, onClose, onPick }: { cities: CityModel[
   );
 }
 
-// ───────────────────────── in-panel trade globe (City/Globe toggle) ─────────────────────────
-/** The map panel's "Globe" view: the trade network on a draggable orthographic globe
- *  (shared paintGlobe painter, export lanes as arcs). Click a market to fly in. */
-function PanelGlobe({ cities, homeGeo, onSelect }: { cities: CityModel[]; homeGeo: [number, number] | null; onSelect: (id: string) => void }) {
-  const ref = useRef<HTMLCanvasElement | null>(null);
-  const rot = useRef(100); const tilt = useRef(30); const pins = useRef<GlobePin[]>([]);
-  const drag = useRef<{ x: number; y: number; rot: number; tilt: number; moved: boolean } | null>(null);
-  const mouse = useRef<{ x: number; y: number } | null>(null);
-  useEffect(() => {
-    let raf = 0; let alive = true;
-    const frame = () => {
-      if (!alive) return; const cv = ref.current;
-      if (cv) { if (!drag.current) rot.current += 0.08; try { pins.current = paintGlobe(cv, cities, homeGeo, rot.current, tilt.current, 1.5, { full: true, arcs: true }, mouse.current); } catch { /* ignore */ } }
-      raf = window.requestAnimationFrame(frame);
-    };
-    raf = window.requestAnimationFrame(frame);
-    return () => { alive = false; cancelAnimationFrame(raf); };
-  }, [cities, homeGeo]);
-  const down = (e: React.MouseEvent) => { drag.current = { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY, rot: rot.current, tilt: tilt.current, moved: false }; };
-  const move = (e: React.MouseEvent) => { mouse.current = { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY }; if (drag.current) { const dx = e.nativeEvent.offsetX - drag.current.x, dy = e.nativeEvent.offsetY - drag.current.y; if (Math.abs(dx) + Math.abs(dy) > 4) drag.current.moved = true; rot.current = drag.current.rot + dx * 0.4; tilt.current = Math.max(-10, Math.min(75, drag.current.tilt + dy * 0.3)); } };
-  const up = (e: React.MouseEvent) => { const dd = drag.current; drag.current = null; if (!dd || dd.moved) return; const mx = e.nativeEvent.offsetX, my = e.nativeEvent.offsetY; let best: string | null = null, bd = 18; for (const p of pins.current) { if (!p.front) continue; const di = Math.hypot(p.x - mx, p.y - my); if (di < bd) { bd = di; best = p.id; } } if (best) onSelect(best); };
-  return (
-    <div className="absolute inset-0 z-[9]" style={{ background: "radial-gradient(120% 100% at 50% 6%, #fbf2df 0%, #ece0c4 55%, #ddc9a0 100%)" }}>
-      <canvas ref={ref} onMouseDown={down} onMouseMove={move} onMouseUp={up} onMouseLeave={() => { drag.current = null; mouse.current = null; }} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", cursor: "grab" }} />
-      <div className="pointer-events-none absolute left-1/2 top-3 -translate-x-1/2 font-mono text-[0.55rem] uppercase tracking-[0.08em] text-inksoft">Drag to rotate the network · click a market to fly in</div>
-    </div>
-  );
-}
-
 // ───────────────────────── main component ─────────────────────────
 export function CityView({ view, actions, setActions, onInspect, extraBuilds = [] }: { view: GameView; actions: CityActions; setActions: (u: (a: CityActions) => CityActions) => void; onInspect: (firmId: string) => void; extraBuilds?: { type: string; location?: string; market?: string; lot?: string }[] }) {
   const cities = useMemo(() => view.markets.map((m) => buildCity(view, m, actions, extraBuilds)), [view, actions, extraBuilds]);
@@ -439,7 +410,6 @@ export function CityView({ view, actions, setActions, onInspect, extraBuilds = [
   const [facPop, setFacPop] = useState<string | null>(null);
   const [globeOpen, setGlobeOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [mapView, setMapView] = useState<"city" | "globe">("city");
 
   const sel = cities.find((c) => c.id === selId) ?? cities[0];
   const plan = useMemo(() => (sel ? cityPlan(sel) : null), [sel?.id, sel?.mine.map((f) => f.id + f.lot + f.district + f.active).join(","), sel?.rivals.map((r) => r.firmId + r.lot).join(","), sel?.lots.map((L) => L.id + L.unlocked + L.occupant).join(",")]);
@@ -507,482 +477,482 @@ export function CityView({ view, actions, setActions, onInspect, extraBuilds = [
   const flow = view.ownResult?.markets?.[sel.id] ?? null;
   const layerTabs: { id: "map" | "traffic" | "zoning" | "trade"; label: string }[] = [{ id: "map", label: "Map" }, { id: "traffic", label: "Traffic" }, { id: "zoning", label: "Zoning" }, { id: "trade", label: "Trade" }];
 
-  return (
-    <div className="relative flex flex-col overflow-hidden rounded-xl border border-line2 bg-panel/40 lg:h-[80vh] lg:min-h-[620px] lg:flex-row">
-      {/* ── left rail ── */}
-      <aside className="scl max-h-[42vh] w-full flex-none overflow-y-auto border-b border-line2 bg-panel/50 p-3.5 lg:max-h-none lg:w-[260px] lg:border-b-0 lg:border-r">
-        <div className="font-mono text-[0.55rem] uppercase tracking-[0.16em] text-inksoft">Your operation</div>
-        <div className="display text-[0.95rem] font-extrabold uppercase leading-tight text-ink">{view.names[youId] ?? "Your Brewery"}</div>
-        <div className="mt-0.5 text-xs text-inksoft">{cities.filter((c) => c.entered).length} markets · {cities.reduce((a, c) => a + (c.entered ? c.mine.filter((f) => !f.pending).length : 0), 0)} sites</div>
+  // ── derived view copy ──
+  const enteredCount = cities.filter((c) => c.entered).length;
+  const siteCount = cities.reduce((a, c) => a + (c.entered ? c.mine.filter((f) => !f.pending).length : 0), 0);
+  const mapHint = !sel.entered ? `${sel.name} — enter the market to develop it` : `${sel.name} — site facilities into districts`;
+  const legendNote = layer === "traffic" ? "Traffic — warm = busy streets" : layer === "zoning" ? "Zoning — land use by district" : layer === "trade" ? "Trade — flows shipped per round" : "Click a FOR-LEASE parcel to site a facility";
+  const selKindLabel = sel.kind === "export" ? "International market" : sel.kind === "home" ? "Home market" : "Domestic market";
+  const totalPresence = Math.max(0.001, Object.values(presence).reduce((a, b) => a + b, 0));
 
-        <div className="relative mt-3 overflow-hidden rounded-[10px] border border-line2" style={{ background: "radial-gradient(120% 100% at 50% 20%, #f6ecd4, #e2d0a6)" }}>
-          <div className="pointer-events-none absolute left-2 top-1.5 z-[2]">
-            <div className="font-mono text-[0.5rem] uppercase tracking-[0.14em] text-inksoft">Territory</div>
-            <div className="display text-[0.8rem] font-extrabold uppercase leading-none text-ink">{hasIntl ? "Global network" : "United States"}</div>
-            <div className="font-mono text-[0.5rem] text-inksoft">{hasIntl ? `${cities.filter((c) => c.kind !== "export").length} domestic · ${cities.filter((c) => c.kind === "export" && c.entered).length} intl live` : `${cities.length} markets`}</div>
+  return (
+    <div className="relative grid gap-3.5 lg:grid-cols-[248px_minmax(0,1fr)_330px] lg:items-start">
+      {/* ░░ LEFT RAIL — operation · globe · cities ░░ */}
+      <aside className="scl flex flex-col gap-3 lg:max-h-[84vh] lg:overflow-y-auto">
+        <section className="card p-3.5">
+          <div className="eyebrow">Your operation</div>
+          <div className="display mt-0.5 text-[1.05rem] leading-tight text-ink">{view.names[youId] ?? "Your Brewery"}</div>
+          <div className="mt-0.5 text-sm italic text-inksoft">{enteredCount} market{enteredCount === 1 ? "" : "s"} · {siteCount} site{siteCount === 1 ? "" : "s"}</div>
+          <div onClick={() => setGlobeOpen(true)} title="Open the globe" className="relative mt-2.5 cursor-pointer overflow-hidden rounded-[10px] border border-line2" style={{ background: "radial-gradient(120% 100% at 50% 20%, #f6ecd4, #e2d0a6)" }}>
+            <div className="pointer-events-none absolute left-2 top-1.5 z-[2]">
+              <div className="font-mono text-[0.5rem] font-semibold uppercase tracking-[0.14em] text-inksoft">Territory</div>
+              <div className="display text-[0.82rem] leading-none text-ink">{hasIntl ? "Global network" : "United States"}</div>
+              <div className="font-mono text-[0.5rem] text-inksoft">{hasIntl ? `${cities.filter((c) => c.kind !== "export").length} domestic · ${cities.filter((c) => c.kind === "export" && c.entered).length} intl live` : `${cities.length} markets`}</div>
+            </div>
+            <MiniGlobe cities={cities} homeGeo={homeGeo} hasIntl={hasIntl} onSelect={selectCity} onOpen={() => setGlobeOpen(true)} />
+            <div className="pointer-events-none absolute bottom-1.5 right-2 font-mono text-[0.5rem] font-semibold uppercase tracking-wide text-copperdeep">Open globe ⤢</div>
           </div>
-          <MiniGlobe cities={cities} homeGeo={homeGeo} hasIntl={hasIntl} onSelect={selectCity} onOpen={() => setGlobeOpen(true)} />
-        </div>
+        </section>
 
         {hasIntl && (
-          <div className="mt-2.5 flex flex-col gap-1.5">
-            <div className="font-mono text-[0.5rem] uppercase tracking-[0.14em] text-aero">International ↗</div>
-            {cities.filter((c) => c.kind === "export").map((c) => (
-              <button key={c.id} onClick={() => selectCity(c.id)} className="flex w-full items-center gap-1.5 rounded-lg border px-2 py-1.5 text-left" style={{ borderColor: c.id === selId ? "var(--color-copperdeep)" : "var(--color-line2)", background: c.id === selId ? "color-mix(in srgb, var(--color-aero) 14%, var(--color-panel))" : "var(--color-panel)" }}>
-                <span className="h-1.5 w-1.5 flex-none rounded-full border" style={{ background: c.entered ? "var(--color-copper)" : "var(--color-aero)", borderColor: "var(--color-copperdeep)" }} />
-                <span className="display flex-1 text-[0.8rem] font-bold uppercase tracking-wide text-ink">{c.name}</span>
-                <span className="font-mono text-[0.6rem]" style={{ color: c.entered ? "var(--color-inksoft)" : "var(--color-aero)" }}>{c.entered ? `${c.mine.length} sites` : "scout"}</span>
-              </button>
-            ))}
-          </div>
+          <section className="card p-3">
+            <div className="mb-1.5 font-mono text-[0.55rem] font-semibold uppercase tracking-[0.14em] text-aero">International ↗</div>
+            <div className="flex flex-col gap-1.5">
+              {cities.filter((c) => c.kind === "export").map((c) => (
+                <button key={c.id} onClick={() => selectCity(c.id)} className="flex w-full items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left" style={{ borderColor: c.id === selId ? "var(--color-copperdeep)" : "var(--color-line2)", background: c.id === selId ? "color-mix(in srgb, var(--color-aero) 14%, var(--color-panel))" : "var(--color-panel)" }}>
+                  <span className="h-1.5 w-1.5 flex-none rounded-full border" style={{ background: c.entered ? "var(--color-copper)" : "var(--color-aero)", borderColor: "var(--color-copperdeep)" }} />
+                  <span className="display flex-1 text-[0.85rem] text-ink">{c.name}</span>
+                  <span className="font-mono text-[0.6rem]" style={{ color: c.entered ? "var(--color-inksoft)" : "var(--color-aero)" }}>{c.entered ? `${c.mine.filter((f) => !f.pending).length} sites` : "scout"}</span>
+                </button>
+              ))}
+            </div>
+          </section>
         )}
 
-        <div className="mb-1.5 mt-4 font-mono text-[0.55rem] uppercase tracking-[0.16em] text-inksoft">Your cities</div>
-        <div className="flex flex-col gap-1.5">
-          {cities.map((c) => {
-            const sl = c.id === selId; const share = c.segments.length ? c.segments.reduce((a, s) => a + s.yourShare * s.size, 0) / Math.max(1, c.segments.reduce((a, s) => a + s.size, 0)) : 0;
-            return (
-              <button key={c.id} onClick={() => selectCity(c.id)} className="block w-full rounded-[10px] border px-2.5 py-2 text-left transition-colors" style={{ borderColor: sl ? "var(--color-copperdeep)" : "var(--color-line2)", background: sl ? "color-mix(in srgb, var(--color-copper) 12%, var(--color-panel))" : "var(--color-panel)" }}>
-                <div className="flex items-center gap-2">
-                  <span className="h-2.5 w-2.5 flex-none rounded-sm border" style={{ background: c.entered ? "var(--color-copper)" : "transparent", borderColor: c.entered ? "var(--color-copperdeep)" : "var(--color-inksoft)" }} />
-                  <span className="display flex-1 text-[0.88rem] font-bold uppercase tracking-wide text-ink">{c.name}</span>
-                  <span className="font-mono text-[0.62rem]" style={{ color: c.entered ? "var(--color-copper)" : "var(--color-inksoft)" }}>{c.entered ? fmt.pct(share) : "—"}</span>
-                </div>
-                <div className="mt-1 flex justify-between pl-[18px]">
-                  <span className="text-[0.7rem] text-inksoft">{c.region}{c.kind === "export" ? " · intl" : ""}</span>
-                  <span className="font-mono text-[0.6rem]" style={{ color: c.entered ? "var(--color-inksoft)" : "var(--color-gold)" }}>{c.entered ? `${c.mine.filter((f) => !f.pending).length} site${c.mine.filter((f) => !f.pending).length === 1 ? "" : "s"}` : `Enter · ${fmt.money(c.entryCost)}`}</span>
-                </div>
-              </button>
-            );
-          })}
-        </div>
+        <section className="card p-3">
+          <div className="mb-1.5 font-mono text-[0.55rem] font-semibold uppercase tracking-[0.14em] text-inksoft">Your cities</div>
+          <div className="flex flex-col gap-1.5">
+            {cities.map((c) => {
+              const sl = c.id === selId; const share = c.segments.length ? c.segments.reduce((a, s) => a + s.yourShare * s.size, 0) / Math.max(1, c.segments.reduce((a, s) => a + s.size, 0)) : 0;
+              const ns = c.mine.filter((f) => !f.pending).length;
+              return (
+                <button key={c.id} onClick={() => selectCity(c.id)} className="block w-full rounded-[10px] border px-2.5 py-2 text-left transition-colors" style={{ borderColor: sl ? "var(--color-copperdeep)" : "var(--color-line2)", background: sl ? "color-mix(in srgb, var(--color-copper) 12%, var(--color-panel))" : "var(--color-panel)" }}>
+                  <div className="flex items-center gap-2">
+                    <span className="h-2.5 w-2.5 flex-none rounded-sm border" style={{ background: c.entered ? "var(--color-copper)" : "transparent", borderColor: c.entered ? "var(--color-copperdeep)" : "var(--color-inksoft)" }} />
+                    <span className="display flex-1 text-[0.92rem] text-ink">{c.name}</span>
+                    <span className="tnum text-[0.78rem] font-semibold" style={{ color: c.entered ? "var(--color-copper)" : "var(--color-inksoft)" }}>{c.entered ? fmt.pct(share) : "—"}</span>
+                  </div>
+                  <div className="mt-0.5 flex justify-between pl-[18px]">
+                    <span className="text-[0.78rem] italic text-inksoft">{c.region}{c.kind === "export" ? " · intl" : ""}</span>
+                    <span className="font-mono text-[0.58rem]" style={{ color: c.entered ? "var(--color-inksoft)" : "var(--color-gold)" }}>{c.entered ? `${ns} site${ns === 1 ? "" : "s"}` : `Enter · ${fmt.money(c.entryCost)}`}</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </section>
       </aside>
 
-      {/* ── main ── */}
-      <main className="relative flex min-w-0 flex-1 flex-col">
-        <div className="flex flex-none items-end gap-4 border-b border-line px-5 py-3">
-          <div className="min-w-0">
-            <div className="font-mono text-[0.6rem] uppercase tracking-[0.16em] text-copperdeep">{sel.region} · market{sel.kind === "export" ? ` · FX ${sel.fx.toFixed(2)}` : ""}</div>
-            <div className="display whitespace-nowrap text-2xl font-extrabold uppercase leading-none text-ink">{sel.name}</div>
+      {/* ░░ CENTER — layer toolbar · map stage · legend ░░ */}
+      <main className="flex flex-col gap-3 lg:sticky lg:top-3.5">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <div className="inline-flex gap-0.5 rounded-[10px] border border-line2 bg-panel p-0.5">
+            {layerTabs.map((t) => (
+              <button key={t.id} onClick={() => setLayer(t.id)} className="rounded-[7px] px-3 py-1.5 font-mono text-[0.62rem] font-semibold uppercase tracking-wide" style={{ background: layer === t.id ? "var(--color-copper)" : "transparent", color: layer === t.id ? "#fff4e0" : "var(--color-inksoft)" }}>{t.label}</button>
+            ))}
           </div>
           <div className="flex-1" />
-          <div className="flex items-end gap-6">
-            <div><div className="font-mono text-[0.55rem] uppercase tracking-wide text-inksoft">Your sites</div><div className="font-mono text-base font-bold text-ink">{selSites}</div></div>
-            <div><div className="font-mono text-[0.55rem] uppercase tracking-wide text-inksoft">City share</div><div className="font-mono text-base font-bold text-copper">{sel.entered ? fmt.pct(cityShare) : "—"}</div></div>
-            <div><div className="font-mono text-[0.55rem] uppercase tracking-wide text-inksoft">Standing</div><div className="font-mono text-xs font-bold" style={{ color: leadCount > 0 ? "var(--color-hop)" : "var(--color-inksoft)" }}>{sel.entered ? `${leadCount} / ${sel.segments.length} segments` : "not entered"}</div></div>
-          </div>
+          <span className="text-sm italic text-faint" style={{ color: "var(--color-inksoft)" }}>{mapHint}</span>
         </div>
 
-        <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-          {/* city map */}
-          <div className="relative min-h-[440px] min-w-0 flex-1 p-3.5 lg:min-h-0">
-            <div className="absolute inset-3.5 overflow-hidden rounded-xl border border-line2" style={{ background: PAL.mapbg, boxShadow: "inset 0 1px 0 rgba(255,255,255,.4),0 6px 18px rgba(40,25,8,.12)" }}>
-              <canvas ref={canvasRef} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", display: "block" }} />
+        {/* map stage */}
+        <div className="card relative w-full overflow-visible p-0" style={{ aspectRatio: "1000 / 680" }}>
+          <div className="absolute inset-0 overflow-hidden rounded-[14px]" style={{ background: PAL.mapbg }}>
+            <canvas ref={canvasRef} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", display: "block" }} />
 
-              {plan && (layer === "map" || layer === "trade") && plan.districts.map((d) => { const ec = dByKey(d.key); if (!ec) return null; const p = pct(d.cx, d.cy, 60, layer); return (
-                <div key={d.key} className="pointer-events-none absolute z-[4] flex flex-col items-center gap-0.5" style={{ left: `${p.l}%`, top: `${p.t}%`, transform: "translate(-50%,-100%)" }}>
-                  <div className="display whitespace-nowrap text-[0.78rem] font-extrabold uppercase tracking-[0.12em]" style={{ color: "rgba(44,29,17,.74)", textShadow: `0 1px 3px ${PAL.mapbg}, 0 0 6px ${PAL.mapbg}` }}>{ec.label}</div>
-                  <div className="pointer-events-auto flex items-center gap-1">
-                    <span className="rounded border border-line bg-panel/90 px-1 py-px font-mono text-[0.55rem]" style={{ color: ec.rent > 1.05 ? "var(--color-brick)" : ec.rent < 0.95 ? "var(--color-hop)" : "var(--color-inksoft)" }} title="Rent multiplier">R×{ec.rent.toFixed(2)}</span>
-                    <span className="rounded border border-line bg-panel/90 px-1 py-px font-mono text-[0.55rem]" style={{ color: ec.out > 1.02 ? "var(--color-hop)" : ec.out < 0.98 ? "var(--color-brick)" : "var(--color-inksoft)" }} title="Output multiplier">O×{ec.out.toFixed(2)}</span>
-                    <span className="rounded border border-line bg-panel/90 px-1 py-px font-mono text-[0.55rem] text-aero" title="Foot traffic">{trafficDots(d.traffic)}</span>
-                    {facOn && sel.entered && <button onClick={() => openSiting(d.key)} title={`Build in ${ec.label}`} className="grid h-[18px] w-[18px] place-items-center rounded border border-copperdeep font-mono text-[0.62rem] font-bold leading-none text-copperdeep" style={{ background: "color-mix(in srgb, var(--color-copper) 22%, var(--color-panel))" }}>+</button>}
-                  </div>
-                </div>
-              ); })}
-
-              {plan && facOn && sel.entered && (layer === "map" || layer === "trade") && plan.leases.map((L, i) => { const p = pct(L.cx, L.cy, 0, layer); const ec = dByKey(L.district); const z = ZONE_OF[ec?.kind ?? ""]; const ct = crowdTone(L.crowd); return (
-                <button key={i} onClick={() => openSiting(L.district, L.lot)} title={`Available parcel · ${ec?.label ?? L.district} · ${ct.label}`} className="absolute z-[5] cursor-pointer border-none bg-none p-0" style={{ left: `${p.l}%`, top: `${p.t}%`, transform: "translate(-50%,-100%)" }}>
-                  <span className="block rounded-t-[3px] border px-1.5 py-0.5 font-mono text-[0.5rem] font-bold uppercase tracking-wide text-white" style={{ background: "var(--color-copperdeep)", borderColor: "#6e3914" }}>FOR LEASE</span>
-                  <span className="flex items-center justify-center gap-0.5 rounded-b-[3px] border border-t-0 px-1 py-px text-center font-mono text-[0.44rem] font-bold uppercase text-copperdeep" style={{ background: "#f3e6c8", borderColor: "#6e3914" }}><span className="h-1.5 w-1.5 rounded-full" style={{ background: ct.color }} />{z?.zone ?? ""}</span>
-                  <span className="mx-auto block h-2 w-px" style={{ background: "#6e3914" }} />
-                </button>
-              ); })}
-
-              {plan && plan.facilities.map((f) => { const p = pct(f.cx, f.cy, f.h, layer); const ec = dByKey(f.district); const tt = typeOf(f.type); const dim = hoverFac && hoverFac !== f.id ? 0.5 : !f.active ? 0.5 : f.pending ? 0.6 : 1; const fb = tradeOn ? flowBadge((tt?.production_capacity ?? tt?.capacity_contribution ?? 0) - (tt?.retail_draw ?? 0)) : null; return (
-                <button key={f.id} onClick={() => !f.pending && setFacPop(f.id)} onMouseEnter={() => setHoverFac(f.id)} onMouseLeave={() => setHoverFac(null)} title={`${tt?.label ?? f.type} · ${ec?.label ?? f.district}${f.pending ? " · breaking ground" : f.active ? "" : " · mothballed"}`} className="absolute z-[7] flex cursor-pointer flex-col items-center border-none bg-none p-0" style={{ left: `${p.l}%`, top: `${p.t}%`, transform: "translate(-50%,-100%)", opacity: dim, filter: hoverFac === f.id ? "drop-shadow(0 0 5px var(--color-copperdeep))" : "drop-shadow(0 3px 5px rgba(40,25,8,.32))" }}>
-                  <FacilityChip type={f.type} color={cssColor(youId)} size={30} mine style={f.pending ? { outline: "2px dashed #7e3f18", outlineOffset: 1 } : undefined} />
-                  {fb && <span className="mt-0.5 rounded-full px-1.5 py-px font-mono text-[0.5rem] font-bold leading-none" style={{ background: fb.tone === "out" ? "var(--color-copper)" : fb.tone === "in" ? "var(--color-aero)" : "var(--color-panel)", color: fb.tone === "neutral" ? "var(--color-inksoft)" : "#fff4e0", whiteSpace: "nowrap" }}>{fb.text}</span>}
-                </button>
-              ); })}
-
-              {plan && plan.rivals.map((r, i) => { const p = pct(r.cx, r.cy, r.h, layer); const col = cssColor(r.firmId); const ec = dByKey(r.district); return (
-                <button key={i} onClick={() => onInspect(r.firmId)} title={`${r.name} · ${typeOf(r.type)?.label ?? r.type} · ${ec?.label ?? r.district} — scout`} className="absolute z-[6] cursor-pointer border-none bg-none p-0" style={{ left: `${p.l}%`, top: `${p.t}%`, transform: "translate(-50%,-100%)", opacity: hoverSeg ? 0.45 : 1, filter: "drop-shadow(0 2px 4px rgba(40,25,8,.3))" }}>
-                  <FacilityChip type={r.type} color={col} size={24} />
-                </button>
-              ); })}
-
-              {/* trade supply lanes (Trade layer) — internal producer→retail hints + net export/import, from last round's flow */}
-              {plan && tradeOn && (() => {
-                const isProd = (ty: string) => { const t = typeOf(ty); return (t?.production_capacity ?? t?.capacity_contribution ?? 0) > 0; };
-                const isRetail = (ty: string) => (typeOf(ty)?.retail_draw ?? 0) > 0;
-                const src = plan.facilities.find((f) => isProd(f.type)) ?? plan.facilities[0];
-                const retail = plan.facilities.filter((f) => isRetail(f.type) && f !== src);
-                const net = flow?.net ?? 0;
-                const ptOf = (f: { cx: number; cy: number; h: number }) => { const pp = pct(f.cx, f.cy, f.h, layer); return [pp.l, pp.t] as const; };
-                if (!src) return null;
-                const [sx, sy] = ptOf(src);
-                return (
-                  <>
-                    <svg className="pointer-events-none absolute inset-0 z-[5] h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-                      {retail.slice(0, 3).map((rt, i) => { const [x2, y2] = ptOf(rt); if (sx === x2 && sy === y2) return null; return (
-                        <path key={i} d={`M${sx} ${sy} Q${(sx + x2) / 2} ${Math.min(sy, y2) - 7} ${x2} ${y2}`} fill="none" stroke="#cf9a5f" strokeWidth="0.6" strokeDasharray="1.6 1.6" strokeLinecap="round" className="dwflow" vectorEffect="non-scaling-stroke" />
-                      ); })}
-                      {Math.abs(net) > 5 && (() => { const out = net > 0; const x2 = out ? 98 : 2; const y2 = Math.max(8, sy - 12); return (
-                        <path d={`M${sx} ${sy} Q${(sx + x2) / 2} ${y2 - 5} ${x2} ${y2}`} fill="none" stroke={out ? "#c0703a" : "#1f8c93"} strokeWidth="1.3" strokeDasharray="2.6 2.4" strokeLinecap="round" className="dwflow" vectorEffect="non-scaling-stroke" />
-                      ); })()}
-                    </svg>
-                    {Math.abs(net) > 5 && (
-                      <div className="pointer-events-none absolute top-2 z-[6] rounded-full px-2 py-0.5 font-mono text-[0.55rem] font-bold" style={{ ...(net > 0 ? { right: 8 } : { left: 8 }), background: net > 0 ? "var(--color-copper)" : "var(--color-aero)", color: "#fff4e0" }}>{net > 0 ? `↗ ${fmt.int(net)} ship out` : `↘ ${fmt.int(-net)} ship in`}</div>
-                    )}
-                  </>
-                );
-              })()}
-
-              {/* layer toggle (city view only) */}
-              {mapView === "city" && (
-              <div className="absolute left-1/2 top-3 z-[8] flex -translate-x-1/2 gap-0.5 rounded-[9px] border border-line2 bg-panel/90 p-0.5 backdrop-blur">
-                {layerTabs.map((t) => (
-                  <button key={t.id} onClick={() => setLayer(t.id)} className="rounded-[7px] px-2.5 py-1 font-mono text-[0.6rem] uppercase tracking-wide" style={{ background: layer === t.id ? "var(--color-copper)" : "transparent", color: layer === t.id ? "#fff4e0" : "var(--color-inksoft)", fontWeight: layer === t.id ? 700 : 500 }}>{t.label}</button>
-                ))}
-              </div>
-              )}
-
-              {/* in-panel city / globe toggle */}
-              <div className="absolute right-3 top-3 z-[10] flex gap-0.5 rounded-[9px] border border-line2 bg-panel/90 p-0.5 backdrop-blur">
-                {(["city", "globe"] as const).map((v) => (
-                  <button key={v} onClick={() => setMapView(v)} className="rounded-[7px] px-2.5 py-1 font-mono text-[0.6rem] uppercase tracking-wide" style={{ background: mapView === v ? "var(--color-copper)" : "transparent", color: mapView === v ? "#fff4e0" : "var(--color-inksoft)", fontWeight: mapView === v ? 700 : 500 }}>{v}</button>
-                ))}
-              </div>
-
-              {mapView === "globe" && <PanelGlobe cities={cities} homeGeo={homeGeo} onSelect={(id) => { selectCity(id); setMapView("city"); }} />}
-
-              {!sel.entered && (
-                <div className="absolute bottom-4 left-1/2 z-[8] flex -translate-x-1/2 items-center gap-2 rounded-lg px-4 py-2 text-xs" style={{ background: "var(--color-ink)", color: "var(--color-paper)" }}>
-                  <span className="font-mono text-[0.55rem] uppercase tracking-wide text-gold">New market</span>
-                  {sel.name} isn't yours yet — <button onClick={() => setEntering(sel.id)} className="underline">enter the market</button> to build here.
-                </div>
-              )}
-              {sel.entered && facOn && selSites === 0 && (
-                <div className="absolute bottom-4 left-1/2 z-[8] flex -translate-x-1/2 items-center gap-2 rounded-lg px-4 py-2 text-xs" style={{ background: "var(--color-ink)", color: "var(--color-paper)" }}>
-                  <span className="font-mono text-[0.55rem] uppercase tracking-wide text-gold">New market</span>
-                  You're in {sel.name} — grab a FOR LEASE lot to site your first facility.
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* demand + footprint */}
-          <aside className="scl max-h-[60vh] w-full flex-none overflow-y-auto border-t border-line bg-panel/30 p-4 lg:max-h-none lg:w-[320px] lg:border-l lg:border-t-0">
-            <div className="font-mono text-[0.55rem] uppercase tracking-[0.16em] text-inksoft">Demand here</div>
-            <div className="mt-0.5 text-xs text-inksoft">Who buys what — and who leads each segment. Hover a segment to spotlight the sites that lean into it.</div>
-            <div className="mt-3 flex flex-col gap-2">
-              {sel.segments.length === 0 && <div className="text-xs italic text-inksoft">This market's demand opens once the season is underway.</div>}
-              {sel.segments.map((s) => { const meta = segMeta(s.id); const maxSize = Math.max(...sel.segments.map((x) => x.size), 1); const hi = hoverFac ? true : false; void hi; return (
-                <div key={s.id} onMouseEnter={() => setHoverSeg(s.id)} onMouseLeave={() => setHoverSeg(null)} className="rounded-[10px] border p-2.5" style={{ borderColor: hoverSeg === s.id ? meta.hue : "var(--color-line)", background: hoverSeg === s.id ? `color-mix(in srgb, ${meta.hue} 10%, var(--color-panel))` : "var(--color-panel)" }}>
-                  <div className="flex items-center gap-2">
-                    <span className="h-2.5 w-2.5 flex-none rounded-full" style={{ background: meta.hue }} />
-                    <span className="display flex-1 text-[0.85rem] font-bold uppercase tracking-wide text-ink">{SEG_LABEL[s.id] ?? s.id}</span>
-                    <span className="font-mono text-[0.6rem] text-inksoft">{fmt.int(s.size)}</span>
-                  </div>
-                  <div className="relative mt-2 h-[7px] overflow-hidden rounded" style={{ background: "var(--color-panel2)" }}>
-                    <span className="absolute inset-y-0 left-0" style={{ width: `${(s.size / maxSize) * 100}%`, background: meta.hue, opacity: 0.5 }} />
-                    <span className="absolute inset-y-0 left-0" style={{ width: `${s.yourShare * 100}%`, background: "var(--color-copper)" }} />
-                  </div>
-                  <div className="mt-1.5 flex justify-between">
-                    <span className="text-[0.7rem] text-inksoft">Leader <span className="font-semibold text-ink">{leaderName(s.leader)}</span> <span className="font-mono">{s.leaderShare > 0 ? fmt.pct(s.leaderShare) : ""}</span></span>
-                    <span className="font-mono text-[0.62rem] text-copper">you {fmt.pct(s.yourShare)}</span>
-                  </div>
-                </div>
-              ); })}
-            </div>
-
-            <div className="my-3 h-px" style={{ background: "var(--color-line)" }} />
-            <div className="mb-2 font-mono text-[0.55rem] uppercase tracking-[0.16em] text-inksoft">Your footprint here</div>
-            {sel.mine.length > 0 ? (
-              <div className="flex flex-col gap-1.5">
-                {sel.mine.map((f) => { const t = typeOf(f.type); const ec = dByKey(f.district); return (
-                  <div key={f.id} onMouseEnter={() => setHoverFac(f.id)} onMouseLeave={() => setHoverFac(null)} className="flex items-center gap-2 rounded-md border border-line px-2 py-1.5 text-[0.78rem]" style={{ background: hoverFac === f.id ? "color-mix(in srgb, var(--color-copper) 10%, var(--color-panel))" : "var(--color-panel)" }}>
-                    <FacilityChip type={f.type} color={cssColor(youId)} size={20} mine />
-                    <span className="flex-1 font-semibold text-ink">{t?.label ?? f.type}{f.pending ? " · building" : f.active ? "" : " · mothballed"}</span>
-                    <span className="font-mono text-[0.6rem] text-inksoft">{ec?.label ?? f.district}</span>
-                  </div>
-                ); })}
-              </div>
-            ) : (
-              <div className="text-xs italic text-inksoft">{sel.entered ? "No sites here yet. Grab a FOR LEASE lot on the map to build." : "Enter this market to start building."}</div>
-            )}
-
-            {sel.entered && facOn && (
-              <button onClick={() => openSiting(null)} className="mt-3.5 w-full rounded-[10px] border border-copperdeep py-2.5 font-mono text-[0.7rem] font-bold uppercase tracking-wide text-[#3a2206]" style={{ background: "linear-gradient(var(--color-gold),var(--color-copper))", boxShadow: "inset 0 1px 0 rgba(255,235,180,.7),0 2px 0 var(--color-copperdeep)" }}>Site a facility →</button>
-            )}
-            {!sel.entered && (
-              <button onClick={() => setEntering(sel.id)} className="mt-3.5 w-full rounded-[10px] border border-copperdeep py-2.5 font-mono text-[0.7rem] font-bold uppercase tracking-wide text-[#3a2206]" style={{ background: "linear-gradient(var(--color-gold),var(--color-copper))" }}>Enter {sel.name} · {fmt.money(sel.entryCost)}</button>
-            )}
-            {sel.entered && flow && (() => { const fb = flowBadge(flow.net); const ship = (flow.lanes ?? []).reduce((a, L) => a + L.cost, 0); return (
-              <div className="rounded-[10px] border border-line bg-panel2 p-2.5">
-                <div className="font-mono text-[0.5rem] uppercase tracking-[0.12em] text-inksoft">This market · last round</div>
-                <div className="mt-1 flex items-center justify-between text-[0.72rem] text-inksoft"><span>Brewed here <b className="tnum text-ink">{fmt.int(flow.produced)}</b></span><span>Sold <b className="tnum text-ink">{fmt.int(flow.q_sold)}</b></span></div>
-                <div className="mt-1 flex items-center justify-between"><span className="font-mono text-[0.62rem] font-bold" style={{ color: fb.tone === "out" ? "var(--color-copper)" : fb.tone === "in" ? "var(--color-aero)" : "var(--color-inksoft)" }}>{fb.text}</span>{ship > 0 && <span className="font-mono text-[0.62rem] font-bold text-brick">−{fmt.money(ship)} shipping</span>}</div>
-                {flow.net < -5 && <div className="mt-1 text-[0.6rem] leading-snug text-inksoft">Short here — you're shipping in. A producer in {sel.name} would cut the lane.</div>}
-              </div>
-            ); })()}
-            {sel.entered && <button onClick={() => { setLayer("trade"); setDrawerOpen(true); }} className="w-full rounded-[10px] border border-line2 bg-panel py-2 font-mono text-[0.62rem] font-bold uppercase tracking-wide text-inksoft">View distribution ↗</button>}
-            <div className="mt-2 text-center font-mono text-[0.55rem] text-inksoft">Supply routed here: {fmt.pct((presence[sel.id] ?? 0) / Math.max(0.001, Object.values(presence).reduce((a, b) => a + b, 0)))}</div>
-          </aside>
-        </div>
-
-        {/* ── siting drawer ── */}
-        {siting && (
-          <>
-            <div onClick={() => setSiting(null)} className="absolute inset-0 z-20" style={{ background: "rgba(44,29,17,.32)", backdropFilter: "blur(2px)" }} />
-            <div className="scl absolute bottom-0 right-0 top-0 z-[21] w-[380px] overflow-y-auto border-l border-line2 bg-panel" style={{ boxShadow: "-12px 0 40px rgba(40,25,8,.22)" }}>
-              <div className="flex items-center gap-2.5 border-b border-line px-4 py-4">
-                <div className="flex-1">
-                  <div className="font-mono text-[0.55rem] uppercase tracking-[0.16em] text-copperdeep">Site a facility · {sel.name}</div>
-                  <div className="display text-lg font-extrabold uppercase text-ink">{siting.lot ? dByKey(siting.district ?? "")?.label : "Choose a parcel"}</div>
-                </div>
-                <button onClick={() => setSiting(null)} className="border-none bg-none text-lg text-inksoft">✕</button>
-              </div>
-              {!siting.lot ? (
-                <div className="p-4">
-                  <div className="mb-3 text-xs text-inksoft">Pick a parcel. A spot near rivals (or your own taprooms) splits demand — a blue-ocean lot pulls more. District sets rent, output, zoning, and brand draw.</div>
-                  {availLots.filter((L) => !siting.district || L.district === siting.district).length === 0 ? (
-                    <div className="text-xs italic text-inksoft">No parcels available here right now — more open up as the city develops, or free up if a rival leaves.</div>
-                  ) : (
-                  <div className="flex flex-col gap-2">
-                    {availLots.filter((L) => !siting.district || L.district === siting.district).map((L) => { const d = dByKey(L.district); const z = ZONE_OF[d?.kind ?? ""]; const ct = crowdTone(crowdAtLot(L)); return (
-                      <button key={L.id} onClick={() => setSiting({ lot: L.id, district: L.district, type: null })} className="rounded-[10px] border border-line2 p-3 text-left" style={{ background: "var(--color-panel2)" }}>
-                        <div className="flex items-baseline justify-between">
-                          <span className="display text-[0.95rem] font-bold uppercase tracking-wide text-ink">{d?.label ?? L.district}</span>
-                          <span className="flex items-center gap-1 font-mono text-[0.6rem]" style={{ color: ct.color }}><span className="h-1.5 w-1.5 rounded-full" style={{ background: ct.color }} />{ct.label}</span>
-                        </div>
-                        <div className="mt-1.5 flex flex-wrap gap-1">
-                          <span className="rounded border border-line bg-panel px-1.5 py-px font-mono text-[0.6rem]" style={{ color: (d?.rent ?? 1) > 1.05 ? "var(--color-brick)" : (d?.rent ?? 1) < 0.95 ? "var(--color-hop)" : "var(--color-inksoft)" }}>Rent ×{(d?.rent ?? 1).toFixed(2)}</span>
-                          <span className="rounded border border-line bg-panel px-1.5 py-px font-mono text-[0.6rem]" style={{ color: (d?.out ?? 1) > 1.02 ? "var(--color-hop)" : (d?.out ?? 1) < 0.98 ? "var(--color-brick)" : "var(--color-inksoft)" }}>Out ×{(d?.out ?? 1).toFixed(2)}</span>
-                          <span className="rounded border border-line bg-panel px-1.5 py-px font-mono text-[0.6rem] text-aero">{(d?.brand ?? 0) > 0 ? `Brand +${d?.brand}` : "No brand"}</span>
-                        </div>
-                        <div className="mt-1.5 text-[0.66rem] text-inksoft"><b style={{ color: ZONE_TONE[z?.zone ?? ""] ?? "var(--color-inksoft)" }}>{z?.zone} zone</b> · permits {(z?.allow ?? []).map((id) => typeOf(id)?.label ?? id).join(" · ")}</div>
-                      </button>
-                    ); })}
-                  </div>
-                  )}
-                </div>
-              ) : (() => {
-                const d = dByKey(siting.district ?? "")!; const z = ZONE_OF[d.kind] ?? { zone: "", allow: [] as string[] };
-                const lotObj = lotCoord.get(siting.lot!); const ct = crowdTone(lotObj ? crowdAtLot(lotObj) : 0);
-                const selType = siting.type; const selOk = !!selType && z.allow.includes(selType);
-                const capex = selType ? typeOf(selType)?.base_cost ?? 0 : 0;
-                const queuedSpend = actions.builds.reduce((s, b) => s + (typeOf(b.type)?.base_cost ?? 0), 0);
-                const afford = selOk && view.own.cash - queuedSpend >= capex; const can = selOk && afford;
-                return (
-                  <div className="p-4">
-                    <button onClick={() => openSiting(siting.district)} className="mb-2.5 border-none bg-none p-0 font-mono text-[0.6rem] uppercase tracking-wide text-inksoft">← change parcel</button>
-                    <div className="mb-3 flex flex-wrap gap-1">
-                      <span className="rounded px-2 py-px font-mono text-[0.6rem] font-bold uppercase tracking-wide" style={{ background: `color-mix(in srgb, ${ZONE_TONE[z.zone] ?? "var(--color-inksoft)"} 14%, var(--color-panel))`, border: `1px solid ${ZONE_TONE[z.zone] ?? "var(--color-inksoft)"}`, color: ZONE_TONE[z.zone] ?? "var(--color-inksoft)" }}>{z.zone}</span>
-                      <span className="rounded border border-line2 bg-panel2 px-2 py-px font-mono text-[0.6rem] text-inksoft">Rent ×{d.rent.toFixed(2)}</span>
-                      <span className="rounded border border-line2 bg-panel2 px-2 py-px font-mono text-[0.6rem] text-inksoft">Out ×{d.out.toFixed(2)}</span>
-                      <span className="rounded border border-line2 bg-panel2 px-2 py-px font-mono text-[0.6rem] text-aero">{d.brand > 0 ? `Brand +${d.brand}` : "No brand"}</span>
-                      <span className="flex items-center gap-1 rounded border px-2 py-px font-mono text-[0.6rem]" style={{ borderColor: ct.color, color: ct.color }}><span className="h-1.5 w-1.5 rounded-full" style={{ background: ct.color }} />{ct.label}</span>
-                    </div>
-                    <div className="mb-2.5 text-xs text-inksoft">Numbers below have this district's multipliers applied — what you'll actually get.</div>
-                    <div className="flex flex-col gap-2">
-                      {facTypes.map((t) => { const allowed = z.allow.includes(t.id), isSel = selType === t.id, canAfford = view.own.cash - queuedSpend >= t.base_cost; return (
-                        <button key={t.id} onClick={() => allowed && setSiting({ lot: siting.lot!, district: siting.district, type: t.id })} disabled={!allowed} className="rounded-[11px] border p-3 text-left transition-colors" style={{ borderColor: !allowed ? "var(--color-line2)" : isSel ? "var(--color-copperdeep)" : "var(--color-line)", background: !allowed ? "color-mix(in srgb, var(--color-panel2) 50%, transparent)" : isSel ? "color-mix(in srgb, var(--color-copper) 10%, var(--color-panel))" : "var(--color-panel)", opacity: allowed ? 1 : 0.5, cursor: allowed ? "pointer" : "not-allowed" }}>
-                          <div className="flex items-center gap-2.5">
-                            <FacilityChip type={t.id} color={cssColor(youId)} size={26} />
-                            <span className="display flex-1 text-[0.92rem] font-bold uppercase tracking-wide text-ink">{t.label}</span>
-                            <span className="font-mono text-xs font-bold" style={{ color: !allowed ? "var(--color-inksoft)" : canAfford ? "var(--color-ink)" : "var(--color-brick)" }}>{fmt.money(t.base_cost)}</span>
-                          </div>
-                          <div className="mt-2 flex gap-3.5 pl-[35px] text-[0.7rem] text-inksoft">
-                            <span>Output <b className="font-mono text-hop">+{fmt.int((t.production_capacity ?? t.capacity_contribution ?? 0) * d.out)}</b></span>
-                            <span>Retail <b className="font-mono" style={{ color: (t.retail_draw ?? 0) > 0 ? "var(--color-aero)" : "var(--color-inksoft)" }}>{(t.retail_draw ?? 0) > 0 ? `+${fmt.int(t.retail_draw ?? 0)}` : "—"}</b></span>
-                            <span>Fixed <b className="font-mono text-ink">{fmt.money(t.fixed_cost * d.rent)}</b>/rd</span>
-                          </div>
-                          <div className="mt-1.5 pl-[35px] text-[0.66rem]" style={{ color: allowed ? "var(--color-inksoft)" : "var(--color-brick)" }}>{allowed ? FAC_NOTE[t.id] ?? "" : `✕ Not permitted in ${z.zone} zone`}</div>
-                        </button>
-                      ); })}
-                    </div>
-                    {selType && (
-                      <div className="mt-3 flex items-center justify-between gap-2 rounded-[10px] border border-line2 bg-panel2 px-3 py-2">
-                        <div><div className="font-mono text-[0.55rem] uppercase tracking-wide text-inksoft">Bid premium (optional)</div><div className="text-[0.62rem] text-inksoft">Outbid rivals for a contested parcel — highest bid wins it</div></div>
-                        <div className="flex items-center gap-1"><span className="text-inksoft">$</span><input type="number" min="0" step="10" value={siting.bid ?? 0} onChange={(e) => setSiting((s) => (s ? { ...s, bid: Math.max(0, +e.target.value) } : s))} className="w-20 text-right" /></div>
-                      </div>
-                    )}
-                    <button onClick={build} disabled={!can} className="mt-4 w-full rounded-[11px] border border-copperdeep py-3 font-mono text-[0.78rem] font-bold uppercase tracking-wide" style={{ background: can ? "linear-gradient(var(--color-gold),var(--color-copper))" : "var(--color-panel2)", color: can ? "#3a2206" : "var(--color-inksoft)", cursor: can ? "pointer" : "not-allowed", opacity: can ? 1 : 0.7 }}>{!selType ? "Select a facility type" : !selOk ? "Not permitted in this zone" : !afford ? "Not enough cash" : `Build ${typeOf(selType)?.label} · ${fmt.money(capex)}`}</button>
-                    <div className="mt-1.5 text-center font-mono text-[0.6rem] text-inksoft">{selOk ? `Capex commits when you brew this round` : ""}</div>
-                  </div>
-                );
-              })()}
-            </div>
-          </>
-        )}
-
-        {/* ── entry modal ── */}
-        {entering && (() => { const ec = cities.find((c) => c.id === entering); if (!ec) return null; const can = view.own.cash >= ec.entryCost; return (
-          <div onClick={() => setEntering(null)} className="absolute inset-0 z-30 grid place-items-center" style={{ background: "rgba(44,29,17,.4)", backdropFilter: "blur(3px)" }}>
-            <div onClick={(e) => e.stopPropagation()} className="w-[420px] overflow-hidden rounded-2xl border border-line2 bg-panel" style={{ boxShadow: "0 18px 50px rgba(40,25,8,.4)" }}>
-              <div className="h-1.5" style={{ background: "linear-gradient(90deg,var(--color-gold),var(--color-copper))" }} />
-              <div className="px-5 py-5">
-                <div className="font-mono text-[0.55rem] uppercase tracking-[0.16em] text-copperdeep">{ec.region} · new market</div>
-                <div className="display text-2xl font-extrabold uppercase leading-none text-ink">Enter {ec.name}</div>
-                <div className="mt-2 text-xs text-inksoft">A one-time entry cost opens this city; capacity then routes here and you can site facilities into its districts. It commits when you brew this round. Local demand:</div>
-                <div className="my-3.5 flex flex-col gap-1.5">
-                  {ec.segments.map((s) => (
-                    <div key={s.id} className="flex items-center gap-2">
-                      <span className="h-2 w-2 flex-none rounded-full" style={{ background: segMeta(s.id).hue }} />
-                      <span className="flex-1 text-xs text-ink">{SEG_LABEL[s.id] ?? s.id}</span>
-                      <span className="font-mono text-[0.68rem] text-inksoft">{fmt.int(s.size)}</span>
-                      <span className="w-24 text-right font-mono text-[0.6rem] text-inksoft">led by {leaderName(s.leader)}</span>
-                    </div>
-                  ))}
-                </div>
-                <div className="flex items-center justify-between border-t border-line pt-3.5">
-                  <div>
-                    <div className="font-mono text-[0.55rem] uppercase tracking-wide text-inksoft">Entry cost</div>
-                    <div className="font-mono text-xl font-bold" style={{ color: can ? "var(--color-ink)" : "var(--color-brick)" }}>{fmt.money(ec.entryCost)}</div>
-                  </div>
-                  <div className="flex gap-2">
-                    <button onClick={() => setEntering(null)} className="rounded-lg border border-line2 bg-panel2 px-4 py-2.5 text-sm font-semibold text-inksoft">Not now</button>
-                    <button onClick={() => commitEnter(ec.id)} disabled={!can} className="rounded-lg border border-copperdeep px-5 py-2.5 font-mono text-xs font-bold uppercase tracking-wide" style={{ background: can ? "linear-gradient(var(--color-gold),var(--color-copper))" : "var(--color-panel2)", color: can ? "#3a2206" : "var(--color-inksoft)", cursor: can ? "pointer" : "not-allowed", opacity: can ? 1 : 0.7 }}>{can ? "Enter market" : "Not enough cash"}</button>
-                  </div>
+            {plan && (layer === "map" || layer === "trade") && plan.districts.map((d) => { const ec = dByKey(d.key); if (!ec) return null; const p = pct(d.cx, d.cy, 60, layer); return (
+              <div key={d.key} className="pointer-events-none absolute z-[4] flex flex-col items-center gap-0.5" style={{ left: `${p.l}%`, top: `${p.t}%`, transform: "translate(-50%,-100%)" }}>
+                <div className="display whitespace-nowrap text-[0.8rem] tracking-[0.1em]" style={{ color: "rgba(44,29,17,.78)", textShadow: `0 1px 3px ${PAL.mapbg}, 0 0 6px ${PAL.mapbg}` }}>{ec.label}</div>
+                <div className="pointer-events-auto flex items-center gap-1">
+                  <span className="rounded border border-line bg-panel/90 px-1 py-px font-mono text-[0.55rem]" style={{ color: ec.rent > 1.05 ? "var(--color-brick)" : ec.rent < 0.95 ? "var(--color-hop)" : "var(--color-inksoft)" }} title="Rent multiplier">R×{ec.rent.toFixed(2)}</span>
+                  <span className="rounded border border-line bg-panel/90 px-1 py-px font-mono text-[0.55rem]" style={{ color: ec.out > 1.02 ? "var(--color-hop)" : ec.out < 0.98 ? "var(--color-brick)" : "var(--color-inksoft)" }} title="Output multiplier">O×{ec.out.toFixed(2)}</span>
+                  <span className="rounded border border-line bg-panel/90 px-1 py-px font-mono text-[0.55rem] text-aero" title="Foot traffic">{trafficDots(d.traffic)}</span>
+                  {facOn && sel.entered && <button onClick={() => openSiting(d.key)} title={`Build in ${ec.label}`} className="grid h-[18px] w-[18px] place-items-center rounded border border-copperdeep font-mono text-[0.62rem] font-bold leading-none text-copperdeep" style={{ background: "color-mix(in srgb, var(--color-copper) 22%, var(--color-panel))" }}>+</button>}
                 </div>
               </div>
-            </div>
-          </div>
-        ); })()}
+            ); })}
 
-        {/* ── facility popup ── */}
-        {facPop && (() => { const f = sel.mine.find((x) => x.id === facPop); const t = f ? typeOf(f.type) : undefined; const ec = f ? dByKey(f.district) : undefined; if (!f || !t || !ec) return null; const maintaining = !!actions.maintain[f.id];
-          const prod = t.production_capacity ?? t.capacity_contribution ?? 0; const retail = t.retail_draw ?? 0; const tot = prod + retail || 1;
-          const onsitePct = (retail / tot) * 100, exportPct = (prod / tot) * 100; const fb = flowBadge(prod - retail);
-          const condNow = view.own.facilities?.find((x) => x.id === f.id)?.condition ?? 1;
-          const divesting = actions.divests.includes(f.id);
-          const salvage = Math.round((view.modules?.facilities?.salvage_fraction ?? 0.5) * t.base_cost * (0.5 + 0.5 * condNow));
-          return (
-          <div onClick={() => setFacPop(null)} className="absolute inset-0 z-30 grid place-items-center" style={{ background: "rgba(44,29,17,.34)", backdropFilter: "blur(2px)" }}>
-            <div onClick={(e) => e.stopPropagation()} className="w-[348px] max-w-[92vw] overflow-hidden rounded-xl border border-line2 bg-panel" style={{ boxShadow: "0 18px 50px rgba(40,25,8,.4)" }}>
-              <div className="h-1.5" style={{ background: cssColor(youId) }} />
-              <div className="px-4 py-4">
-                <div className="flex items-center gap-2.5">
-                  <FacilityChip type={f.type} color={cssColor(youId)} size={36} mine />
-                  <div className="min-w-0 flex-1">
-                    <div className="font-mono text-[0.55rem] uppercase tracking-wide text-inksoft">Your facility · {ec.label}</div>
-                    <div className="display text-lg font-extrabold uppercase text-ink">{t.label}</div>
-                  </div>
-                  <button onClick={() => setFacPop(null)} className="border-none bg-none text-base text-inksoft">✕</button>
-                </div>
+            {plan && facOn && sel.entered && (layer === "map" || layer === "trade") && plan.leases.map((L, i) => { const p = pct(L.cx, L.cy, 0, layer); const ec = dByKey(L.district); const z = ZONE_OF[ec?.kind ?? ""]; const ct = crowdTone(L.crowd); return (
+              <button key={i} onClick={() => openSiting(L.district, L.lot)} title={`Available parcel · ${ec?.label ?? L.district} · ${ct.label}`} className="absolute z-[5] cursor-pointer border-none bg-none p-0" style={{ left: `${p.l}%`, top: `${p.t}%`, transform: "translate(-50%,-100%)" }}>
+                <span className="block rounded-t-[3px] border px-1.5 py-0.5 font-mono text-[0.5rem] font-bold uppercase tracking-wide text-white" style={{ background: "var(--color-copperdeep)", borderColor: "#6e3914" }}>FOR LEASE</span>
+                <span className="flex items-center justify-center gap-0.5 rounded-b-[3px] border border-t-0 px-1 py-px text-center font-mono text-[0.44rem] font-bold uppercase text-copperdeep" style={{ background: "#f3e6c8", borderColor: "#6e3914" }}><span className="h-1.5 w-1.5 rounded-full" style={{ background: ct.color }} />{z?.zone ?? ""}</span>
+                <span className="mx-auto block h-2 w-px" style={{ background: "#6e3914" }} />
+              </button>
+            ); })}
 
-                {/* brewed-here vs distributed */}
-                <div className="mt-3.5 rounded-[10px] border border-line bg-panel2 p-3">
-                  <div className="mb-1.5 flex justify-between"><span className="font-mono text-[0.55rem] uppercase tracking-wide text-copperdeep">Brewed here vs distributed</span><span className="font-mono text-[0.6rem] font-bold" style={{ color: fb.tone === "out" ? "var(--color-copper)" : fb.tone === "in" ? "var(--color-aero)" : "var(--color-inksoft)" }}>{fb.text}</span></div>
-                  <div className="flex h-3 overflow-hidden rounded-[3px] border border-line2">
-                    <div style={{ width: `${onsitePct}%`, background: "var(--color-aero)" }} />
-                    <div style={{ width: `${exportPct}%`, background: "var(--color-copper)" }} />
-                  </div>
-                  <div className="mt-2 flex flex-wrap gap-3">
-                    <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm" style={{ background: "var(--color-aero)" }} /><span className="font-mono text-[0.6rem] text-inksoft">sells on-site {fmt.int(retail)}</span></span>
-                    <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm" style={{ background: "var(--color-copper)" }} /><span className="font-mono text-[0.6rem] text-inksoft">brews to ship {fmt.int(prod)}</span></span>
-                  </div>
-                </div>
+            {plan && plan.facilities.map((f) => { const p = pct(f.cx, f.cy, f.h, layer); const ec = dByKey(f.district); const tt = typeOf(f.type); const dim = hoverFac && hoverFac !== f.id ? 0.5 : !f.active ? 0.5 : f.pending ? 0.6 : 1; const fb = tradeOn ? flowBadge((tt?.production_capacity ?? tt?.capacity_contribution ?? 0) - (tt?.retail_draw ?? 0)) : null; return (
+              <button key={f.id} onClick={() => !f.pending && setFacPop(f.id)} onMouseEnter={() => setHoverFac(f.id)} onMouseLeave={() => setHoverFac(null)} title={`${tt?.label ?? f.type} · ${ec?.label ?? f.district}${f.pending ? " · breaking ground" : f.active ? "" : " · mothballed"}`} className="absolute z-[7] flex cursor-pointer flex-col items-center border-none bg-none p-0" style={{ left: `${p.l}%`, top: `${p.t}%`, transform: "translate(-50%,-100%)", opacity: dim, filter: hoverFac === f.id ? "drop-shadow(0 0 5px var(--color-copperdeep))" : "drop-shadow(0 3px 5px rgba(40,25,8,.32))" }}>
+                <FacilityChip type={f.type} color={cssColor(youId)} size={30} mine style={f.pending ? { outline: "2px dashed #7e3f18", outlineOffset: 1 } : undefined} />
+                {fb && <span className="mt-0.5 rounded-full px-1.5 py-px font-mono text-[0.5rem] font-bold leading-none" style={{ background: fb.tone === "out" ? "var(--color-copper)" : fb.tone === "in" ? "var(--color-aero)" : "var(--color-panel)", color: fb.tone === "neutral" ? "var(--color-inksoft)" : "#fff4e0", whiteSpace: "nowrap" }}>{fb.text}</span>}
+              </button>
+            ); })}
 
-                <div className="mt-3 grid grid-cols-3 gap-2">
-                  <div className="rounded-lg border border-line bg-panel2 p-2.5"><div className="text-[0.62rem] text-inksoft">Output</div><div className="font-mono text-base font-bold text-ink">+{f.active ? fmt.int(prod * ec.out) : "0"}</div></div>
-                  <div className="rounded-lg border border-line bg-panel2 p-2.5"><div className="text-[0.62rem] text-inksoft">Retail</div><div className="font-mono text-base font-bold" style={{ color: retail > 0 ? "var(--color-aero)" : "var(--color-inksoft)" }}>{retail > 0 ? `+${fmt.int(retail)}` : "—"}</div></div>
-                  <div className="rounded-lg border border-line bg-panel2 p-2.5"><div className="text-[0.62rem] text-inksoft">Condition</div><div className="font-mono text-base font-bold" style={{ color: condNow > 0.6 ? "var(--color-hop)" : condNow > 0.35 ? "var(--color-gold)" : "var(--color-brick)" }}>{f.pending ? "—" : fmt.pct(condNow)}</div></div>
-                </div>
-                <div className="mt-2.5 text-xs text-inksoft">{FAC_NOTE[f.type] ?? ""}</div>
+            {plan && plan.rivals.map((r, i) => { const p = pct(r.cx, r.cy, r.h, layer); const col = cssColor(r.firmId); const ec = dByKey(r.district); return (
+              <button key={i} onClick={() => onInspect(r.firmId)} title={`${r.name} · ${typeOf(r.type)?.label ?? r.type} · ${ec?.label ?? r.district} — scout`} className="absolute z-[6] cursor-pointer border-none bg-none p-0" style={{ left: `${p.l}%`, top: `${p.t}%`, transform: "translate(-50%,-100%)", opacity: hoverSeg ? 0.45 : 1, filter: "drop-shadow(0 2px 4px rgba(40,25,8,.3))" }}>
+                <FacilityChip type={r.type} color={col} size={24} />
+              </button>
+            ); })}
 
-                {f.pending ? (
-                  <div className="mt-3.5 rounded-md border border-line bg-panel2 px-3 py-2 text-center font-mono text-[0.62rem] uppercase tracking-wide text-inksoft">Breaking ground this round</div>
-                ) : (
-                  <div className="mt-3.5">
-                    <div className="mb-1.5 font-mono text-[0.55rem] uppercase tracking-[0.12em] text-inksoft">Lifecycle</div>
-                    <div className="grid grid-cols-2 gap-1.5">
-                      <button onClick={() => f.active && !divesting && toggleMaintain(f.id, f.type)} disabled={!f.active || divesting} className="rounded-md border px-2 py-2 font-mono text-[0.6rem] uppercase tracking-wide disabled:opacity-40" style={{ borderColor: maintaining ? "var(--color-hop)" : "var(--color-line2)", background: maintaining ? "color-mix(in srgb, var(--color-hop) 12%, var(--color-panel))" : "var(--color-panel2)", color: maintaining ? "var(--color-hop)" : "var(--color-inksoft)" }}>{maintaining ? "✓ Maintaining" : "Maintain"}</button>
-                      <button disabled title="Relocate by divesting this site and building elsewhere the same round" className="rounded-md border border-line2 bg-panel2 px-2 py-2 font-mono text-[0.6rem] uppercase tracking-wide text-inksoft opacity-50">Upgrade ↑</button>
-                      <button onClick={() => !divesting && toggleFac(f.id)} disabled={divesting} className="rounded-md border border-line2 bg-panel2 px-2 py-2 font-mono text-[0.6rem] uppercase tracking-wide text-inksoft disabled:opacity-40">{f.active ? "Mothball" : "Reactivate"}</button>
-                      <button onClick={() => toggleDivest(f.id)} className="rounded-md border px-2 py-2 font-mono text-[0.6rem] uppercase tracking-wide" style={{ borderColor: divesting ? "var(--color-line2)" : "var(--color-brick)", color: divesting ? "var(--color-inksoft)" : "var(--color-brick)", background: divesting ? "var(--color-panel2)" : "color-mix(in srgb, var(--color-brick) 7%, var(--color-panel))" }}>{divesting ? "Cancel sale" : "Divest"}</button>
-                    </div>
-                    <div className="mt-2 text-[0.66rem] text-inksoft">{divesting ? `Selling this round — recovers ~${fmt.money(salvage)} and frees the lot.` : maintaining ? "Upkeep booked — holds condition this round." : "Maintain holds condition; Divest sells the site and frees the lot."}</div>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        ); })()}
-
-        {/* ── distribution drawer (produced-vs-consumed + origin breakdown, from engine flow) ── */}
-        {drawerOpen && (() => {
-          const mk = view.ownResult?.markets ?? null;
-          const rows = cities.filter((c) => c.entered).map((c) => { const m = mk?.[c.id]; return { id: c.id, name: c.name, brewed: m?.produced ?? 0, drunk: m?.q_sold ?? 0, net: m?.net ?? 0, lanes: m?.lanes ?? [] }; });
-          const maxv = Math.max(1, ...rows.map((r) => Math.max(r.brewed, r.drunk)));
-          const selRow = rows.find((r) => r.id === sel.id) ?? rows[0];
-          const nameOf = (id: string) => cities.find((c) => c.id === id)?.name ?? id;
-          return (
-          <>
-            <div onClick={() => setDrawerOpen(false)} className="absolute inset-0 z-20" style={{ background: "rgba(44,29,17,.3)" }} />
-            <aside className="dwslide scl absolute bottom-0 right-0 top-0 z-[21] w-[360px] max-w-[94vw] overflow-y-auto border-l border-line2 bg-panel" style={{ boxShadow: "-14px 0 40px rgba(40,25,8,.24)" }}>
-              <div className="sticky top-0 z-[2] flex items-start gap-2.5 border-b border-line bg-panel px-5 py-4">
-                <div className="flex-1"><div className="font-mono text-[0.55rem] uppercase tracking-[0.16em] text-copperdeep">Distribution · transportation</div><div className="display text-xl font-extrabold uppercase text-ink">Supply &amp; lanes</div></div>
-                <button onClick={() => setDrawerOpen(false)} className="border-none bg-none text-lg text-inksoft">✕</button>
-              </div>
-              <div className="px-5 py-4">
-                <div className="mb-3 text-xs text-inksoft">Produced vs consumed in every market you operate — <b className="text-copperdeep">brewed</b> left, <b style={{ color: "var(--color-aero)" }}>drunk</b> right. The gap is a lane you're paying to ship.</div>
-                {rows.length === 0 ? <div className="text-xs italic text-inksoft">No resolved round yet — flows appear once you end the first round.</div> : (
+            {/* trade supply lanes (Trade layer) */}
+            {plan && tradeOn && (() => {
+              const isProd = (ty: string) => { const t = typeOf(ty); return (t?.production_capacity ?? t?.capacity_contribution ?? 0) > 0; };
+              const isRetail = (ty: string) => (typeOf(ty)?.retail_draw ?? 0) > 0;
+              const src = plan.facilities.find((f) => isProd(f.type)) ?? plan.facilities[0];
+              const retail = plan.facilities.filter((f) => isRetail(f.type) && f !== src);
+              const net = flow?.net ?? 0;
+              const ptOf = (f: { cx: number; cy: number; h: number }) => { const pp = pct(f.cx, f.cy, f.h, layer); return [pp.l, pp.t] as const; };
+              if (!src) return null;
+              const [sx, sy] = ptOf(src);
+              return (
                 <>
-                  <div className="mb-2 flex justify-between"><span className="font-mono text-[0.55rem] uppercase text-copperdeep">◀ brewed</span><span className="font-mono text-[0.55rem] uppercase" style={{ color: "var(--color-aero)" }}>drunk ▶</span></div>
-                  <div className="mb-2 text-[0.62rem] leading-snug text-inksoft">Set <b className="text-ink">offer</b> to route supply to a market explicitly; leave blank for auto (split by presence). The gap from local production ships in.</div>
-                  {rows.map((r) => { const fb = flowBadge(r.net); return (
-                    <div key={r.id} className="mb-3">
-                      <div className="mb-1 flex items-baseline justify-between gap-2">
-                        <button onClick={() => setSelId(r.id)} className="display text-sm font-bold uppercase tracking-wide" style={{ color: r.id === sel.id ? "var(--color-copperdeep)" : "var(--color-ink)" }}>{r.name}</button>
-                        <span className="flex items-center gap-1.5">
-                          <span className="font-mono text-[0.6rem] font-bold" style={{ color: fb.tone === "out" ? "var(--color-copper)" : fb.tone === "in" ? "var(--color-aero)" : "var(--color-inksoft)" }}>{fb.text}</span>
-                          <input type="number" min="0" step="10" placeholder="auto" value={actions.supply[r.id] ?? ""} onChange={(e) => { const v = e.target.value; setActions((a) => { const supply = { ...a.supply }; if (!v) delete supply[r.id]; else supply[r.id] = Math.max(0, +v); return { ...a, supply }; }); }} className="w-16 !py-0.5 text-right text-[0.7rem]" title="Units to offer here this round" />
-                        </span>
+                  <svg className="pointer-events-none absolute inset-0 z-[5] h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                    {retail.slice(0, 3).map((rt, i) => { const [x2, y2] = ptOf(rt); if (sx === x2 && sy === y2) return null; return (
+                      <path key={i} d={`M${sx} ${sy} Q${(sx + x2) / 2} ${Math.min(sy, y2) - 7} ${x2} ${y2}`} fill="none" stroke="#cf9a5f" strokeWidth="0.6" strokeDasharray="1.6 1.6" strokeLinecap="round" className="dwflow" vectorEffect="non-scaling-stroke" />
+                    ); })}
+                    {Math.abs(net) > 5 && (() => { const out = net > 0; const x2 = out ? 98 : 2; const y2 = Math.max(8, sy - 12); return (
+                      <path d={`M${sx} ${sy} Q${(sx + x2) / 2} ${y2 - 5} ${x2} ${y2}`} fill="none" stroke={out ? "#c0703a" : "#1f8c93"} strokeWidth="1.3" strokeDasharray="2.6 2.4" strokeLinecap="round" className="dwflow" vectorEffect="non-scaling-stroke" />
+                    ); })()}
+                  </svg>
+                  {Math.abs(net) > 5 && (
+                    <div className="pointer-events-none absolute top-2 z-[6] rounded-full px-2 py-0.5 font-mono text-[0.55rem] font-bold" style={{ ...(net > 0 ? { right: 8 } : { left: 8 }), background: net > 0 ? "var(--color-copper)" : "var(--color-aero)", color: "#fff4e0" }}>{net > 0 ? `↗ ${fmt.int(net)} ship out` : `↘ ${fmt.int(-net)} ship in`}</div>
+                  )}
+                </>
+              );
+            })()}
+
+            {sel.entered && facOn && selSites === 0 && (
+              <div className="absolute bottom-3 left-1/2 z-[8] flex -translate-x-1/2 items-center gap-2 rounded-lg px-4 py-2 text-sm" style={{ background: "var(--color-ink)", color: "var(--color-paper)" }}>
+                <span className="font-mono text-[0.55rem] font-semibold uppercase tracking-wide text-gold">New market</span>
+                You're in {sel.name} — grab a FOR LEASE lot to site your first facility.
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* legend */}
+        <div className="flex flex-wrap items-center gap-3.5 text-sm text-inksoft">
+          <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm" style={{ background: "#bd6e36" }} />Your sites</span>
+          <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm" style={{ background: "#7c4f86" }} />Rivals</span>
+          <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-[3px] border border-dashed border-copperdeep" style={{ background: "rgba(224,165,47,.32)" }} />For lease</span>
+          <span className="flex-1" />
+          <span className="italic">{legendNote}</span>
+        </div>
+      </main>
+
+      {/* ░░ RIGHT RAIL — market · demand · facilities · districts · siting ░░ */}
+      <aside className="scl flex flex-col gap-3 lg:max-h-[84vh] lg:overflow-y-auto">
+        {/* selected market header */}
+        <section className="card p-4">
+          <div className="font-mono text-[0.55rem] font-semibold uppercase tracking-[0.14em] text-copperdeep">{selKindLabel}</div>
+          <div className="display text-2xl leading-none text-ink">{sel.name}</div>
+          <div className="text-sm italic text-inksoft">{sel.region}{sel.kind === "export" ? ` · FX ${sel.fx.toFixed(2)}` : ""}</div>
+          {sel.entered ? (
+            <div className="mt-3 flex gap-5">
+              <div><div className="font-mono text-[0.55rem] font-semibold uppercase tracking-wide text-faint" style={{ color: "var(--color-inksoft)" }}>City share</div><div className="tnum text-xl font-semibold text-copper">{fmt.pct(cityShare)}</div></div>
+              <div><div className="font-mono text-[0.55rem] font-semibold uppercase tracking-wide text-faint" style={{ color: "var(--color-inksoft)" }}>Your sites</div><div className="tnum text-xl font-semibold text-ink">{selSites}</div></div>
+              <div><div className="font-mono text-[0.55rem] font-semibold uppercase tracking-wide text-faint" style={{ color: "var(--color-inksoft)" }}>Segments led</div><div className="tnum text-xl font-semibold" style={{ color: leadCount > 0 ? "var(--color-hop)" : "var(--color-ink)" }}>{leadCount}<span className="text-sm text-inksoft">/{sel.segments.length}</span></div></div>
+            </div>
+          ) : (
+            <div className="mt-3 rounded-[11px] border p-3" style={{ borderColor: "var(--color-gold)", background: "color-mix(in srgb, var(--color-gold) 12%, var(--color-panel))" }}>
+              <div className="text-sm leading-relaxed text-inksoft">Not yet in this market. Entering commits a one-time entry cost and opens its districts for siting.</div>
+              <button onClick={() => setEntering(sel.id)} className="tt-btn tt-btn--go mt-2.5 w-full py-2.5 text-[0.72rem]">Enter market · {fmt.money(sel.entryCost)}</button>
+            </div>
+          )}
+        </section>
+
+        {sel.entered && (
+          <>
+            {/* local demand */}
+            <section className="card p-4">
+              <div className="mb-2 font-mono text-[0.55rem] font-semibold uppercase tracking-[0.14em] text-copperdeep">Local demand · who leads</div>
+              {sel.segments.length === 0 ? <div className="text-sm italic text-inksoft">This market's demand opens once the season is underway.</div> : (
+                <div className="flex flex-col gap-2.5">
+                  {sel.segments.map((s) => { const meta = segMeta(s.id); const maxSize = Math.max(...sel.segments.map((x) => x.size), 1); return (
+                    <div key={s.id} onMouseEnter={() => setHoverSeg(s.id)} onMouseLeave={() => setHoverSeg(null)}>
+                      <div className="flex items-baseline gap-2">
+                        <span className="h-2 w-2 flex-none rounded-sm" style={{ background: meta.hue }} />
+                        <span className="flex-1 text-[0.95rem] font-semibold text-ink">{SEG_LABEL[s.id] ?? s.id}</span>
+                        <span className="tnum text-[0.7rem] text-inksoft">{fmt.int(s.size)}</span>
                       </div>
-                      <div className="relative h-3.5 rounded-[3px]" style={{ background: "var(--color-panel2)" }}>
-                        <div className="absolute bottom-0 top-0 rounded-l-[3px]" style={{ right: "50%", width: `${(r.brewed / maxv) * 50}%`, background: "var(--color-copper)" }} />
-                        <div className="absolute bottom-0 top-0 rounded-r-[3px]" style={{ left: "50%", width: `${(r.drunk / maxv) * 50}%`, background: "var(--color-aero)" }} />
-                        <div className="absolute -bottom-0.5 -top-0.5 left-1/2 w-px -translate-x-1/2" style={{ background: "var(--color-inksoft)" }} />
+                      <div className="mt-1 flex items-center gap-2 pl-[16px]">
+                        <div className="relative h-1.5 flex-1 overflow-hidden rounded" style={{ background: "var(--color-panel2)" }}>
+                          <span className="absolute inset-y-0 left-0" style={{ width: `${(s.size / maxSize) * 100}%`, background: meta.hue, opacity: 0.45 }} />
+                          <span className="absolute inset-y-0 left-0" style={{ width: `${s.yourShare * 100}%`, background: "var(--color-copper)" }} />
+                        </div>
+                        <span className="whitespace-nowrap text-[0.72rem] italic text-inksoft">leader <span className="font-semibold not-italic text-ink">{leaderName(s.leader)}</span></span>
                       </div>
                     </div>
                   ); })}
-                  {selRow && (
-                    <div className="mt-3 rounded-[11px] border border-line bg-panel2 p-3">
-                      <div className="mb-2 font-mono text-[0.55rem] uppercase tracking-wide text-inksoft">Where {selRow.name}'s {fmt.int(selRow.drunk)} comes from</div>
-                      {selRow.drunk <= 0 ? <div className="text-[0.7rem] italic text-inksoft">Nothing sold here last round.</div> : (() => {
-                        const localUnits = Math.max(0, Math.min(selRow.brewed, selRow.drunk));
-                        const shipped = selRow.lanes.reduce((a, L) => a + L.units, 0);
-                        const denom = Math.max(1, localUnits + shipped);
-                        return (<>
-                          <div className="mb-2 flex h-3.5 overflow-hidden rounded-[3px] border border-line2">
-                            <div style={{ width: `${(localUnits / denom) * 100}%`, background: "var(--color-aero)" }} />
-                            <div style={{ width: `${(shipped / denom) * 100}%`, background: "var(--color-copperdeep)" }} />
-                          </div>
-                          <div className="flex flex-col gap-1.5">
-                            <div className="flex items-center gap-2"><span className="h-2.5 w-2.5 flex-none rounded-sm" style={{ background: "var(--color-aero)" }} /><span className="flex-1 text-[0.72rem] text-ink">Brewed locally</span><span className="font-mono text-[0.6rem] font-bold" style={{ color: "var(--color-aero)" }}>{fmt.int(localUnits)}</span></div>
-                            {selRow.lanes.map((L, i) => (
-                              <div key={i} className="flex items-center gap-2"><span className="h-2.5 w-2.5 flex-none rounded-sm" style={{ background: "var(--color-copperdeep)" }} /><span className="flex-1 text-[0.72rem] text-ink">Shipped from {nameOf(L.origin_market)}</span><span className="font-mono text-[0.6rem] font-bold text-copperdeep">{fmt.int(L.units)}</span></div>
-                            ))}
-                          </div>
-                          {selRow.lanes.length > 0 && <div className="mt-2.5 flex justify-between border-t border-line pt-2"><span className="text-[0.7rem] text-inksoft">Lane cost</span><span className="font-mono text-[0.7rem] font-bold text-brick">−{fmt.money(selRow.lanes.reduce((a, L) => a + L.cost, 0))}</span></div>}
-                        </>);
-                      })()}
-                    </div>
-                  )}
-                </>
-                )}
-                <div className="mt-3 flex items-center gap-2 rounded-[10px] border border-dashed border-line2 bg-panel2/60 px-3 py-2"><span className="h-2.5 w-2.5 flex-none rounded-sm" style={{ background: "repeating-linear-gradient(45deg,#b6452f,#b6452f 3px,#9d3a27 3px,#9d3a27 6px)" }} /><span className="text-[0.7rem] text-inksoft"><b className="text-ink">Spoilage</b> — a slot for beer that ages out before it sells. Not wired to the engine yet.</span></div>
-              </div>
-            </aside>
-          </>
-          );
-        })()}
+                </div>
+              )}
+            </section>
 
-        {globeOpen && <GlobeOverlay cities={cities} homeGeo={homeGeo} onClose={() => setGlobeOpen(false)} onPick={(id) => { setGlobeOpen(false); selectCity(id); }} />}
-      </main>
+            {/* your facilities here */}
+            <section className="card p-4">
+              <div className="mb-2 font-mono text-[0.55rem] font-semibold uppercase tracking-[0.14em] text-copperdeep">Your facilities here</div>
+              {sel.mine.length > 0 ? (
+                <div className="flex flex-col gap-1.5">
+                  {sel.mine.map((f) => { const t = typeOf(f.type); const ec = dByKey(f.district); return (
+                    <div key={f.id} className="flex items-center gap-2.5 rounded-[9px] border border-line2 px-2.5 py-2" style={{ opacity: f.active ? 1 : 0.6 }}>
+                      <button onClick={() => !f.pending && setFacPop(f.id)} onMouseEnter={() => setHoverFac(f.id)} onMouseLeave={() => setHoverFac(null)} className="flex flex-1 items-center gap-2.5 border-none bg-none p-0 text-left" title="Open facility">
+                        <FacilityChip type={f.type} color={cssColor(youId)} size={22} mine />
+                        <div className="min-w-0 flex-1"><div className="text-[0.92rem] font-semibold text-ink">{t?.label ?? f.type}</div><div className="text-[0.72rem] italic text-inksoft">{ec?.label ?? f.district} · {f.pending ? "breaking ground" : f.active ? "running" : "mothballed"}</div></div>
+                      </button>
+                      {!f.pending && <button onClick={() => toggleFac(f.id)} className="rounded-[7px] border px-2 py-1 font-mono text-[0.55rem] font-semibold uppercase tracking-wide" style={{ borderColor: f.active ? "var(--color-inksoft)" : "var(--color-hop)", color: f.active ? "var(--color-inksoft)" : "var(--color-hop)" }}>{f.active ? "Mothball" : "Reopen"}</button>}
+                    </div>
+                  ); })}
+                </div>
+              ) : (
+                <div className="text-sm italic text-inksoft">No sites here yet — lease a parcel below.</div>
+              )}
+            </section>
+
+            {/* districts · siting tradeoffs */}
+            <section className="card p-4">
+              <div className="mb-2 font-mono text-[0.55rem] font-semibold uppercase tracking-[0.14em] text-copperdeep">Districts · siting tradeoffs</div>
+              <div className="flex flex-col gap-1.5">
+                {sel.districts.map((d) => { const sites = sel.mine.filter((f) => f.district === d.key && !f.pending).length; return (
+                  <div key={d.key} className="rounded-[9px] border border-line2 px-2.5 py-2">
+                    <div className="flex items-baseline justify-between gap-2"><span className="text-[0.92rem] font-semibold text-ink">{d.label}</span><span className="font-mono text-[0.5rem] font-semibold uppercase tracking-wide text-copperdeep">{sites} yours</span></div>
+                    <div className="text-[0.72rem] italic text-inksoft">{d.best}</div>
+                    <div className="mt-1.5 flex flex-wrap gap-1">
+                      <span className="rounded-[6px] border border-line2 px-1.5 py-px font-mono text-[0.58rem]" style={{ color: d.rent > 1.05 ? "var(--color-brick)" : d.rent < 0.95 ? "var(--color-hop)" : "var(--color-inksoft)" }}>Rent ×{d.rent.toFixed(2)}</span>
+                      <span className="rounded-[6px] border border-line2 px-1.5 py-px font-mono text-[0.58rem]" style={{ color: d.out > 1.02 ? "var(--color-hop)" : d.out < 0.98 ? "var(--color-brick)" : "var(--color-inksoft)" }}>Output ×{d.out.toFixed(2)}</span>
+                      <span className="rounded-[6px] border border-line2 px-1.5 py-px font-mono text-[0.58rem]" style={{ color: d.brand ? "var(--color-aero)" : "var(--color-inksoft)" }}>{d.brand ? `+${d.brand} brand` : "no brand draw"}</span>
+                    </div>
+                  </div>
+                ); })}
+              </div>
+            </section>
+
+            {/* site a facility (inline) */}
+            {facOn && (
+              <section className="card p-4">
+                <div className="mb-1 font-mono text-[0.55rem] font-semibold uppercase tracking-[0.14em] text-copperdeep">Site a facility</div>
+                {siting && siting.lot ? (() => {
+                  const d = dByKey(siting.district ?? "")!; const z = ZONE_OF[d?.kind ?? ""] ?? { zone: "", allow: [] as string[] };
+                  const lotObj = lotCoord.get(siting.lot); const ct = crowdTone(lotObj ? crowdAtLot(lotObj) : 0);
+                  const selType = siting.type; const selOk = !!selType && z.allow.includes(selType);
+                  const capex = selType ? typeOf(selType)?.base_cost ?? 0 : 0;
+                  const queuedSpend = actions.builds.reduce((s, b) => s + (typeOf(b.type)?.base_cost ?? 0), 0);
+                  const afford = selOk && view.own.cash - queuedSpend >= capex; const can = selOk && afford;
+                  return (
+                    <div>
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <span className="text-sm italic text-inksoft">On <span className="font-semibold not-italic text-ink">{d?.label ?? siting.district}</span> · {z.zone}</span>
+                        <button onClick={() => openSiting(siting.district)} className="border-none bg-none p-0 font-mono text-[0.55rem] uppercase tracking-wide text-inksoft">← change parcel</button>
+                      </div>
+                      <div className="mb-2 flex flex-wrap gap-1">
+                        <span className="rounded border border-line2 bg-panel2 px-1.5 py-px font-mono text-[0.58rem] text-inksoft">Rent ×{d.rent.toFixed(2)}</span>
+                        <span className="rounded border border-line2 bg-panel2 px-1.5 py-px font-mono text-[0.58rem] text-inksoft">Out ×{d.out.toFixed(2)}</span>
+                        <span className="rounded border border-line2 bg-panel2 px-1.5 py-px font-mono text-[0.58rem] text-aero">{d.brand > 0 ? `Brand +${d.brand}` : "No brand"}</span>
+                        <span className="flex items-center gap-1 rounded border px-1.5 py-px font-mono text-[0.58rem]" style={{ borderColor: ct.color, color: ct.color }}><span className="h-1.5 w-1.5 rounded-full" style={{ background: ct.color }} />{ct.label}</span>
+                      </div>
+                      <div className="flex flex-col gap-1.5">
+                        {facTypes.map((t) => { const allowed = z.allow.includes(t.id), isSel = selType === t.id, canAfford = view.own.cash - queuedSpend >= t.base_cost; return (
+                          <button key={t.id} onClick={() => allowed && setSiting({ lot: siting.lot, district: siting.district, type: t.id })} disabled={!allowed} className="rounded-[10px] border p-2.5 text-left transition-colors" style={{ borderColor: !allowed ? "var(--color-line2)" : isSel ? "var(--color-copperdeep)" : "var(--color-line)", background: !allowed ? "color-mix(in srgb, var(--color-panel2) 50%, transparent)" : isSel ? "color-mix(in srgb, var(--color-copper) 10%, var(--color-panel))" : "var(--color-panel)", opacity: allowed ? 1 : 0.5, cursor: allowed ? "pointer" : "not-allowed" }}>
+                            <div className="flex items-center gap-2.5">
+                              <FacilityChip type={t.id} color={cssColor(youId)} size={22} />
+                              <span className="display flex-1 text-[0.88rem] text-ink">{t.label}</span>
+                              <span className="tnum text-[0.78rem] font-semibold" style={{ color: !allowed ? "var(--color-inksoft)" : canAfford ? "var(--color-ink)" : "var(--color-brick)" }}>{fmt.money(t.base_cost)}</span>
+                            </div>
+                            <div className="mt-1 flex gap-3 pl-[33px] text-[0.7rem] text-inksoft">
+                              <span>Output <b className="tnum text-hop">+{fmt.int((t.production_capacity ?? t.capacity_contribution ?? 0) * d.out)}</b></span>
+                              <span>Retail <b className="tnum" style={{ color: (t.retail_draw ?? 0) > 0 ? "var(--color-aero)" : "var(--color-inksoft)" }}>{(t.retail_draw ?? 0) > 0 ? `+${fmt.int(t.retail_draw ?? 0)}` : "—"}</b></span>
+                              <span>Fixed <b className="tnum text-ink">{fmt.money(t.fixed_cost * d.rent)}</b>/rd</span>
+                            </div>
+                            {!allowed && <div className="mt-1 pl-[33px] text-[0.66rem] text-brick">✕ Not permitted in {z.zone} zone</div>}
+                          </button>
+                        ); })}
+                      </div>
+                      {selType && (
+                        <div className="mt-2.5 flex items-center justify-between gap-2 rounded-[10px] border border-line2 bg-panel2 px-3 py-2">
+                          <div><div className="font-mono text-[0.55rem] uppercase tracking-wide text-inksoft">Bid premium (optional)</div><div className="text-[0.62rem] text-inksoft">Outbid rivals for a contested parcel</div></div>
+                          <div className="flex items-center gap-1"><span className="text-inksoft">$</span><input type="number" min="0" step="10" value={siting.bid ?? 0} onChange={(e) => setSiting((s) => (s ? { ...s, bid: Math.max(0, +e.target.value) } : s))} className="w-20 text-right" /></div>
+                        </div>
+                      )}
+                      <div className="mt-3 flex gap-2">
+                        <button onClick={() => setSiting(null)} className="rounded-[10px] border border-line2 bg-panel2 px-3 py-2.5 font-mono text-[0.6rem] font-semibold uppercase tracking-wide text-inksoft">Cancel</button>
+                        <button onClick={build} disabled={!can} className="tt-btn tt-btn--go flex-1 py-2.5 text-[0.7rem]" style={{ opacity: can ? 1 : 0.55, cursor: can ? "pointer" : "not-allowed", filter: can ? undefined : "grayscale(0.5)" }}>{!selType ? "Pick a type" : !selOk ? "Not permitted" : !afford ? "Not enough cash" : `Build · ${fmt.money(capex)}`}</button>
+                      </div>
+                    </div>
+                  );
+                })() : (
+                  <div>
+                    <div className="mb-2 text-sm italic text-faint" style={{ color: "var(--color-inksoft)" }}>Lease an open parcel — crowd preview shows the catchment competition.</div>
+                    {availLots.length === 0 ? (
+                      <div className="text-sm italic text-inksoft">Every unlocked parcel here is taken.</div>
+                    ) : (
+                      <div className="flex flex-col gap-1.5">
+                        {availLots.map((L) => { const d = dByKey(L.district); const z = ZONE_OF[d?.kind ?? ""]; const ct = crowdTone(crowdAtLot(L)); return (
+                          <button key={L.id} onClick={() => setSiting({ lot: L.id, district: L.district, type: null })} className="flex items-center gap-2.5 rounded-[9px] border border-line2 bg-panel3 px-2.5 py-2 text-left" style={{ background: "var(--color-panel)" }}>
+                            <span className="h-2 w-2 flex-none rounded-full" style={{ background: ct.color }} />
+                            <div className="min-w-0 flex-1"><div className="text-[0.9rem] font-semibold text-ink">{d?.label ?? L.district}</div><div className="text-[0.72rem] italic text-inksoft">{z?.zone ?? ""}</div></div>
+                            <span className="font-mono text-[0.55rem] font-semibold uppercase tracking-wide" style={{ color: ct.color }}>{ct.label}</span>
+                          </button>
+                        ); })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </section>
+            )}
+
+            {/* distribution */}
+            <section className="card p-4">
+              {flow && (() => { const fb = flowBadge(flow.net); const ship = (flow.lanes ?? []).reduce((a, L) => a + L.cost, 0); return (
+                <div className="mb-2.5">
+                  <div className="font-mono text-[0.5rem] uppercase tracking-[0.12em] text-inksoft">This market · last round</div>
+                  <div className="mt-1 flex items-center justify-between text-[0.78rem] text-inksoft"><span>Brewed here <b className="tnum text-ink">{fmt.int(flow.produced)}</b></span><span>Sold <b className="tnum text-ink">{fmt.int(flow.q_sold)}</b></span></div>
+                  <div className="mt-1 flex items-center justify-between"><span className="font-mono text-[0.62rem] font-bold" style={{ color: fb.tone === "out" ? "var(--color-copper)" : fb.tone === "in" ? "var(--color-aero)" : "var(--color-inksoft)" }}>{fb.text}</span>{ship > 0 && <span className="font-mono text-[0.62rem] font-bold text-brick">−{fmt.money(ship)} shipping</span>}</div>
+                </div>
+              ); })()}
+              <button onClick={() => { setLayer("trade"); setDrawerOpen(true); }} className="w-full rounded-[10px] border border-line2 bg-panel py-2 font-mono text-[0.62rem] font-semibold uppercase tracking-wide text-inksoft">View distribution ↗</button>
+              <div className="mt-2 text-center font-mono text-[0.55rem] text-inksoft">Supply routed here: {fmt.pct((presence[sel.id] ?? 0) / totalPresence)}</div>
+            </section>
+          </>
+        )}
+      </aside>
+
+      {/* ░░ overlays ░░ */}
+      {/* entry modal */}
+      {entering && (() => { const ec = cities.find((c) => c.id === entering); if (!ec) return null; const can = view.own.cash >= ec.entryCost; return (
+        <div onClick={() => setEntering(null)} className="fixed inset-0 z-50 grid place-items-center p-4" style={{ background: "rgba(44,29,17,.4)", backdropFilter: "blur(3px)" }}>
+          <div onClick={(e) => e.stopPropagation()} className="w-[420px] max-w-[94vw] overflow-hidden rounded-2xl border border-line2 bg-panel" style={{ boxShadow: "0 18px 50px rgba(40,25,8,.4)" }}>
+            <div className="h-1.5" style={{ background: "linear-gradient(90deg,var(--color-gold),var(--color-copper))" }} />
+            <div className="px-5 py-5">
+              <div className="font-mono text-[0.55rem] font-semibold uppercase tracking-[0.16em] text-copperdeep">{ec.region} · new market</div>
+              <div className="display text-2xl leading-none text-ink">Enter {ec.name}</div>
+              <div className="mt-2 text-sm text-inksoft">A one-time entry cost opens this city; capacity then routes here and you can site facilities into its districts. It commits when you brew this round. Local demand:</div>
+              <div className="my-3.5 flex flex-col gap-1.5">
+                {ec.segments.map((s) => (
+                  <div key={s.id} className="flex items-center gap-2">
+                    <span className="h-2 w-2 flex-none rounded-full" style={{ background: segMeta(s.id).hue }} />
+                    <span className="flex-1 text-sm text-ink">{SEG_LABEL[s.id] ?? s.id}</span>
+                    <span className="tnum text-[0.7rem] text-inksoft">{fmt.int(s.size)}</span>
+                    <span className="w-24 text-right font-mono text-[0.58rem] text-inksoft">led by {leaderName(s.leader)}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="flex items-center justify-between border-t border-line pt-3.5">
+                <div><div className="font-mono text-[0.55rem] uppercase tracking-wide text-inksoft">Entry cost</div><div className="tnum text-xl font-bold" style={{ color: can ? "var(--color-ink)" : "var(--color-brick)" }}>{fmt.money(ec.entryCost)}</div></div>
+                <div className="flex gap-2">
+                  <button onClick={() => setEntering(null)} className="rounded-lg border border-line2 bg-panel2 px-4 py-2.5 text-sm font-semibold text-inksoft">Not now</button>
+                  <button onClick={() => commitEnter(ec.id)} disabled={!can} className="tt-btn tt-btn--go px-5 py-2.5 text-xs" style={{ opacity: can ? 1 : 0.6, cursor: can ? "pointer" : "not-allowed" }}>{can ? "Enter market" : "Not enough cash"}</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ); })()}
+
+      {/* facility modal */}
+      {facPop && (() => { const f = sel.mine.find((x) => x.id === facPop); const t = f ? typeOf(f.type) : undefined; const ec = f ? dByKey(f.district) : undefined; if (!f || !t || !ec) return null; const maintaining = !!actions.maintain[f.id];
+        const prod = t.production_capacity ?? t.capacity_contribution ?? 0; const retail = t.retail_draw ?? 0; const tot = prod + retail || 1;
+        const onsitePct = (retail / tot) * 100, exportPct = (prod / tot) * 100; const fb = flowBadge(prod - retail);
+        const condNow = view.own.facilities?.find((x) => x.id === f.id)?.condition ?? 1;
+        const divesting = actions.divests.includes(f.id);
+        const salvage = Math.round((view.modules?.facilities?.salvage_fraction ?? 0.5) * t.base_cost * (0.5 + 0.5 * condNow));
+        return (
+        <div onClick={() => setFacPop(null)} className="fixed inset-0 z-50 grid place-items-center p-4" style={{ background: "rgba(44,29,17,.34)", backdropFilter: "blur(2px)" }}>
+          <div onClick={(e) => e.stopPropagation()} className="w-[348px] max-w-[94vw] overflow-hidden rounded-xl border border-line2 bg-panel" style={{ boxShadow: "0 18px 50px rgba(40,25,8,.4)" }}>
+            <div className="h-1.5" style={{ background: cssColor(youId) }} />
+            <div className="px-4 py-4">
+              <div className="flex items-center gap-2.5">
+                <FacilityChip type={f.type} color={cssColor(youId)} size={36} mine />
+                <div className="min-w-0 flex-1"><div className="font-mono text-[0.55rem] uppercase tracking-wide text-inksoft">Your facility · {ec.label}</div><div className="display text-lg text-ink">{t.label}</div></div>
+                <button onClick={() => setFacPop(null)} className="border-none bg-none text-base text-inksoft">✕</button>
+              </div>
+              <div className="mt-3.5 rounded-[10px] border border-line bg-panel2 p-3">
+                <div className="mb-1.5 flex justify-between"><span className="font-mono text-[0.55rem] uppercase tracking-wide text-copperdeep">Brewed here vs distributed</span><span className="font-mono text-[0.6rem] font-bold" style={{ color: fb.tone === "out" ? "var(--color-copper)" : fb.tone === "in" ? "var(--color-aero)" : "var(--color-inksoft)" }}>{fb.text}</span></div>
+                <div className="flex h-3 overflow-hidden rounded-[3px] border border-line2"><div style={{ width: `${onsitePct}%`, background: "var(--color-aero)" }} /><div style={{ width: `${exportPct}%`, background: "var(--color-copper)" }} /></div>
+                <div className="mt-2 flex flex-wrap gap-3"><span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm" style={{ background: "var(--color-aero)" }} /><span className="font-mono text-[0.6rem] text-inksoft">sells on-site {fmt.int(retail)}</span></span><span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm" style={{ background: "var(--color-copper)" }} /><span className="font-mono text-[0.6rem] text-inksoft">brews to ship {fmt.int(prod)}</span></span></div>
+              </div>
+              <div className="mt-3 grid grid-cols-3 gap-2">
+                <div className="rounded-lg border border-line bg-panel2 p-2.5"><div className="text-[0.62rem] text-inksoft">Output</div><div className="tnum text-base font-bold text-ink">+{f.active ? fmt.int(prod * ec.out) : "0"}</div></div>
+                <div className="rounded-lg border border-line bg-panel2 p-2.5"><div className="text-[0.62rem] text-inksoft">Retail</div><div className="tnum text-base font-bold" style={{ color: retail > 0 ? "var(--color-aero)" : "var(--color-inksoft)" }}>{retail > 0 ? `+${fmt.int(retail)}` : "—"}</div></div>
+                <div className="rounded-lg border border-line bg-panel2 p-2.5"><div className="text-[0.62rem] text-inksoft">Condition</div><div className="tnum text-base font-bold" style={{ color: condNow > 0.6 ? "var(--color-hop)" : condNow > 0.35 ? "var(--color-gold)" : "var(--color-brick)" }}>{f.pending ? "—" : fmt.pct(condNow)}</div></div>
+              </div>
+              <div className="mt-2.5 text-sm text-inksoft">{FAC_NOTE[f.type] ?? ""}</div>
+              {f.pending ? (
+                <div className="mt-3.5 rounded-md border border-line bg-panel2 px-3 py-2 text-center font-mono text-[0.62rem] uppercase tracking-wide text-inksoft">Breaking ground this round</div>
+              ) : (
+                <div className="mt-3.5">
+                  <div className="mb-1.5 font-mono text-[0.55rem] uppercase tracking-[0.12em] text-inksoft">Lifecycle</div>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <button onClick={() => f.active && !divesting && toggleMaintain(f.id, f.type)} disabled={!f.active || divesting} className="rounded-md border px-2 py-2 font-mono text-[0.6rem] uppercase tracking-wide disabled:opacity-40" style={{ borderColor: maintaining ? "var(--color-hop)" : "var(--color-line2)", background: maintaining ? "color-mix(in srgb, var(--color-hop) 12%, var(--color-panel))" : "var(--color-panel2)", color: maintaining ? "var(--color-hop)" : "var(--color-inksoft)" }}>{maintaining ? "✓ Maintaining" : "Maintain"}</button>
+                    <button disabled title="Relocate by divesting this site and building elsewhere the same round" className="rounded-md border border-line2 bg-panel2 px-2 py-2 font-mono text-[0.6rem] uppercase tracking-wide text-inksoft opacity-50">Upgrade ↑</button>
+                    <button onClick={() => !divesting && toggleFac(f.id)} disabled={divesting} className="rounded-md border border-line2 bg-panel2 px-2 py-2 font-mono text-[0.6rem] uppercase tracking-wide text-inksoft disabled:opacity-40">{f.active ? "Mothball" : "Reactivate"}</button>
+                    <button onClick={() => toggleDivest(f.id)} className="rounded-md border px-2 py-2 font-mono text-[0.6rem] uppercase tracking-wide" style={{ borderColor: divesting ? "var(--color-line2)" : "var(--color-brick)", color: divesting ? "var(--color-inksoft)" : "var(--color-brick)", background: divesting ? "var(--color-panel2)" : "color-mix(in srgb, var(--color-brick) 7%, var(--color-panel))" }}>{divesting ? "Cancel sale" : "Divest"}</button>
+                  </div>
+                  <div className="mt-2 text-[0.66rem] text-inksoft">{divesting ? `Selling this round — recovers ~${fmt.money(salvage)} and frees the lot.` : maintaining ? "Upkeep booked — holds condition this round." : "Maintain holds condition; Divest sells the site and frees the lot."}</div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      ); })()}
+
+      {/* distribution drawer */}
+      {drawerOpen && (() => {
+        const mk = view.ownResult?.markets ?? null;
+        const rows = cities.filter((c) => c.entered).map((c) => { const m = mk?.[c.id]; return { id: c.id, name: c.name, brewed: m?.produced ?? 0, drunk: m?.q_sold ?? 0, net: m?.net ?? 0, lanes: m?.lanes ?? [] }; });
+        const maxv = Math.max(1, ...rows.map((r) => Math.max(r.brewed, r.drunk)));
+        const selRow = rows.find((r) => r.id === sel.id) ?? rows[0];
+        const nameOf = (id: string) => cities.find((c) => c.id === id)?.name ?? id;
+        return (
+        <>
+          <div onClick={() => setDrawerOpen(false)} className="fixed inset-0 z-50" style={{ background: "rgba(44,29,17,.3)" }} />
+          <aside className="dwslide scl fixed bottom-0 right-0 top-0 z-50 w-[360px] max-w-[94vw] overflow-y-auto border-l border-line2 bg-panel" style={{ boxShadow: "-14px 0 40px rgba(40,25,8,.24)" }}>
+            <div className="sticky top-0 z-[2] flex items-start gap-2.5 border-b border-line bg-panel px-5 py-4">
+              <div className="flex-1"><div className="font-mono text-[0.55rem] uppercase tracking-[0.16em] text-copperdeep">Distribution · transportation</div><div className="display text-xl text-ink">Supply &amp; lanes</div></div>
+              <button onClick={() => setDrawerOpen(false)} className="border-none bg-none text-lg text-inksoft">✕</button>
+            </div>
+            <div className="px-5 py-4">
+              <div className="mb-3 text-sm text-inksoft">Produced vs consumed in every market you operate — <b className="text-copperdeep">brewed</b> left, <b style={{ color: "var(--color-aero)" }}>drunk</b> right. The gap is a lane you're paying to ship.</div>
+              {rows.length === 0 ? <div className="text-sm italic text-inksoft">No resolved round yet — flows appear once you end the first round.</div> : (
+              <>
+                <div className="mb-2 text-[0.62rem] leading-snug text-inksoft">Set <b className="text-ink">offer</b> to route supply to a market explicitly; leave blank for auto (split by presence).</div>
+                {rows.map((r) => { const fb = flowBadge(r.net); return (
+                  <div key={r.id} className="mb-3">
+                    <div className="mb-1 flex items-baseline justify-between gap-2">
+                      <button onClick={() => setSelId(r.id)} className="display text-sm" style={{ color: r.id === sel.id ? "var(--color-copperdeep)" : "var(--color-ink)" }}>{r.name}</button>
+                      <span className="flex items-center gap-1.5"><span className="font-mono text-[0.6rem] font-bold" style={{ color: fb.tone === "out" ? "var(--color-copper)" : fb.tone === "in" ? "var(--color-aero)" : "var(--color-inksoft)" }}>{fb.text}</span><input type="number" min="0" step="10" placeholder="auto" value={actions.supply[r.id] ?? ""} onChange={(e) => { const v = e.target.value; setActions((a) => { const supply = { ...a.supply }; if (!v) delete supply[r.id]; else supply[r.id] = Math.max(0, +v); return { ...a, supply }; }); }} className="w-16 !py-0.5 text-right text-[0.7rem]" title="Units to offer here this round" /></span>
+                    </div>
+                    <div className="relative h-3.5 rounded-[3px]" style={{ background: "var(--color-panel2)" }}>
+                      <div className="absolute bottom-0 top-0 rounded-l-[3px]" style={{ right: "50%", width: `${(r.brewed / maxv) * 50}%`, background: "var(--color-copper)" }} />
+                      <div className="absolute bottom-0 top-0 rounded-r-[3px]" style={{ left: "50%", width: `${(r.drunk / maxv) * 50}%`, background: "var(--color-aero)" }} />
+                      <div className="absolute -bottom-0.5 -top-0.5 left-1/2 w-px -translate-x-1/2" style={{ background: "var(--color-inksoft)" }} />
+                    </div>
+                  </div>
+                ); })}
+                {selRow && (
+                  <div className="mt-3 rounded-[11px] border border-line bg-panel2 p-3">
+                    <div className="mb-2 font-mono text-[0.55rem] uppercase tracking-wide text-inksoft">Where {selRow.name}'s {fmt.int(selRow.drunk)} comes from</div>
+                    {selRow.drunk <= 0 ? <div className="text-[0.7rem] italic text-inksoft">Nothing sold here last round.</div> : (() => {
+                      const localUnits = Math.max(0, Math.min(selRow.brewed, selRow.drunk));
+                      const shipped = selRow.lanes.reduce((a, L) => a + L.units, 0);
+                      const denom = Math.max(1, localUnits + shipped);
+                      return (<>
+                        <div className="mb-2 flex h-3.5 overflow-hidden rounded-[3px] border border-line2"><div style={{ width: `${(localUnits / denom) * 100}%`, background: "var(--color-aero)" }} /><div style={{ width: `${(shipped / denom) * 100}%`, background: "var(--color-copperdeep)" }} /></div>
+                        <div className="flex flex-col gap-1.5">
+                          <div className="flex items-center gap-2"><span className="h-2.5 w-2.5 flex-none rounded-sm" style={{ background: "var(--color-aero)" }} /><span className="flex-1 text-[0.72rem] text-ink">Brewed locally</span><span className="tnum text-[0.6rem] font-bold" style={{ color: "var(--color-aero)" }}>{fmt.int(localUnits)}</span></div>
+                          {selRow.lanes.map((L, i) => (<div key={i} className="flex items-center gap-2"><span className="h-2.5 w-2.5 flex-none rounded-sm" style={{ background: "var(--color-copperdeep)" }} /><span className="flex-1 text-[0.72rem] text-ink">Shipped from {nameOf(L.origin_market)}</span><span className="tnum text-[0.6rem] font-bold text-copperdeep">{fmt.int(L.units)}</span></div>))}
+                        </div>
+                        {selRow.lanes.length > 0 && <div className="mt-2.5 flex justify-between border-t border-line pt-2"><span className="text-[0.7rem] text-inksoft">Lane cost</span><span className="tnum text-[0.7rem] font-bold text-brick">−{fmt.money(selRow.lanes.reduce((a, L) => a + L.cost, 0))}</span></div>}
+                      </>);
+                    })()}
+                  </div>
+                )}
+              </>
+              )}
+            </div>
+          </aside>
+        </>
+        );
+      })()}
+
+      {globeOpen && <GlobeOverlay cities={cities} homeGeo={homeGeo} onClose={() => setGlobeOpen(false)} onPick={(id) => { setGlobeOpen(false); selectCity(id); }} />}
     </div>
   );
 }

@@ -1,6 +1,6 @@
 {
   "name": "drinkwars",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "Drink Wars — a turn-based craft-beverage strategy simulation for teaching business strategy and as a research instrument. Monorepo: engine + orchestration + web. See 01_model_engine_spec.md and 02_application_spec.md.",
   "private": true,
   "license": "MIT",
