@@ -56,7 +56,7 @@ export function FacilityDetail({ facility: f, type: t, round, maintainValue, onM
           <div className="grid grid-cols-2 gap-3 text-[0.82rem]">
             <div className="rounded-md border border-line bg-paper2/30 p-3">
               <div className="text-inksoft">Capacity</div>
-              <div className="tnum mt-0.5 text-lg font-semibold text-ink">{online && active ? `+${fmt.int(liveCap)}` : "—"}<span className="text-[0.7rem] font-normal text-inksoft"> tanks</span></div>
+              <div className="tnum mt-0.5 text-lg font-semibold text-ink">{online && active ? `+${fmt.int(liveCap)}` : "—"}<span className="text-[0.7rem] font-normal text-inksoft"> units/rd</span></div>
               {t && <div className="text-[0.66rem] text-inksoft">full: {fmt.int(t.production_capacity ?? t.capacity_contribution ?? 0)}{(t.retail_draw ?? 0) > 0 ? ` · retail +${fmt.int(t.retail_draw ?? 0)}` : ""}</div>}
             </div>
             <div className="rounded-md border border-line bg-paper2/30 p-3">

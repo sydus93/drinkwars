@@ -23,7 +23,8 @@ const DEPTH: Record<ModuleMeta["tier"], { label: string; hint: string }> = {
 export function ModeSelector({ onChange }: { onChange: (modules: ModuleSelection, count: number) => void }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [presetId, setPresetId] = useState<string>("base");
-  const [open, setOpen] = useState<Set<string>>(new Set(MODULE_CATEGORIES.map((c) => c.id)));
+  // Shelves start collapsed so the catalog reads compact — expand a theme to browse it.
+  const [open, setOpen] = useState<Set<string>>(new Set());
 
   const emit = (s: Set<string>) => {
     const m: ModuleSelection = {};

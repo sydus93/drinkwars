@@ -24,7 +24,7 @@ import { WORLD_LAND_PATH } from "./worldland.js";
 // ───────────────────────── constants (Tap House hexes for canvas drawing) ─────────────────────────
 const ISO = { N: 16, TW: 30, TH: 15, OX: 500, OY: 108 };
 const PAL = { mapbg: "#e7d8b2", lot: "#dfcfa3", road: "#cdbd95", roadMaj: "#bca673", park: "#bccf86", tree: "#7f9f48", water: "#8fb6bf", waterHi: "#abccd1" };
-const FAC_TONE = { roof: "#dd9355", l: "#bd6e36", r: "#974f1d" };
+// Your-site building tone now derives from the player's chosen house colour (mineTone in drawCity).
 const ARCH_OF: Record<string, string> = { downtown: "core", riverside: "arts", industrial: "industrial", suburban: "garden" };
 const PROF: Record<string, { min: number; max: number; tone: string; park: number }> = {
   core: { min: 54, max: 94, tone: "cool", park: 0 },
@@ -65,7 +65,14 @@ const shade = (hex: string, amt: number): string => {
   r = Math.round(r + (f - r) * p); g = Math.round(g + (f - g) * p); b = Math.round(b + (f - b) * p);
   return `rgb(${r},${g},${b})`;
 };
-const cssColor = (firmId: string): string => firmColor(firmId); // var(--color-…) — fine for canvas fillStyle in-browser
+// firmColor returns var(--color-…) for palette firms and a hex for the player's picked
+// house colour. Canvas fillStyle can't resolve CSS vars, so resolve them to hex here so
+// both your sites (picked hex) and rivals (palette hues) paint accurately on the iso map.
+const resolveColor = (c: string): string => {
+  if (typeof c !== "string" || !c.startsWith("var(")) return c;
+  try { const v = getComputedStyle(document.documentElement).getPropertyValue(c.slice(4, -1).trim()).trim(); return v || c; } catch { return c; }
+};
+const cssColor = (firmId: string): string => resolveColor(firmColor(firmId));
 const trafficColor = (t: number): string => {
   const a = [31, 140, 147], b = [227, 165, 47], c = [176, 75, 30];
   let col: number[];
@@ -223,11 +230,13 @@ function building(ctx: CanvasRenderingContext2D, cx: number, cy: number, h: numb
   ctx.beginPath(); ctx.moveTo(bt[0], bt[1] - h); ctx.lineTo(br[0], br[1] - h); ctx.lineTo(bb[0], bb[1] - h); ctx.lineTo(bl[0], bl[1] - h); ctx.closePath(); ctx.stroke();
 }
 function rivalTone(firmId: string) { const c = cssColor(firmId); return { roof: shade(c, 0.45), l: shade(c, 0.12), r: shade(c, -0.28) }; }
-function drawCity(cv: HTMLCanvasElement, plan: Plan, layer: string) {
+function drawCity(cv: HTMLCanvasElement, plan: Plan, layer: string, youId: string) {
   const r = cv.getBoundingClientRect(); if (r.width < 2 || r.height < 2) return;
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   cv.width = Math.round(r.width * dpr); cv.height = Math.round(r.height * dpr);
   const ctx = cv.getContext("2d"); if (!ctx) return;
+  const mineTone = rivalTone(youId); // your buildings paint in your chosen house colour
+  const mineOutline = shade(cssColor(youId), -0.45);
   ctx.setTransform(cv.width / 1000, 0, 0, cv.height / 680, 0, 0);
   ctx.fillStyle = PAL.mapbg; ctx.fillRect(0, 0, 1000, 680);
   for (const cell of plan.cells) {
@@ -237,7 +246,7 @@ function drawCity(cv: HTMLCanvasElement, plan: Plan, layer: string) {
       if (cell.kind === "park") { diamond(ctx, cell.cx, cell.cy, PAL.park, 1.001); if (cell.t2 > 0.4) { const [X, Y] = isoXY(cell.cx, cell.cy); ctx.fillStyle = PAL.tree; for (let i = 0; i < 3; i++) { ctx.beginPath(); ctx.arc(X - 8 + i * 8, Y + ISO.TH - 2, 2.4, 0, 7); ctx.fill(); } } continue; }
       if (cell.kind === "lease") { diamond(ctx, cell.cx, cell.cy, PAL.lot, 1.001); diamond(ctx, cell.cx, cell.cy, "rgba(224,165,47,0.32)", 0.84, "rgba(154,80,36,0.5)"); continue; }
       diamond(ctx, cell.cx, cell.cy, PAL.lot, 1.001);
-      const tone = cell.kind === "mine" ? FAC_TONE : cell.kind === "rival" && cell.rival ? rivalTone(cell.rival.firmId) : TONES[(PROF[cell.arch] || PROF.arts).tone];
+      const tone = cell.kind === "mine" ? mineTone : cell.kind === "rival" && cell.rival ? rivalTone(cell.rival.firmId) : TONES[(PROF[cell.arch] || PROF.arts).tone];
       building(ctx, cell.cx, cell.cy, cell.h, tone);
     } else {
       let col: string;
@@ -245,7 +254,7 @@ function drawCity(cv: HTMLCanvasElement, plan: Plan, layer: string) {
       else if (cell.kind === "park") col = layer === "traffic" ? trafficColor(cell.traffic * 0.6) : ZONE_COLOR.garden;
       else col = layer === "traffic" ? trafficColor(cell.traffic) : ZONE_COLOR[cell.arch] || "#cf8f54";
       diamond(ctx, cell.cx, cell.cy, col, 1.001, "rgba(120,90,40,0.18)");
-      if (cell.kind === "mine") diamond(ctx, cell.cx, cell.cy, "#9a5024", 0.4);
+      if (cell.kind === "mine") diamond(ctx, cell.cx, cell.cy, mineOutline, 0.4);
       else if (cell.kind === "rival" && cell.rival) diamond(ctx, cell.cx, cell.cy, cssColor(cell.rival.firmId), 0.4);
     }
   }
@@ -332,10 +341,10 @@ function MiniGlobe({ cities, homeGeo, hasIntl, onSelect, onOpen }: { cities: Cit
     frame();
     return () => { alive = false; clearTimeout(raf); };
   }, [cities, homeGeo, hasIntl]);
-  const down = (e: React.MouseEvent) => { drag.current = { x: e.nativeEvent.offsetX, rot: rot.current, moved: false }; };
-  const move = (e: React.MouseEvent) => { mouse.current = { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY }; if (drag.current) { const dx = e.nativeEvent.offsetX - drag.current.x; if (Math.abs(dx) > 4) drag.current.moved = true; rot.current = drag.current.rot + dx * 0.55; } };
-  const up = (e: React.MouseEvent) => { const d = drag.current; drag.current = null; if (!d || d.moved) return; const mx = e.nativeEvent.offsetX, my = e.nativeEvent.offsetY; let best: string | null = null, bd = 14; for (const p of pins.current) { if (!p.front) continue; const dd = Math.hypot(p.x - mx, p.y - my); if (dd < bd) { bd = dd; best = p.id; } } if (best) onSelect(best); else onOpen(); };
-  return <canvas ref={ref} onMouseDown={down} onMouseMove={move} onMouseUp={up} onMouseLeave={() => { drag.current = null; mouse.current = null; }} title="Drag to spin · click a market to fly in · click empty space to open the globe" style={{ width: "100%", height: 158, display: "block", cursor: "grab" }} />;
+  const down = (e: React.PointerEvent) => { (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId); drag.current = { x: e.nativeEvent.offsetX, rot: rot.current, moved: false }; };
+  const move = (e: React.PointerEvent) => { mouse.current = { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY }; if (drag.current) { const dx = e.nativeEvent.offsetX - drag.current.x; if (Math.abs(dx) > 4) drag.current.moved = true; rot.current = drag.current.rot + dx * 0.55; } };
+  const up = (e: React.PointerEvent) => { const d = drag.current; drag.current = null; if (!d || d.moved) return; const mx = e.nativeEvent.offsetX, my = e.nativeEvent.offsetY; let best: string | null = null, bd = 14; for (const p of pins.current) { if (!p.front) continue; const dd = Math.hypot(p.x - mx, p.y - my); if (dd < bd) { bd = dd; best = p.id; } } if (best) onSelect(best); else onOpen(); };
+  return <canvas ref={ref} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerLeave={() => { mouse.current = null; }} onPointerCancel={() => { drag.current = null; mouse.current = null; }} title="Drag to spin · tap a market to fly in · tap empty space to open the globe" style={{ width: "100%", height: 158, display: "block", cursor: "grab", touchAction: "none" }} />;
 }
 
 // ───────────────────────── full-screen globe overlay ─────────────────────────
@@ -359,15 +368,15 @@ function GlobeOverlay({ cities, homeGeo, onClose, onPick }: { cities: CityModel[
     return () => { alive = false; cancelAnimationFrame(raf); };
   }, [cities, homeGeo, onPick]);
   const hit = (mx: number, my: number) => { let best: string | null = null, bd = 22; for (const p of pins.current) { if (!p.front) continue; const dd = Math.hypot(p.x - mx, p.y - my); if (dd < bd) { bd = dd; best = p.id; } } return best; };
-  const down = (e: React.MouseEvent) => { drag.current = { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY, rot: rot.current, tilt: tilt.current, moved: false }; };
-  const move = (e: React.MouseEvent) => { mouse.current = { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY }; if (drag.current) { const dx = e.nativeEvent.offsetX - drag.current.x, dy = e.nativeEvent.offsetY - drag.current.y; if (Math.abs(dx) + Math.abs(dy) > 4) drag.current.moved = true; rot.current = drag.current.rot + dx * 0.32; tilt.current = Math.max(-8, Math.min(78, drag.current.tilt + dy * 0.3)); } };
-  const up = (e: React.MouseEvent) => { const d = drag.current; drag.current = null; if (d && d.moved) return; const id = hit(e.nativeEvent.offsetX, e.nativeEvent.offsetY); if (id) { const c = cities.find((x) => x.id === id); if (c) fly.current = { id, t0: performance.now(), rot0: rot.current, tilt0: tilt.current, lon: c.geo[0], lat: c.geo[1] }; } };
+  const down = (e: React.PointerEvent) => { (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId); drag.current = { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY, rot: rot.current, tilt: tilt.current, moved: false }; };
+  const move = (e: React.PointerEvent) => { mouse.current = { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY }; if (drag.current) { const dx = e.nativeEvent.offsetX - drag.current.x, dy = e.nativeEvent.offsetY - drag.current.y; if (Math.abs(dx) + Math.abs(dy) > 4) drag.current.moved = true; rot.current = drag.current.rot + dx * 0.32; tilt.current = Math.max(-8, Math.min(78, drag.current.tilt + dy * 0.3)); } };
+  const up = (e: React.PointerEvent) => { const d = drag.current; drag.current = null; if (d && d.moved) return; const id = hit(e.nativeEvent.offsetX, e.nativeEvent.offsetY); if (id) { const c = cities.find((x) => x.id === id); if (c) fly.current = { id, t0: performance.now(), rot0: rot.current, tilt0: tilt.current, lon: c.geo[0], lat: c.geo[1] }; } };
   return (
-    <div className="fixed inset-0 z-50" style={{ background: "radial-gradient(120% 100% at 50% 8%, #fbf2df 0%, #ece0c4 52%, #ddc9a0 100%)" }}>
-      <canvas ref={ref} onMouseDown={down} onMouseMove={move} onMouseUp={up} onMouseLeave={() => { drag.current = null; mouse.current = null; }} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", display: "block", cursor: "grab" }} />
+    <div className="fixed inset-0 z-50" style={{ background: "radial-gradient(120% 100% at 50% 8%, var(--color-panel) 0%, var(--color-paper) 55%, var(--color-panel2) 100%)" }}>
+      <canvas ref={ref} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerLeave={() => { mouse.current = null; }} onPointerCancel={() => { drag.current = null; mouse.current = null; }} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", display: "block", cursor: "grab", touchAction: "none" }} />
       <div className="pointer-events-none absolute left-5 top-4">
         <div className="font-mono text-[0.6rem] uppercase tracking-[0.18em] text-copperdeep">Drink Wars · global markets</div>
-        <div className="display text-3xl font-black uppercase tracking-wide text-ink">The World</div>
+        <div className="display text-3xl font-black text-ink">The World</div>
         <div className="mt-1.5 max-w-[300px] text-xs text-inksoft">Drag to spin. Click a market to fly in.</div>
       </div>
       <button onClick={onClose} className="absolute right-5 top-4 rounded-lg border border-copperdeep px-3.5 py-2 font-mono text-[0.7rem] uppercase tracking-wide text-copperdeep" style={{ background: "color-mix(in srgb, var(--color-copper) 12%, var(--color-panel))" }}>✕ Close</button>
@@ -417,7 +426,7 @@ export function CityView({ view, actions, setActions, onInspect, extraBuilds = [
 
   useEffect(() => {
     if (!plan || !canvasRef.current) return;
-    const draw = () => { if (canvasRef.current && plan) try { drawCity(canvasRef.current, plan, layer === "trade" ? "map" : layer); } catch { /* ignore */ } };
+    const draw = () => { if (canvasRef.current && plan) try { drawCity(canvasRef.current, plan, layer === "trade" ? "map" : layer, youId); } catch { /* ignore */ } };
     const id = window.setTimeout(draw, 0);
     window.addEventListener("resize", draw);
     return () => { clearTimeout(id); window.removeEventListener("resize", draw); };
@@ -557,8 +566,11 @@ export function CityView({ view, actions, setActions, onInspect, extraBuilds = [
 
         {/* map stage */}
         <div className="card relative w-full overflow-visible p-0" style={{ aspectRatio: "1000 / 680" }}>
-          <div className="absolute inset-0 overflow-hidden rounded-[14px]" style={{ background: PAL.mapbg }}>
-            <canvas ref={canvasRef} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", display: "block" }} />
+          {/* overflow-visible so on-map popovers (facility / lease) can extend above a
+              top-row marker without being cropped by the map box; the canvas keeps the
+              rounded map corners via its own border-radius. */}
+          <div className="absolute inset-0 overflow-visible rounded-[14px]" style={{ background: PAL.mapbg }}>
+            <canvas ref={canvasRef} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", display: "block", borderRadius: 14 }} />
 
             {plan && (layer === "map" || layer === "trade") && plan.districts.map((d) => { const ec = dByKey(d.key); if (!ec) return null; const p = pct(d.cx, d.cy, 60, layer); return (
               <div key={d.key} className="pointer-events-none absolute z-[4] flex flex-col items-center gap-0.5" style={{ left: `${p.l}%`, top: `${p.t}%`, transform: "translate(-50%,-100%)" }}>
@@ -629,21 +641,27 @@ export function CityView({ view, actions, setActions, onInspect, extraBuilds = [
               const condNow = view.own.facilities?.find((x) => x.id === f.id)?.condition ?? 1;
               const maintaining = !!actions.maintain[f.id]; const divesting = actions.divests.includes(f.id);
               const condColor = condNow > 0.6 ? "var(--color-hop)" : condNow > 0.35 ? "var(--color-gold)" : "var(--color-brick)";
+              const body = (
+                <>
+                  <div className="flex items-baseline justify-between gap-2"><div className="flex items-center gap-2"><FacilityChip type={f.type} color={cssColor(youId)} size={20} mine /><div className="display text-[0.95rem] text-ink">{t.label}</div></div><button onClick={() => setFacPop(null)} className="border-none bg-none text-[0.8rem] text-inksoft">✕</button></div>
+                  <div className="text-[0.7rem] italic text-inksoft">{ec?.label ?? f.district} · {f.active ? "running" : "mothballed"}</div>
+                  <div className="mt-2 flex justify-between text-[0.8rem]"><span className="text-inksoft">Output</span><span className="tnum font-semibold text-hop">+{f.active ? fmt.int(prod * (ec?.out ?? 1)) : 0}/rd</span></div>
+                  <div className="mt-1.5"><div className="flex justify-between text-[0.66rem] text-inksoft"><span>Condition</span><span className="tnum">{fmt.pct(condNow)}</span></div><div className="mt-0.5 h-1.5 overflow-hidden rounded" style={{ background: "var(--color-panel2)" }}><div style={{ height: "100%", width: `${Math.round(condNow * 100)}%`, background: condColor }} /></div></div>
+                  <div className="mt-2 text-[0.66rem] leading-snug text-inksoft">{FAC_NOTE[f.type] ?? ""}</div>
+                  <div className="mt-2.5 grid grid-cols-3 gap-1">
+                    <button onClick={() => f.active && !divesting && toggleMaintain(f.id, f.type)} disabled={!f.active || divesting} className="rounded-md border px-1 py-1.5 font-mono text-[0.5rem] font-semibold uppercase tracking-wide disabled:opacity-40" style={{ borderColor: maintaining ? "var(--color-hop)" : "var(--color-line2)", color: maintaining ? "var(--color-hop)" : "var(--color-inksoft)" }}>{maintaining ? "✓ Maintain" : "Maintain"}</button>
+                    <button onClick={() => !divesting && toggleFac(f.id)} disabled={divesting} className="rounded-md border border-line2 px-1 py-1.5 font-mono text-[0.5rem] font-semibold uppercase tracking-wide text-inksoft disabled:opacity-40">{f.active ? "Mothball" : "Reopen"}</button>
+                    <button onClick={() => toggleDivest(f.id)} className="rounded-md border px-1 py-1.5 font-mono text-[0.5rem] font-semibold uppercase tracking-wide" style={{ borderColor: divesting ? "var(--color-line2)" : "var(--color-brick)", color: divesting ? "var(--color-inksoft)" : "var(--color-brick)" }}>{divesting ? "Keep" : "Divest"}</button>
+                  </div>
+                </>
+              );
               return (
                 <>
-                  <div onClick={() => setFacPop(null)} className="absolute inset-0 z-[8]" />
-                  <div className="absolute z-[9] w-[214px] rounded-xl border p-3" style={{ left: `${p.l}%`, top: `${p.t}%`, transform: "translate(-50%, calc(-100% - 16px))", borderColor: "var(--color-copperdeep)", background: "var(--color-panel)", boxShadow: "0 14px 30px rgba(40,25,8,.42)" }}>
-                    <div className="flex items-baseline justify-between gap-2"><div className="flex items-center gap-2"><FacilityChip type={f.type} color={cssColor(youId)} size={20} mine /><div className="display text-[0.95rem] text-ink">{t.label}</div></div><button onClick={() => setFacPop(null)} className="border-none bg-none text-[0.8rem] text-inksoft">✕</button></div>
-                    <div className="text-[0.7rem] italic text-inksoft">{ec?.label ?? f.district} · {f.active ? "running" : "mothballed"}</div>
-                    <div className="mt-2 flex justify-between text-[0.8rem]"><span className="text-inksoft">Output</span><span className="tnum font-semibold text-hop">+{f.active ? fmt.int(prod * (ec?.out ?? 1)) : 0}/rd</span></div>
-                    <div className="mt-1.5"><div className="flex justify-between text-[0.66rem] text-inksoft"><span>Condition</span><span className="tnum">{fmt.pct(condNow)}</span></div><div className="mt-0.5 h-1.5 overflow-hidden rounded" style={{ background: "var(--color-panel2)" }}><div style={{ height: "100%", width: `${Math.round(condNow * 100)}%`, background: condColor }} /></div></div>
-                    <div className="mt-2 text-[0.66rem] leading-snug text-inksoft">{FAC_NOTE[f.type] ?? ""}</div>
-                    <div className="mt-2.5 grid grid-cols-3 gap-1">
-                      <button onClick={() => f.active && !divesting && toggleMaintain(f.id, f.type)} disabled={!f.active || divesting} className="rounded-md border px-1 py-1.5 font-mono text-[0.5rem] font-semibold uppercase tracking-wide disabled:opacity-40" style={{ borderColor: maintaining ? "var(--color-hop)" : "var(--color-line2)", color: maintaining ? "var(--color-hop)" : "var(--color-inksoft)" }}>{maintaining ? "✓ Maintain" : "Maintain"}</button>
-                      <button onClick={() => !divesting && toggleFac(f.id)} disabled={divesting} className="rounded-md border border-line2 px-1 py-1.5 font-mono text-[0.5rem] font-semibold uppercase tracking-wide text-inksoft disabled:opacity-40">{f.active ? "Mothball" : "Reopen"}</button>
-                      <button onClick={() => toggleDivest(f.id)} className="rounded-md border px-1 py-1.5 font-mono text-[0.5rem] font-semibold uppercase tracking-wide" style={{ borderColor: divesting ? "var(--color-line2)" : "var(--color-brick)", color: divesting ? "var(--color-inksoft)" : "var(--color-brick)" }}>{divesting ? "Keep" : "Divest"}</button>
-                    </div>
-                  </div>
+                  <div onClick={() => setFacPop(null)} className="fixed inset-0 z-40 lg:absolute lg:z-[8]" />
+                  {/* mobile: top-layer bottom sheet */}
+                  <div className="fixed inset-x-0 bottom-0 z-50 max-h-[80vh] overflow-y-auto rounded-t-2xl border-t p-4 lg:hidden" style={{ borderColor: "var(--color-copperdeep)", background: "var(--color-panel)", boxShadow: "0 -14px 30px rgba(40,25,8,.42)", paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}>{body}</div>
+                  {/* desktop: anchored popover */}
+                  <div className="absolute z-[9] hidden w-[214px] rounded-xl border p-3 lg:block" style={{ left: `clamp(110px, ${p.l}%, calc(100% - 110px))`, top: `${p.t}%`, transform: "translate(-50%, calc(-100% - 16px))", borderColor: "var(--color-copperdeep)", background: "var(--color-panel)", boxShadow: "0 14px 30px rgba(40,25,8,.42)" }}>{body}</div>
                 </>
               );
             })()}
@@ -657,23 +675,30 @@ export function CityView({ view, actions, setActions, onInspect, extraBuilds = [
               const capex = selType ? typeOf(selType)?.base_cost ?? 0 : 0;
               const queuedSpend = actions.builds.reduce((s, b) => s + (typeOf(b.type)?.base_cost ?? 0), 0);
               const afford = view.own.cash - queuedSpend >= capex; const can = selOk && afford;
+              const body = (
+                <>
+                  <div className="flex items-baseline justify-between gap-2"><div className="display text-[0.9rem] text-ink">Lease · {d?.label ?? st.district}</div><button onClick={() => setSiting(null)} className="border-none bg-none text-[0.8rem] text-inksoft">✕</button></div>
+                  <div className="text-[0.68rem] italic text-inksoft">{z.zone} · choose what to build</div>
+                  <div className="mt-2 grid gap-1">
+                    {facTypes.filter((t) => z.allow.includes(t.id)).map((t) => { const on = selType === t.id; const canAfford = view.own.cash - queuedSpend >= t.base_cost; return (
+                      <button key={t.id} onClick={() => setSiting({ lot: st.lot, district: st.district, type: t.id })} className="flex items-center gap-2 rounded-lg border px-2 py-1.5 text-left" style={{ borderColor: on ? "var(--color-copperdeep)" : "var(--color-line2)", background: on ? "color-mix(in srgb, var(--color-copper) 10%, var(--color-panel))" : "var(--color-panel)" }}>
+                        <FacilityChip type={t.id} color={cssColor(youId)} size={18} />
+                        <span className="min-w-0 flex-1"><span className="block truncate text-[0.8rem] font-semibold text-ink">{t.label}</span><span className="block text-[0.54rem] text-inksoft">{fmt.money(t.fixed_cost)}/rd upkeep</span></span>
+                        <span className="tnum shrink-0 text-right text-[0.62rem] leading-tight" style={{ color: canAfford ? "var(--color-copperdeep)" : "var(--color-brick)" }}>{fmt.money(t.base_cost)}<span className="block text-[0.5rem] font-normal text-inksoft">to build</span></span>
+                      </button>
+                    ); })}
+                  </div>
+                  <button onClick={build} disabled={!can} className="tt-btn tt-btn--go mt-2.5 w-full py-2 text-[0.62rem]" style={{ opacity: can ? 1 : 0.55, cursor: can ? "pointer" : "not-allowed", filter: can ? undefined : "grayscale(0.4)" }}>{!selType ? "Pick a type" : !selOk ? "Not permitted here" : !afford ? "Not enough cash" : `Build · ${fmt.money(capex)}`}</button>
+                </>
+              );
               return (
                 <>
-                  <div onClick={() => setSiting(null)} className="absolute inset-0 z-[8]" />
-                  <div className="absolute z-[9] w-[224px] rounded-xl border p-3" style={{ left: `${p.l}%`, top: `${p.t}%`, transform: "translate(-50%, calc(-100% - 14px))", borderColor: "var(--color-copperdeep)", background: "var(--color-panel)", boxShadow: "0 14px 30px rgba(40,25,8,.42)" }}>
-                    <div className="flex items-baseline justify-between gap-2"><div className="display text-[0.9rem] text-ink">Lease · {d?.label ?? st.district}</div><button onClick={() => setSiting(null)} className="border-none bg-none text-[0.8rem] text-inksoft">✕</button></div>
-                    <div className="text-[0.68rem] italic text-inksoft">{z.zone} · choose what to build</div>
-                    <div className="mt-2 grid gap-1">
-                      {facTypes.filter((t) => z.allow.includes(t.id)).map((t) => { const on = selType === t.id; const canAfford = view.own.cash - queuedSpend >= t.base_cost; return (
-                        <button key={t.id} onClick={() => setSiting({ lot: st.lot, district: st.district, type: t.id })} className="flex items-center gap-2 rounded-lg border px-2 py-1.5 text-left" style={{ borderColor: on ? "var(--color-copperdeep)" : "var(--color-line2)", background: on ? "color-mix(in srgb, var(--color-copper) 10%, var(--color-panel))" : "var(--color-panel)" }}>
-                          <FacilityChip type={t.id} color={cssColor(youId)} size={18} />
-                          <span className="flex-1 text-[0.8rem] font-semibold text-ink">{t.label}</span>
-                          <span className="tnum text-[0.62rem]" style={{ color: canAfford ? "var(--color-copperdeep)" : "var(--color-brick)" }}>{fmt.money(t.base_cost)}</span>
-                        </button>
-                      ); })}
-                    </div>
-                    <button onClick={build} disabled={!can} className="tt-btn tt-btn--go mt-2.5 w-full py-2 text-[0.62rem]" style={{ opacity: can ? 1 : 0.55, cursor: can ? "pointer" : "not-allowed", filter: can ? undefined : "grayscale(0.4)" }}>{!selType ? "Pick a type" : !selOk ? "Not permitted here" : !afford ? "Not enough cash" : `Build · ${fmt.money(capex)}`}</button>
-                  </div>
+                  {/* backdrop: full-screen on mobile, in-map on desktop */}
+                  <div onClick={() => setSiting(null)} className="fixed inset-0 z-40 lg:absolute lg:z-[8]" />
+                  {/* mobile: top-layer bottom sheet — never clipped by the map viewer */}
+                  <div className="fixed inset-x-0 bottom-0 z-50 max-h-[80vh] overflow-y-auto rounded-t-2xl border-t p-4 lg:hidden" style={{ borderColor: "var(--color-copperdeep)", background: "var(--color-panel)", boxShadow: "0 -14px 30px rgba(40,25,8,.42)", paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}>{body}</div>
+                  {/* desktop: popover anchored above the parcel */}
+                  <div className="absolute z-[9] hidden w-[224px] rounded-xl border p-3 lg:block" style={{ left: `clamp(116px, ${p.l}%, calc(100% - 116px))`, top: `${p.t}%`, transform: "translate(-50%, calc(-100% - 14px))", borderColor: "var(--color-copperdeep)", background: "var(--color-panel)", boxShadow: "0 14px 30px rgba(40,25,8,.42)" }}>{body}</div>
                 </>
               );
             })()}
@@ -689,8 +714,8 @@ export function CityView({ view, actions, setActions, onInspect, extraBuilds = [
 
         {/* legend */}
         <div className="flex flex-wrap items-center gap-3.5 text-sm text-inksoft">
-          <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm" style={{ background: "#bd6e36" }} />Your sites</span>
-          <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm" style={{ background: "#7c4f86" }} />Rivals</span>
+          <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm" style={{ background: firmColor(youId) }} />Your sites</span>
+          <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm" style={{ background: "var(--color-inksoft)" }} />Rivals</span>
           <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-[3px] border border-dashed border-copperdeep" style={{ background: "rgba(224,165,47,.32)" }} />For lease</span>
           <span className="flex-1" />
           <span className="italic">{legendNote}</span>

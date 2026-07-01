@@ -124,7 +124,7 @@ export function FirmDetail({
               <Row label={STOCK_LABEL.B} value={<span>{bar(firm.B, fieldMaxB)} <span className="tnum ml-1">{firm.B.toFixed(0)}</span></span>} />
               <Row label="Avg price" value={avgPrice ? fmt.price(avgPrice) : "—"} />
               <Row label="Unit cost" value={firm.unitCost ? fmt.price(firm.unitCost) : "—"} />
-              <Row label="Capacity" value={`${fmt.int(firm.cap)} tanks`} />
+              <Row label="Capacity" value={`${fmt.int(firm.cap)} units/rd`} />
               <Row label="Last net income" value={<span className={firm.netIncome < 0 ? "text-brick" : "text-hop"}>{fmt.signed(firm.netIncome)}</span>} />
               <Row label="Leverage" value={<span className={firm.leverage > 1.5 ? "text-brick" : ""}>{firm.leverage.toFixed(2)}</span>} />
               <Row label="Cash · debt" value={`${fmt.money(firm.cash)} · ${fmt.money(firm.debt)}`} />

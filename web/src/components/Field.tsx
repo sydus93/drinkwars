@@ -60,7 +60,7 @@ export function Field({ view, infoActive, onInspect }: { view: GameView; infoAct
         <CompareBar label="Cumulative score" you={you?.score ?? 0} ref_={fieldMedScore} max={Math.max(...scores, 0.01)} fmt={(n) => n.toFixed(2)} />
         <div className="mt-2 grid grid-cols-3 gap-3 text-sm">
           <Row label="Your share" value={fmt.pct(you?.share ?? 0)} />
-          <Row label="Your tanks" value={fmt.int(you?.cap ?? 0)} />
+          <Row label="Your capacity" value={`${fmt.int(you?.cap ?? 0)} units/rd`} />
           <Row label="Your unit cost" value={you?.unitCost ? fmt.price(you.unitCost) : "—"} />
         </div>
       </Card>
@@ -78,7 +78,7 @@ export function Field({ view, infoActive, onInspect }: { view: GameView; infoAct
                     <th className="py-1 pr-2 text-right">Score</th>
                     <th className="py-1 pr-2 text-right">Quality</th>
                     <th className="py-1 pr-2 text-right">Brand</th>
-                    <th className="py-1 pr-2 text-right">Tanks</th>
+                    <th className="py-1 pr-2 text-right">Cap</th>
                     <th className="py-1 pr-2 text-right">Avg price</th>
                     <th className="py-1">Focus</th>
                   </tr>
@@ -140,7 +140,7 @@ const DIMS: { key: string; label: string; get: (f: FirmSnapshot) => number }[] =
   { key: "Q", label: "Recipe quality", get: (f) => f.Q },
   { key: "B", label: "Brand", get: (f) => f.B },
   { key: "avgPrice", label: "Avg price", get: avgPrice },
-  { key: "cap", label: "Capacity (tanks)", get: (f) => f.cap },
+  { key: "cap", label: "Capacity (units/rd)", get: (f) => f.cap },
   { key: "T_emp", label: "Taproom community", get: (f) => f.T_emp },
   { key: "T_inv", label: "Investor relations", get: (f) => f.T_inv },
   { key: "T_gov", label: "Regulator relations", get: (f) => f.T_gov },

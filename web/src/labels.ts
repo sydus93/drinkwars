@@ -71,16 +71,40 @@ export const STOCK_LABEL = {
 } as const;
 
 const money0 = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
-const money1 = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+/**
+ * The engine is a toy-scale economy (all magnitudes O(1–1000)). To make the numbers
+ * read like a real brewery WITHOUT touching the balance-tuned engine (bots, harness,
+ * invariants, tests), the web reinterprets the units at the display/input boundary —
+ * and, crucially, keeps unit economics consistent (price × quantity = revenue), which
+ * students compute. Three display bases, tied by revenue = price × quantity:
+ *
+ *   • MONEY_DISPLAY (×100) — AGGREGATE dollars: cash, revenue, COGS, spend, financing,
+ *     valuation, salaries, penalties. So ~$115k startup, $3,000 research, not $1,150/$30.
+ *   • per-unit PRICES (×1) — price, unit cost, per-drink margin. So ~$7.65 / drink, real.
+ *   • VOLUME_DISPLAY (×100) — DRINK quantities: units sold, demand, capacity, inventory,
+ *     shipping. So a firm moves ~10,000 drinks/round, and $7.65 × 10,000 = ~$76,500 rev.
+ *
+ * VOLUME_DISPLAY must equal MONEY_DISPLAY (since prices are ×1) for the identity to hold.
+ * fmt.price is ×1; fmt.int is the drink-VOLUME formatter (×VOLUME_DISPLAY, used only for
+ * volumes — never plain counts like rounds/ranks, which render raw). Money the player
+ * TYPES is divided back out before it reaches the engine (see toEngineMoney).
+ */
+export const MONEY_DISPLAY = 100;
+export const VOLUME_DISPLAY = MONEY_DISPLAY; // drink volumes scale with money (prices are ×1)
+/** engine units → display dollars (for input `value=` and readouts not using fmt). */
+export const toDisplayMoney = (n: number): number => n * MONEY_DISPLAY;
+/** display dollars → engine units (for money input onChange handlers). */
+export const toEngineMoney = (n: number): number => n / MONEY_DISPLAY;
 
 export const fmt = {
-  money: (n: number) => `$${money0.format(Math.round(n))}`,
-  price: (n: number) => `$${money1.format(n)}`,
-  int: (n: number) => money0.format(Math.round(n)),
+  money: (n: number) => `$${money0.format(Math.round(n * MONEY_DISPLAY))}`,
+  price: (n: number) => `$${n.toFixed(2)}`, // per-drink, engine-native scale (real ≈ $7.65)
+  int: (n: number) => money0.format(Math.round(n * VOLUME_DISPLAY)), // drink VOLUME (see note)
   pct: (n: number) => `${(n * 100).toFixed(0)}%`,
   pct1: (n: number) => `${(n * 100).toFixed(1)}%`,
   num: (n: number, d = 1) => n.toFixed(d),
-  signed: (n: number) => (n >= 0 ? `+${money0.format(Math.round(n))}` : `-$${money0.format(Math.abs(Math.round(n)))}`),
+  signed: (n: number) => { const v = Math.round(n * MONEY_DISPLAY); return v >= 0 ? `+$${money0.format(v)}` : `-$${money0.format(Math.abs(v))}`; },
 };
 
 /** City/market presentation for the City View — a fictional city name, region, globe

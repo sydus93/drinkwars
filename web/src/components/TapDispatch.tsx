@@ -41,7 +41,7 @@ export function TapDispatch({ view, round, footer }: { view: GameView; round: nu
   const youMentions = events.filter((e) => e.mine).length;
 
   return (
-    <div className="mx-auto max-w-[880px] px-1 py-2">
+    <div className="mx-auto max-w-[880px] overflow-x-hidden px-1 py-2 [overflow-wrap:anywhere]">
       {/* masthead */}
       <div className="border-b-[3px] border-double border-ink pb-3 text-center">
         <div className="flex justify-between font-mono text-[0.55rem] uppercase tracking-[0.1em] text-inksoft">

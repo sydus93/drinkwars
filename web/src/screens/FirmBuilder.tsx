@@ -46,6 +46,7 @@ export function FirmBuilder({ onStart, busy }: { onStart: (c: FoundingChoices) =
   const [emblem, setEmblem] = useState<string>(EMBLEM_IDS[0]);
   const [difficulty, setDifficulty] = useState<Difficulty>("competitive");
   const [modules, setModules] = useState<ModuleSelection>({});
+  const [showModes, setShowModes] = useState(false);
   const [facPick, setFacPick] = useState<FoundingFacility[]>([]);
   const [hirePick, setHirePick] = useState<string[]>([]);
 
@@ -196,11 +197,21 @@ export function FirmBuilder({ onStart, busy }: { onStart: (c: FoundingChoices) =
                   ))}
                 </div>
               </div>
+              {/* Modes are collapsed by default — accept the standard game and jump right in,
+                  or open to customize (facilities, geography, employees, conduct, alliances). */}
               <div>
-                <div className="eyebrow mb-2">Game modes &amp; expansions</div>
-                <div className="rounded-md border border-line bg-paper2/40 p-3">
-                  <ModeSelector onChange={(m) => setModules(m)} />
-                </div>
+                <button type="button" onClick={() => setShowModes((v) => !v)} className="flex w-full items-center justify-between gap-3 rounded-md border border-line bg-paper2/40 px-3 py-2.5 text-left transition-colors hover:border-line2">
+                  <span className="min-w-0">
+                    <span className="eyebrow block">Game modes &amp; expansions</span>
+                    <span className="text-[0.72rem] text-inksoft">{Object.keys(modules).length ? `${Object.keys(modules).length} on · tap to adjust` : "Standard game — tap to add facilities, geography, employees…"}</span>
+                  </span>
+                  <span className={`shrink-0 text-inksoft transition-transform ${showModes ? "rotate-90" : ""}`} aria-hidden>▸</span>
+                </button>
+                {showModes && (
+                  <div className="mt-2 rounded-md border border-line bg-paper2/40 p-3">
+                    <ModeSelector onChange={(m) => setModules(m)} />
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -234,7 +245,7 @@ export function FirmBuilder({ onStart, busy }: { onStart: (c: FoundingChoices) =
                               <FacilityChip type={t.id} color={color} size={26} mine />
                               <div className="min-w-0 flex-1">
                                 <div className="text-sm font-semibold text-ink">{t.label}</div>
-                                <div className="text-[0.64rem] text-inksoft">+{fmt.int(t.production_capacity ?? t.capacity_contribution ?? 0)} tanks{(t.retail_draw ?? 0) > 0 ? ` · +${fmt.int(t.retail_draw ?? 0)} retail` : ""} · {fmt.money(t.fixed_cost)}/rd</div>
+                                <div className="text-[0.64rem] text-inksoft">+{fmt.int(t.production_capacity ?? t.capacity_contribution ?? 0)} units/rd{(t.retail_draw ?? 0) > 0 ? ` · +${fmt.int(t.retail_draw ?? 0)} retail` : ""} · {fmt.money(t.fixed_cost)}/rd</div>
                               </div>
                               <span className="tnum shrink-0 text-[0.72rem] text-copperdeep">{fmt.money(t.base_cost)}</span>
                               <span className="shrink-0 text-[0.7rem] font-semibold text-copperdeep">{on ? "✓" : "+"}</span>
@@ -295,7 +306,7 @@ export function FirmBuilder({ onStart, busy }: { onStart: (c: FoundingChoices) =
             <Button variant="go" onClick={finish} disabled={busy || remaining < 0} className="px-6 py-3 text-base">{busy ? "Pouring…" : `Found ${display.split(" ")[0]} →`}</Button>
           )}
         </div>
-        <p className="mt-4 font-mono text-[0.7rem] tracking-wide text-inksoft">Single-player · 16 rounds · 7 adaptive AI rivals · runs entirely in your browser</p>
+        <p className="mt-4 font-mono text-[0.7rem] tracking-wide text-inksoft">Single-player · 16 rounds · seven rival breweries</p>
       </div>
     </div>
   );

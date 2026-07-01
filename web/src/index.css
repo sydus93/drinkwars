@@ -1,109 +1,129 @@
 @import "tailwindcss";
 
 /* ─────────────────────────────────────────────────────────────────────────
-   TAP HOUSE TYCOON — Drink Wars game skin (warm, glossy management-sim HUD).
-   Token NAMES are kept (some historical); they're re-valued to the tycoon
-   palette so existing utilities (bg-copper, text-ink, border-line, .card…)
-   reskin in place. Light = daytime taproom; [data-mode="sectional"] = night.
-   Type: EB Garamond (editorial display + body + tabular-lining figures —
-   no mono numerals) · IBM Plex Sans (tiny uppercase labels + data readouts).
-   Fonts load via the <link> in index.html.
+   DRINK WARS — reskinned to the EDITORIAL prototype (EB Garamond + brushed
+   metal), replacing the "Tap House Tycoon" glossy skin.
+
+   Every token NAME, class NAME and mode mechanism is preserved, so NO
+   component file changes — this file alone re-skins the whole app. Canonical
+   source: design_handoff_drinkwars/index.css. The ONLY app-specific additions
+   beyond the handoff are the .dwflow / .dwslide animations at the very bottom
+   (used by CityView's trade-flow arcs + distribution drawer).
+
+   Companion: the font <link> in web/index.html loads EB Garamond + IBM Plex
+   Sans; <html data-mode="sectional"> makes night the default.
    ───────────────────────────────────────────────────────────────────────── */
 @theme {
-  --color-paper:      #ece0c4;   /* page */
-  --color-panel:      #fcf5e7;   /* raised panel */
-  --color-panel2:     #e9d7b4;   /* recessed / inset well */
-  --color-ink:        #2c1d11;   /* primary text (never pure black) */
-  --color-inksoft:    #6b513a;   /* secondary text */
-  --color-copper:     #c0703a;   /* PRIMARY accent */
-  --color-copperdeep: #9a5024;   /* primary, pressed */
-  --color-gold:       #e3a52f;   /* amber highlight / CTA */
-  --color-hop:        #6fa03a;   /* secondary (hops green) — "go" / gain */
-  --color-aero:       #1f8c93;   /* tertiary (teal) — non-alc / data */
+  --color-paper:      #ece0c4;
+  --color-panel:      #fcf5e7;
+  --color-panel2:     #e9d7b4;
+  --color-ink:        #2c1d11;
+  --color-inksoft:    #6b513a;
+  --color-faint:      #9a7a52;   /* tertiary label ink (text-faint) */
+  --color-copper:     #c0703a;
+  --color-copperdeep: #9a5024;
+  --color-gold:       #e3a52f;
+  --color-hop:        #6fa03a;
+  --color-aero:       #1f8c93;
   --color-clay:       #b5704f;
   --color-plum:       #7c4f86;
-  --color-brick:      #c0533f;   /* loss / shock */
-  --color-line:       #d8c39c;   /* hairline / border */
-  --color-line2:      #c2a877;   /* heavier divider / bevel underline */
+  --color-brick:      #c0533f;
+  --color-line:       #d8c39c;
+  --color-line2:      #c2a877;
 
-  --font-display: "EB Garamond", Georgia, "Times New Roman", serif;
-  --font-body:    "EB Garamond", Georgia, "Times New Roman", serif;
-  /* historical name "mono": now the IBM Plex Sans label/data face (no monospace). */
-  --font-mono:    "IBM Plex Sans", system-ui, sans-serif;
+  --font-display: "EB Garamond", Georgia, serif;
+  --font-body:    "EB Garamond", Georgia, serif;
+  /* historical name "mono": now the IBM Plex Sans label/data face (no monospace).
+     Name kept so charts.tsx var(--font-mono) still resolves. */
+  --font-mono:    "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
 }
 
-/* metal-coin + wood trim extras (not Tailwind color utilities) */
+/* metal-coin + brushed-frame extras (not Tailwind color utilities) */
 :root {
   --tt-wood:   #3a2a1d;
   --tt-coin-1: #fff2d8;
   --tt-coin-2: #e6c98c;
   --tt-coin-3: #c79a4f;
+  --bevel:  rgba(255, 255, 255, 0.6);   /* brushed-metal frame recipe */
+  --metal:  rgba(120, 92, 52, 0.30);
+  --shadow: rgba(40, 25, 8, 0.18);
 }
 
-/* ── Night shift (dark) ── */
-[data-mode="sectional"] {
-  --color-paper:      #241a10;
+/* ── Night shift (dark). `sectional` keeps the existing app mechanism; `night`
+   is an alias so prototype-style data-mode="night" also works. ── */
+[data-mode="sectional"],
+[data-mode="night"] {
+  --color-paper:      #1c130a;
   --color-panel:      #2f2114;
-  --color-panel2:     #1b130a;
+  --color-panel2:     #160f08;
   --color-ink:        #f4e6c8;
   --color-inksoft:    #bda079;
+  --color-faint:      #a98a5f;
   --color-copper:     #e0903f;
-  --color-copperdeep: #f3b75f;
+  --color-copperdeep: #f0b94e;
   --color-gold:       #f0b94e;
   --color-hop:        #8fc24f;
   --color-aero:       #34c2c9;
-  --color-clay:       #c98a68;
+  --color-clay:       #cf8a5f;
   --color-plum:       #a888b0;
   --color-brick:      #d86a52;
   --color-line:       #3a2a18;
   --color-line2:      #503b22;
   --tt-wood:          #120c06;
+  --bevel:  rgba(255, 246, 224, 0.11);
+  --metal:  rgba(232, 212, 170, 0.15);
+  --shadow: rgba(0, 0, 0, 0.55);
 }
 
 html { background: var(--color-paper); color-scheme: light; }
-[data-mode="sectional"] { color-scheme: dark; }
+[data-mode="sectional"], [data-mode="night"] { color-scheme: dark; }
 
 body {
   margin: 0;
   font-family: var(--font-body);
   color: var(--color-ink);
-  /* flat warm cream + one soft radial — no grain/topo on the game screens */
-  background: radial-gradient(120% 90% at 12% -10%, #fbf2df 0%, var(--color-paper) 55%, #e7d4af 100%) fixed;
+  /* faint near-vertical brushed striation over the base radial (prototype backdrop) */
+  background:
+    repeating-linear-gradient(93deg, rgba(120,84,40,0.022) 0 2px, rgba(255,255,255,0.016) 2px 5px),
+    radial-gradient(120% 90% at 12% -10%, #fbf2df 0%, var(--color-paper) 55%, #e7d4af 100%) fixed;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
-[data-mode="sectional"] body {
-  background: radial-gradient(120% 90% at 12% -10%, #2c1f12 0%, var(--color-paper) 60%, #160f07 100%) fixed;
+[data-mode="sectional"] body,
+[data-mode="night"] body {
+  background:
+    repeating-linear-gradient(93deg, rgba(120,84,40,0.022) 0 2px, rgba(255,255,255,0.016) 2px 5px),
+    radial-gradient(120% 90% at 12% -10%, #2c1f12 0%, var(--color-paper) 60%, #160f07 100%) fixed;
 }
 
 ::selection { background: color-mix(in srgb, var(--color-copper) 30%, var(--color-paper)); color: var(--color-ink); }
 
-/* Numbers / readouts — EB Garamond, tabular lining figures (NO mono numerals). */
+/* Numbers / readouts — EB Garamond with tabular LINING figures (NOT mono). */
 .tnum { font-family: var(--font-body); font-variant-numeric: tabular-nums lining-nums; }
 
-/* Display headings / HUD titles — EB Garamond editorial caps. */
-.display { font-family: var(--font-display); font-weight: 700; text-transform: uppercase; letter-spacing: 0.02em; line-height: 1.08; color: var(--color-ink); }
-.wordmark { font-family: var(--font-display); font-weight: 800; text-transform: uppercase; letter-spacing: 0.02em; line-height: 1.0; }
+/* Display headings / HUD titles — EB Garamond, MIXED CASE (no uppercase). */
+.display  { font-family: var(--font-display); font-weight: 700; letter-spacing: -0.01em; line-height: 1.05; color: var(--color-ink); }
+.wordmark { font-family: var(--font-display); font-weight: 800; letter-spacing: -0.01em; line-height: 1.0; }
 
-/* Eyebrow — IBM Plex Sans caps label. */
+/* Eyebrow — IBM Plex Sans caps label (font-mono now resolves to the sans). */
 .eyebrow { font-family: var(--font-mono); font-size: 10px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: color-mix(in srgb, var(--color-inksoft) 72%, var(--color-paper)); }
 
-/* Card = beveled tycoon panel (every panel in the app reskins through this). */
+/* Card = brushed-metal panel: hairline + outer metal ring + top bevel glint +
+   soft shadow. Var-based, so it works in both modes with no override. */
 .card {
   background: var(--color-panel);
   border: 1px solid var(--color-line);
-  border-radius: 14px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), 0 2px 0 var(--color-line2), 0 10px 22px rgba(40, 25, 8, 0.16);
+  border-radius: 15px;
+  box-shadow: inset 0 1px 0 var(--bevel), 0 0 0 1px var(--metal), 0 16px 34px var(--shadow);
 }
-[data-mode="sectional"] .card {
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 2px 0 var(--color-line2), 0 10px 22px rgba(0, 0, 0, 0.45);
-}
+/* (no separate [data-mode="sectional"] .card override needed — vars handle it) */
 
-/* Inputs — recessed inset well, mono figures. */
+/* Inputs — recessed inset well, EB Garamond lining figures. */
 input[type="number"],
 input[type="text"],
 textarea {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
+  font-variant-numeric: tabular-nums lining-nums;
   background: var(--color-panel2);
   border: 1px solid var(--color-line2);
   border-radius: 10px;
@@ -114,7 +134,7 @@ textarea {
 input:focus,
 textarea:focus { outline: 2px solid color-mix(in srgb, var(--color-copper) 60%, transparent); outline-offset: 1px; }
 
-/* Range slider — inset track, metal-coin thumb. */
+/* Range slider — inset track, metal-coin thumb (unchanged; already on-brand). */
 input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
@@ -135,30 +155,33 @@ input[type="range"]::-webkit-slider-thumb {
   cursor: pointer;
 }
 
-/* Lucide (the mode-toggle icon) — friendlier round stroke. */
-.lucide { stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.75px; }
+/* Lucide (mode-toggle icon) — hairline-geometric per the editorial brief. */
+.lucide { stroke-linecap: square; stroke-linejoin: miter; stroke-width: 1.25px; }
 
-/* ===== Tap House component utilities ===== */
-.tt-panel { background: var(--color-panel); border: 1px solid var(--color-line); border-radius: 14px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.5), 0 2px 0 var(--color-line2), 0 10px 22px rgba(40,25,8,0.16); }
+/* ===== Component utilities (names preserved; reskinned) ===== */
+.tt-panel { background: var(--color-panel); border: 1px solid var(--color-line); border-radius: 15px; box-shadow: inset 0 1px 0 var(--bevel), 0 0 0 1px var(--metal), 0 16px 34px var(--shadow); }
 .tt-inset { background: var(--color-panel2); border: 1px solid var(--color-line2); border-radius: 10px; box-shadow: inset 0 2px 4px rgba(60,40,15,0.18); }
 
+/* Buttons — flatter than the tycoon gloss; IBM Plex caps label. Keep a quiet
+   gradient for weight but drop the heavy triple-bevel. */
 .tt-btn {
   font-family: var(--font-mono);
   text-transform: uppercase;
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: 0.05em;
+  font-size: 11px;
   padding: 10px 18px;
   color: #3a2206;
   background: linear-gradient(var(--color-gold), var(--color-copper));
   border: 1px solid var(--color-copperdeep);
-  border-radius: 11px;
+  border-radius: 10px;
   cursor: pointer;
-  box-shadow: inset 0 1px 0 rgba(255,235,180,0.7), 0 2px 0 var(--color-copperdeep), 0 6px 14px rgba(150,80,10,0.30);
-  transition: transform 0.06s ease, box-shadow 0.06s ease, opacity 0.12s ease;
+  box-shadow: inset 0 1px 0 var(--bevel), 0 1px 2px var(--shadow);
+  transition: opacity 0.12s ease, transform 0.06s ease;
 }
-.tt-btn:hover { opacity: 0.96; }
-.tt-btn:active { transform: translateY(1px); box-shadow: inset 0 1px 0 rgba(255,235,180,0.7), 0 1px 0 var(--color-copperdeep); }
-.tt-btn--go { background: linear-gradient(#7fb343, var(--color-hop)); border-color: #4c7820; color: #142a06; box-shadow: inset 0 1px 0 #d6f3a3, 0 2px 0 #3f6618, 0 6px 14px rgba(70,120,20,0.32); }
+.tt-btn:hover  { opacity: 0.95; }
+.tt-btn:active { transform: translateY(1px); opacity: 0.9; }
+.tt-btn--go { background: linear-gradient(#7fb343, var(--color-hop)); border-color: #4c7820; color: #142a06; box-shadow: inset 0 1px 0 rgba(214,243,163,0.6), 0 1px 2px var(--shadow); }
 
 .tt-coin {
   display: grid;
@@ -169,28 +192,30 @@ input[type="range"]::-webkit-slider-thumb {
   box-shadow: inset 0 1px 2px #fff4d8, 0 2px 4px rgba(120,80,20,0.25);
 }
 
-.tt-tab { display: flex; align-items: center; gap: 9px; padding: 9px 11px; border-radius: 10px; border: 1px solid transparent; font-family: var(--font-body); font-weight: 700; font-size: 13px; color: var(--color-inksoft); cursor: pointer; }
-.tt-tab.is-active { background: var(--color-panel); border-color: var(--color-line); color: var(--color-copperdeep); box-shadow: inset 0 1px 0 rgba(255,255,255,0.6), 0 1px 0 var(--color-line2); }
+/* Tabs — IBM Plex caps pill (the DECIDE / REVIEW / tab-bar look). */
+.tt-tab { display: flex; align-items: center; gap: 9px; padding: 8px 13px; border-radius: 999px; border: 1px solid transparent; font-family: var(--font-mono); font-weight: 600; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-inksoft); cursor: pointer; }
+.tt-tab.is-active { background: var(--color-panel); border-color: var(--color-line); color: var(--color-copperdeep); box-shadow: inset 0 1px 0 var(--bevel), 0 0 0 1px var(--metal); }
 
 .tt-bar { height: 9px; border-radius: 6px; background: var(--color-panel2); overflow: hidden; box-shadow: inset 0 1px 2px rgba(60,40,15,0.25); }
 .tt-bar > span { display: block; height: 100%; background: linear-gradient(90deg, var(--color-gold), var(--color-copper)); }
-.tt-bar.is-craft > span { background: linear-gradient(90deg, #8fbf4a, var(--color-hop)); }
+.tt-bar.is-craft > span  { background: linear-gradient(90deg, #8fbf4a, var(--color-hop)); }
 .tt-bar.is-nonalc > span { background: linear-gradient(90deg, #34c2c9, var(--color-aero)); }
 
-.tt-chip { font-family: var(--font-mono); font-size: 11px; padding: 3px 9px; border-radius: 999px; background: var(--color-panel2); border: 1px solid var(--color-line2); color: var(--color-inksoft); }
-.tt-label { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.13em; text-transform: uppercase; color: color-mix(in srgb, var(--color-inksoft) 72%, var(--color-paper)); }
-.tt-display { font-family: var(--font-display); font-weight: 700; text-transform: uppercase; line-height: 1.08; letter-spacing: 0.02em; }
-.tt-num { font-family: var(--font-body); font-weight: 600; font-variant-numeric: tabular-nums lining-nums; }
+.tt-chip  { font-family: var(--font-mono); font-size: 11px; padding: 3px 9px; border-radius: 999px; background: var(--color-panel2); border: 1px solid var(--color-line2); color: var(--color-inksoft); }
+.tt-label { font-family: var(--font-mono); font-size: 10px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: color-mix(in srgb, var(--color-inksoft) 72%, var(--color-paper)); }
+.tt-display { font-family: var(--font-display); font-weight: 700; line-height: 1.1; letter-spacing: -0.01em; }
+.tt-num   { font-family: var(--font-body); font-weight: 600; font-variant-numeric: tabular-nums lining-nums; }
 
 /* Entry fade (respects reduced-motion). */
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-.rise { animation: rise 0.4s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+.rise { animation: rise 0.48s cubic-bezier(0.25, 0.1, 0.25, 1) both; }
 @media (prefers-reduced-motion: reduce) { .rise { animation: none; } }
 
-/* Trade-lane flow — marching dashes in the direction beer moves. */
+/* ===== App-specific additions (beyond the handoff canonical) ===== */
+/* Trade-lane flow — marching dashes in the direction beer moves (CityView). */
 @keyframes dwflow { to { stroke-dashoffset: -16; } }
 .dwflow { animation: dwflow 0.9s linear infinite; }
-/* Drawer slide-in (distribution). */
+/* Drawer slide-in (distribution / scouting). */
 @keyframes dwslide { from { transform: translateX(100%); } to { transform: translateX(0); } }
-.dwslide { animation: dwslide 0.26s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+.dwslide { animation: dwslide 0.26s cubic-bezier(0.25, 0.1, 0.25, 1) both; }
 @media (prefers-reduced-motion: reduce) { .dwflow, .dwslide { animation: none; } }

@@ -140,28 +140,22 @@ export function Play({
   };
 
   const nav: { id: Dest; label: string }[] = [
-    { id: "review", label: "Review" },
     { id: "decide", label: view.complete ? "Season" : "Decide" },
-    { id: "map", label: "Map" },
+    { id: "review", label: "Review" },
+    { id: "map", label: cityEnabled ? "City & Globe" : "Map" },
   ];
 
-  const navBtn = (n: { id: Dest; label: string }, vertical: boolean) => {
-    const active = dest === n.id;
-    return (
-      <button
-        key={n.id}
-        onClick={() => setDest(n.id)}
-        className={`flex items-center justify-center gap-2 rounded-[11px] border transition-colors ${vertical ? "flex-col px-1 py-2.5" : "flex-1 px-3 py-2"}`}
-        style={{ borderColor: active ? "var(--color-line)" : "transparent", background: active ? "var(--color-panel)" : "transparent", color: active ? "var(--color-copperdeep)" : "var(--color-inksoft)", boxShadow: active ? "inset 0 1px 0 rgba(255,255,255,.6),0 1px 0 var(--color-line2)" : undefined }}
-      >
-        <svg viewBox="0 0 24 24" width={vertical ? 21 : 18} height={vertical ? 21 : 18} fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">{NAV_ICON[n.id]}</svg>
-        <span className={`font-mono uppercase tracking-[0.04em] ${vertical ? "text-[0.5rem]" : "text-[0.62rem]"} font-bold`}>{n.label}</span>
-      </button>
-    );
-  };
+  // Design: three caps pill tabs directly below the HUD (Decide · Review · City & Globe).
+  // .tt-tab / .is-active carry the exact editorial pill chrome.
+  const navPill = (n: { id: Dest; label: string }) => (
+    <button key={n.id} onClick={() => setDest(n.id)} className={`tt-tab flex-none ${dest === n.id ? "is-active" : ""}`}>
+      <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">{NAV_ICON[n.id]}</svg>
+      {n.label}
+    </button>
+  );
 
   return (
-    <div className="mx-auto max-w-[1720px] px-3 py-4 pb-24 sm:px-5 lg:pb-4">
+    <div className="mx-auto max-w-[1720px] px-3 py-4 pb-10 sm:px-5">
       {detailSnapshot && (
         <FirmDetail firm={detailSnapshot} view={view} infoActive={infoActive} poaches={poaches} onPoach={queuePoach} onClose={() => setDetailFirm(null)} />
       )}
@@ -196,7 +190,7 @@ export function Play({
         </div>
         <div className="flex gap-5 sm:gap-6">
           <Stat label="Cash" value={fmt.money(view.own.cash)} accent={view.own.cash < 300 ? "brick" : "ink"} />
-          <Stat label="Tanks" value={fmt.int(view.own.cap)} />
+          <Stat label="Capacity" value={fmt.int(view.own.cap)} sub="units/rd" />
           {view.ownResult && (
             <span className="hidden sm:block">
               <Stat label="Net income" value={fmt.signed(view.ownResult.pnl.net_income)} accent={view.ownResult.pnl.net_income < 0 ? "brick" : "ink"} />
@@ -214,14 +208,13 @@ export function Play({
         </div>
       )}
 
-      <div className="flex gap-4">
-        {/* desktop nav rail */}
-        <nav className="sticky top-4 hidden h-max w-[78px] flex-none flex-col gap-1.5 rounded-[14px] border border-line2 bg-panel/50 p-2 lg:flex">
-          {nav.map((n) => navBtn(n, true))}
-        </nav>
+      {/* tab row — three pills directly below the HUD (design: Decide · Review · City & Globe) */}
+      <nav className="sticky top-0 z-20 -mx-3 mb-4 flex gap-1.5 overflow-x-auto border-b border-line2 bg-paper/85 px-3 py-2 backdrop-blur sm:-mx-5 sm:px-5">
+        {nav.map((n) => navPill(n))}
+      </nav>
 
-        {/* destination */}
-        <main className="min-w-0 flex-1">
+      {/* destination */}
+      <main className="min-w-0">
           {dest === "map" && (cityEnabled
             ? <CityView view={view} actions={cityActions} setActions={setCityActions} onInspect={setDetailFirm} extraBuilds={decision?.build_facilities ?? []} />
             : <MarketMap view={view} onInspect={setDetailFirm} />)}
@@ -292,7 +285,7 @@ export function Play({
           {dest === "review" && (
             <div className="rounded-[14px] border border-line2 bg-panel/40">
               <div className="sticky top-0 z-[5] flex flex-wrap items-center gap-2.5 rounded-t-[14px] border-b border-line bg-panel px-4 py-2.5">
-                <span className="display text-base font-extrabold uppercase text-ink">Review</span>
+                <span className="display text-lg font-bold text-ink">Review</span>
                 <div className="inline-flex gap-0.5 rounded-[9px] border border-line2 bg-panel2 p-0.5">
                   {([["dispatch", "Dispatch"], ["trends", "Trends"], ["field", "Field & Intel"]] as [RTab, string][]).map(([id, label]) => (
                     <button key={id} disabled={(id !== "dispatch") && !hasHistory} onClick={() => setRtab(id)} className="rounded-[7px] px-3 py-1.5 font-mono text-[0.62rem] uppercase tracking-wide transition-colors disabled:opacity-30" style={{ background: rtab === id ? "var(--color-panel)" : "transparent", color: rtab === id ? "var(--color-copperdeep)" : "var(--color-inksoft)", fontWeight: rtab === id ? 700 : 500, boxShadow: rtab === id ? "inset 0 1px 0 rgba(255,255,255,.6),0 1px 0 var(--color-line2)" : undefined }}>{label}</button>
@@ -329,12 +322,6 @@ export function Play({
             </div>
           )}
         </main>
-      </div>
-
-      {/* mobile bottom nav */}
-      <nav className="fixed inset-x-0 bottom-0 z-30 flex gap-1 border-t border-line2 bg-panel/95 px-3 py-2 backdrop-blur lg:hidden" style={{ paddingBottom: "max(0.5rem, env(safe-area-inset-bottom))" }}>
-        {nav.map((n) => navBtn(n, false))}
-      </nav>
     </div>
   );
 }

@@ -4,7 +4,7 @@ import { MP_ENABLED } from "../game/multiplayer.js";
  *  server is reachable (local dev / hosted), gated on the public static build. */
 export function Lobby({ onPick }: { onPick: (s: "solo" | "join" | "instructor" | "player") => void }) {
   const choices: { id: "solo" | "join" | "instructor" | "player"; title: string; blurb: string }[] = [
-    { id: "solo", title: "Play solo", blurb: "Practice against 7 adaptive AI rivals. No sign-in." },
+    { id: "solo", title: "Play solo", blurb: "Practice a full season against seven rival breweries." },
     ...(MP_ENABLED
       ? ([
           { id: "join", title: "Join a game →", blurb: "Enter a 6-character code from your instructor." },
@@ -34,8 +34,8 @@ export function Lobby({ onPick }: { onPick: (s: "solo" | "join" | "instructor" |
         </div>
         <p className="mt-6 max-w-xl text-[0.82rem] leading-relaxed text-inksoft">
           {MP_ENABLED
-            ? "Solo play runs entirely in your browser — no sign-in. To play with a class, join a live game with a code from your instructor, or set up your own session."
-            : "Solo play runs entirely in your browser — no sign-in, no setup."}
+            ? "Solo play needs no sign-in. To play with a class, join a live game with a code from your instructor, or set up your own session."
+            : "Jump straight in — solo play needs no sign-in or setup."}
         </p>
       </div>
     </div>

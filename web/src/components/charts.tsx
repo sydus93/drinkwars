@@ -1,5 +1,6 @@
 /** Minimal dependency-free SVG charts, styled to the palette. */
 import type { ReactNode } from "react";
+import { MONEY_DISPLAY } from "../labels.js";
 
 const W = 320;
 const H = 110;
@@ -39,8 +40,8 @@ export function LineChart({ series, formatY = (n: number) => n.toFixed(0), zeroB
           </g>
         );
       })}
-      <text x={PAD} y={11} fontSize="9" fill="var(--color-inksoft)" fontFamily="var(--font-mono)">{formatY(max)}</text>
-      <text x={PAD} y={H - 2} fontSize="9" fill="var(--color-inksoft)" fontFamily="var(--font-mono)">{formatY(min)}</text>
+      <text x={PAD} y={11} fontSize="9" fill="var(--color-inksoft)" fontFamily="var(--font-body)" style={{ fontVariantNumeric: "tabular-nums lining-nums" }}>{formatY(max)}</text>
+      <text x={PAD} y={H - 2} fontSize="9" fill="var(--color-inksoft)" fontFamily="var(--font-body)" style={{ fontVariantNumeric: "tabular-nums lining-nums" }}>{formatY(min)}</text>
     </svg>
   );
 }
@@ -126,7 +127,8 @@ export function CompareBar({ label, you, ref_, max, fmt }: { label: string; you:
 // Hand-drawn SVG, direct-labeled, palette-themed. Fed by real round results.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const moneyK = (n: number): string => {
+const moneyK = (raw: number): string => {
+  const n = raw * MONEY_DISPLAY; // charts receive engine-native money; show at the app's display scale
   const a = Math.abs(n);
   return (n < 0 ? "−$" : "$") + (a >= 1000 ? (a / 1000).toFixed(a >= 10000 ? 0 : 1) + "k" : `${Math.round(a)}`);
 };
@@ -134,7 +136,7 @@ const moneyK = (n: number): string => {
 type TxtProps = { x: number; y: number; children: ReactNode; fill?: string; size?: number; weight?: number; anchor?: "start" | "middle" | "end"; italic?: boolean; tab?: boolean };
 function Txt({ x, y, children, fill = "var(--color-ink)", size = 10, weight = 500, anchor = "start", italic = false, tab = false }: TxtProps) {
   return (
-    <text x={x} y={y} fill={fill} fontSize={size} fontWeight={weight} textAnchor={anchor} fontStyle={italic ? "italic" : undefined} fontFamily="'IBM Plex Sans', sans-serif" style={tab ? { fontVariantNumeric: "tabular-nums lining-nums" } : undefined}>{children}</text>
+    <text x={x} y={y} fill={fill} fontSize={size} fontWeight={weight} textAnchor={anchor} fontStyle={italic ? "italic" : undefined} fontFamily={tab ? "var(--font-body)" : "'IBM Plex Sans', sans-serif"} style={tab ? { fontVariantNumeric: "tabular-nums lining-nums" } : undefined}>{children}</text>
   );
 }
 
@@ -185,7 +187,7 @@ export function RadialScore({ you, field }: { you: Score; field?: Score | null }
   const ringPath = (g: number) => axes.map((_, i) => { const q = pt(i, g); return `${i ? "L" : "M"}${q[0].toFixed(1)} ${q[1].toFixed(1)}`; }).join(" ") + " Z";
   const polyPath = (vals: Score) => axes.map(([k], i) => { const q = pt(i, Math.max(0, Math.min(1, vals[k]))); return `${i ? "L" : "M"}${q[0].toFixed(1)} ${q[1].toFixed(1)}`; }).join(" ") + " Z";
   return (
-    <svg width={250} height={165} viewBox="-64 -4 318 210" style={{ overflow: "visible", maxWidth: "100%" }}>
+    <svg width={250} height={165} viewBox="-64 -4 318 210" style={{ maxWidth: "100%" }}>
       {[0.25, 0.5, 0.75, 1].map((g) => <path key={g} d={ringPath(g)} fill="none" stroke="var(--color-line2)" strokeWidth={0.75} opacity={0.55} />)}
       {axes.map((_, i) => { const q = pt(i, 1); return <line key={i} x1={c} y1={c} x2={q[0]} y2={q[1]} stroke="var(--color-line2)" strokeWidth={0.75} opacity={0.55} />; })}
       {field && <path d={polyPath(field)} fill="none" stroke="var(--color-inksoft)" strokeWidth={1.5} strokeDasharray="3 2" strokeLinejoin="round" />}

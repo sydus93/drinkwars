@@ -5,6 +5,13 @@
  *
  * Values are deliberate first guesses; §16 pathologies are expected to drive
  * tuning. Beverage labels are comments only — engine keys stay generic.
+ *
+ * NOTE ON MONEY SCALE: these are the engine's native ("toy") units and are LOAD-
+ * BEARING — the balance harness, bot heuristics (bots/*, harness/archetypes.ts) and
+ * unit tests bake in absolute thresholds at this scale, so rescaling the config here
+ * is NOT dynamics-neutral. The player-facing realism ("$3,000 research", not "$30")
+ * is applied as a pure DISPLAY multiplier in the web app (see MONEY_DISPLAY in
+ * web/src/labels.ts) — the engine math is untouched.
  */
 import type { Config } from "../types.js";
 import { defaultModules } from "./modules.js";

@@ -69,10 +69,20 @@ export class GameOrchestrator {
     private opts: { botFillEmptySlots?: boolean } = {},
   ) {}
 
-  /** Fresh id — a UUID, valid for both the in-memory store and Postgres uuid columns
-   *  (global crypto works in Node and Deno, so this survives the Edge Function bundle). */
+  /** Fresh id — a UUID, valid for both the in-memory store and Postgres uuid columns.
+   *  Prefers crypto.randomUUID (Node, Deno, Edge, https/localhost browsers), but that
+   *  API is gated to SECURE contexts — undefined when the web app is opened over plain
+   *  http:// on a LAN IP (mobile testing). getRandomValues is NOT gated, so fall back to
+   *  a hand-rolled v4 UUID; Math.random is the last resort if there's no Web Crypto. */
   private id(): string {
-    return crypto.randomUUID();
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+    const b = new Uint8Array(16);
+    if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") crypto.getRandomValues(b);
+    else for (let i = 0; i < 16; i++) b[i] = Math.floor(Math.random() * 256);
+    b[6] = (b[6] & 0x0f) | 0x40; // version 4
+    b[8] = (b[8] & 0x3f) | 0x80; // variant 10xx
+    const h = Array.from(b, (x) => x.toString(16).padStart(2, "0"));
+    return `${h[0]}${h[1]}${h[2]}${h[3]}-${h[4]}${h[5]}-${h[6]}${h[7]}-${h[8]}${h[9]}-${h[10]}${h[11]}${h[12]}${h[13]}${h[14]}${h[15]}`;
   }
   private async requireGame(gameId: string): Promise<GameRecord> {
     const g = await this.store.getGame(gameId);

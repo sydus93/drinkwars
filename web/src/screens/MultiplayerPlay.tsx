@@ -81,7 +81,7 @@ export function MultiplayerPlay({ client, onExit }: { client: StudentClient; onE
       seatRole={client.role}
       banner={banner}
       submitLabel={submitLabel}
-      footerNote="Your classmates (and adaptive NPCs in any open slots) brew at the same time. The instructor resolves the round."
+      footerNote="Your classmates brew at the same time; the instructor resolves the round."
       onExit={onExit}
     />
   );

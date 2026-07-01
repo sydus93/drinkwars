@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import type { Facility, FirmDecision, PrPlayType, SegmentId } from "drinkwars-engine";
 import type { GameView } from "../game/controller.js";
 import { mergeDecision, type CityActions } from "../game/cityActions.js";
-import { SEG_LABEL, SEG_TAG, STOCK_LABEL, fmt } from "../labels.js";
+import { SEG_LABEL, SEG_TAG, STOCK_LABEL, fmt, toDisplayMoney, toEngineMoney } from "../labels.js";
 import { Button, Card, Eyebrow, Row, Tag } from "./ui.js";
 import { AllocationBar } from "./AllocationBar.js";
 import { CategoryCoin } from "./CategoryIcons.js";
@@ -312,7 +312,7 @@ export function DecisionForm({
   const twoCol = geoOn || anyModuleControls || coopOn;
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+    <div className="grid gap-4 pb-20 lg:grid-cols-[minmax(0,1fr)_320px] lg:pb-0">
       <EventModal event={prEvent} onChoose={onPrChoose} onClose={() => setPrModal(false)} />
       {detailEmp != null && (() => {
         const emp = employees.find((x) => x.id === detailEmp);
@@ -364,7 +364,7 @@ export function DecisionForm({
                     <span className="text-inksoft">$</span>
                     <input type="number" step="0.25" min="0" value={d.price[s]} onChange={(e) => setPrice(s, Math.max(0, +e.target.value))} className="w-24 text-right" />
                   </div>
-                  <div className={`tnum text-sm ${margin > 0 ? "text-hop" : "text-brick"}`}>{margin >= 0 ? "+" : ""}{margin.toFixed(2)} / unit</div>
+                  <div className={`tnum text-sm ${margin > 0 ? "text-hop" : "text-brick"}`}>{margin >= 0 ? "+$" : "−$"}{Math.abs(margin).toFixed(2)} / drink</div>
                 </div>
               );
             })}
@@ -379,7 +379,7 @@ export function DecisionForm({
               <label className="text-sm text-inksoft">Invest in tank capacity (builds with a one-round lag)</label>
               <div className="mt-1 flex items-center gap-2">
                 <span className="text-inksoft">$</span>
-                <input type="number" step="50" min="0" value={d.invest_cap} onChange={(e) => set({ invest_cap: Math.max(0, +e.target.value) })} className="w-28 text-right" />
+                <input type="number" step="5000" min="0" value={toDisplayMoney(d.invest_cap)} onChange={(e) => set({ invest_cap: Math.max(0, toEngineMoney(+e.target.value)) })} className="w-28 text-right" />
               </div>
               <div className="mt-1 text-[0.7rem] text-inksoft tnum">Current capacity: {fmt.int(view.own.cap)} units</div>
             </div>
@@ -462,7 +462,7 @@ export function DecisionForm({
                 <label className="text-sm font-semibold">{f.label}</label>
                 <div className="mt-1 flex items-center gap-2">
                   <span className="text-inksoft">$</span>
-                  <input type="number" step="50" min="0" value={d[f.key]} onChange={(e) => set({ [f.key]: Math.max(0, +e.target.value) } as Partial<FirmDecision>)} className="w-28 text-right" />
+                  <input type="number" step="5000" min="0" value={toDisplayMoney(d[f.key] as number)} onChange={(e) => set({ [f.key]: Math.max(0, toEngineMoney(+e.target.value)) } as Partial<FirmDecision>)} className="w-28 text-right" />
                 </div>
                 <div className="text-[0.66rem] leading-snug text-inksoft">{f.hint}</div>
               </div>
@@ -482,7 +482,7 @@ export function DecisionForm({
                   ) : (
                     <div className="mt-1 flex items-center gap-2">
                       <span className="text-inksoft">$</span>
-                      <input type="number" step="50" min="0" value={d.draw_convertible ?? 0} onChange={(e) => set({ draw_convertible: Math.max(0, +e.target.value) })} className="w-28 text-right" />
+                      <input type="number" step="5000" min="0" value={toDisplayMoney(d.draw_convertible ?? 0)} onChange={(e) => set({ draw_convertible: Math.max(0, toEngineMoney(+e.target.value)) })} className="w-28 text-right" />
                     </div>
                   )}
                   <div className="text-[0.66rem] leading-snug text-inksoft">{Math.round((fiCfg?.convertible.rate ?? 0.04) * 100)}%/round · repay in {fiCfg?.convertible.term ?? 4} rounds or it converts to equity.</div>
@@ -494,7 +494,7 @@ export function DecisionForm({
                   ) : (
                     <div className="mt-1 flex items-center gap-2">
                       <span className="text-inksoft">$</span>
-                      <input type="number" step="50" min="0" value={d.draw_rbf ?? 0} onChange={(e) => set({ draw_rbf: Math.max(0, +e.target.value) })} className="w-28 text-right" />
+                      <input type="number" step="5000" min="0" value={toDisplayMoney(d.draw_rbf ?? 0)} onChange={(e) => set({ draw_rbf: Math.max(0, toEngineMoney(+e.target.value)) })} className="w-28 text-right" />
                     </div>
                   )}
                   <div className="text-[0.66rem] leading-snug text-inksoft">{Math.round((fiCfg?.rbf.payment_rate ?? 0.07) * 100)}% of each round's sales until {(fiCfg?.rbf.multiple ?? 1.3).toFixed(1)}× is repaid.</div>
@@ -553,12 +553,12 @@ export function DecisionForm({
                         <span className="tnum w-9 text-right text-[0.66rem] text-inksoft">{condPct}%</span>
                       </div>
                       <div className="mt-1 flex items-center justify-between gap-2 text-[0.66rem] text-inksoft">
-                        <span>{online ? `+${fmt.int(liveCap)} tanks` : "online soon"} · {fmt.money(t?.fixed_cost ?? 0)}/round</span>
+                        <span>{online ? `+${fmt.int(liveCap)} units/rd` : "online soon"} · {fmt.money(t?.fixed_cost ?? 0)}/round</span>
                         {active && online && (
                           <label className="flex items-center gap-1">
                             <span>Upkeep $</span>
-                            <input type="number" min={0} value={fmaint[fac.id] || ""} onChange={(e) => setMaintain(fac.id, +e.target.value)} placeholder="0"
-                              className="tnum w-14 rounded border border-line bg-paper px-1 py-0.5 text-right text-[0.7rem]" />
+                            <input type="number" min={0} step="500" value={fmaint[fac.id] ? toDisplayMoney(fmaint[fac.id]) : ""} onChange={(e) => setMaintain(fac.id, toEngineMoney(+e.target.value))} placeholder="0"
+                              className="tnum w-16 rounded border border-line bg-paper px-1 py-0.5 text-right text-[0.7rem]" />
                           </label>
                         )}
                       </div>
@@ -601,7 +601,7 @@ export function DecisionForm({
                     <button key={t.id} type="button" onClick={() => addBuild(t.id)} disabled={cash < t.base_cost}
                       className="flex items-center gap-2 rounded-md border border-line p-2 text-left transition-colors hover:border-copper disabled:cursor-not-allowed disabled:opacity-40">
                       <span className="text-sm font-semibold text-ink">{t.label}</span>
-                      <span className="text-[0.64rem] text-inksoft">+{fmt.int(t.production_capacity ?? t.capacity_contribution ?? 0)} tanks{(t.retail_draw ?? 0) > 0 ? ` · +${fmt.int(t.retail_draw ?? 0)} retail` : ""} · {t.build_rounds}r · {fmt.money(t.fixed_cost)}/rd</span>
+                      <span className="text-[0.64rem] text-inksoft">+{fmt.int(t.production_capacity ?? t.capacity_contribution ?? 0)} units/rd{(t.retail_draw ?? 0) > 0 ? ` · +${fmt.int(t.retail_draw ?? 0)} retail` : ""} · {t.build_rounds}r · {fmt.money(t.fixed_cost)}/rd</span>
                       <span className="tnum ml-auto text-[0.72rem] text-copperdeep">{fmt.money(t.base_cost)}</span>
                     </button>
                   ))}
@@ -659,8 +659,8 @@ export function DecisionForm({
                       {!firingThis && (
                         <label className="mt-1 flex items-center justify-end gap-1 text-[0.64rem] text-inksoft">
                           <span>Raise to $</span>
-                          <input type="number" min={e.salary} value={eraises[e.id] ?? ""} onChange={(ev) => setRaise(e.id, +ev.target.value)} placeholder={String(e.salary)}
-                            className="tnum w-14 rounded border border-line bg-paper px-1 py-0.5 text-right text-[0.7rem]" />
+                          <input type="number" min={toDisplayMoney(e.salary)} step="500" value={eraises[e.id] != null ? toDisplayMoney(eraises[e.id]) : ""} onChange={(ev) => setRaise(e.id, toEngineMoney(+ev.target.value))} placeholder={String(Math.round(toDisplayMoney(e.salary)))}
+                            className="tnum w-16 rounded border border-line bg-paper px-1 py-0.5 text-right text-[0.7rem]" />
                         </label>
                       )}
                     </div>
@@ -952,7 +952,7 @@ export function DecisionForm({
                         <span className="text-[0.78rem] text-inksoft">Your offer</span>
                         <span className="flex items-center gap-1">
                           <span className="text-inksoft">$</span>
-                          <input type="number" step="50" min="0" value={bid.price} onChange={(e) => set({ acquisition_bid: { ...bid, price: Math.max(0, +e.target.value) } })} className="w-24 text-right" />
+                          <input type="number" step="5000" min="0" value={toDisplayMoney(bid.price)} onChange={(e) => set({ acquisition_bid: { ...bid, price: Math.max(0, toEngineMoney(+e.target.value)) } })} className="w-24 text-right" />
                         </span>
                         <Tag tone={targetable ? "hop" : "ink"}>{targetable ? "Distressed · acquirable" : "Not in distress"}</Tag>
                       </div>
@@ -1061,15 +1061,16 @@ export function DecisionForm({
       {/* Commit panel — the design's persistent commit dial: big projected-cash readout,
           live spend breakdown, overcommit guard, and the brew action. Pinned on desktop. */}
       <div className="grid content-start gap-3 lg:sticky lg:top-4 lg:self-start">
-        <div className="overflow-hidden rounded-[14px] border border-line2 bg-panel" style={{ boxShadow: "inset 0 1px 0 var(--color-line), 0 10px 24px rgba(40,25,8,.18)" }}>
-          <div className="flex items-center justify-between border-b border-line2 px-4 py-2" style={{ background: "color-mix(in srgb, var(--color-copper) 10%, var(--color-panel))" }}>
-            <span className="font-mono text-[0.6rem] font-bold uppercase tracking-[0.14em] text-copperdeep">Commit the round</span>
-            <span className="font-mono text-[0.55rem] uppercase tracking-wide text-inksoft">Round {Math.min(view.round + 1, view.nRounds)}</span>
+        {/* Dark-walnut commit rail (dark in both modes; metallic top glint) — the design's sticky Commit panel. */}
+        <div className="overflow-hidden rounded-[15px]" style={{ background: "var(--tt-wood)", border: "1px solid rgba(0,0,0,.4)", boxShadow: "inset 0 1px 0 rgba(255,240,205,.16), 0 0 0 1px var(--metal), 0 18px 36px rgba(0,0,0,.4)" }}>
+          <div className="flex items-center justify-between px-4 py-2.5" style={{ borderBottom: "1px solid rgba(0,0,0,.32)", background: "linear-gradient(rgba(255,220,150,.10), rgba(255,220,150,0))" }}>
+            <span className="font-mono text-[0.6rem] font-bold uppercase tracking-[0.14em]" style={{ color: "#f0b94e" }}>Commit the round</span>
+            <span className="font-mono text-[0.55rem] uppercase tracking-wide" style={{ color: "#bda079" }}>Round {Math.min(view.round + 1, view.nRounds)}</span>
           </div>
           <div className="px-4 py-3">
-            <div className="font-mono text-[0.58rem] uppercase tracking-[0.1em] text-inksoft">Projected cash · pre-sales</div>
-            <div className="tnum text-[2.1rem] font-bold leading-none" style={{ color: overcommit ? "var(--color-brick)" : "var(--color-ink)" }}>{fmt.money(projectedCash)}</div>
-            <div className="mt-3 grid gap-1 border-t border-line pt-2.5">
+            <div className="font-mono text-[0.58rem] uppercase tracking-[0.1em]" style={{ color: "#bda079" }}>Projected cash · pre-sales</div>
+            <div className="tnum text-[2.1rem] font-bold leading-none" style={{ color: overcommit ? "#e59178" : "#f4e6c8" }}>{fmt.money(projectedCash)}</div>
+            <div className="mt-3 grid gap-1 pt-2.5" style={{ borderTop: "1px solid rgba(255,240,205,.13)" }}>
               <CommitRow label="Cash on hand" value={fmt.money(cash)} />
               {invOn && brewSpend > 0 && <CommitRow label="Brewing" value={`−${fmt.money(brewSpend)}`} />}
               {investSpend + infoSpend > 0 && <CommitRow label="Investment & research" value={`−${fmt.money(investSpend + infoSpend)}`} />}
@@ -1078,23 +1079,34 @@ export function DecisionForm({
               {netFinancing !== 0 && <CommitRow label="Net financing" value={fmt.signed(netFinancing)} tone={netFinancing < 0 ? "brick" : "hop"} />}
               {lastCov != null && lastCov <= 900 && <CommitRow label="Interest coverage (last)" value={`${lastCov.toFixed(1)}×`} />}
             </div>
-            {overcommit && <div className="mt-3 rounded-lg border border-brick px-3 py-2 text-[0.72rem]" style={{ background: "color-mix(in srgb, var(--color-brick) 12%, var(--color-panel))", color: "var(--color-brick)" }}>Spending exceeds cash on hand — draw financing or trim a desk before brewing.</div>}
+            {overcommit && <div className="mt-3 rounded-lg px-3 py-2 text-[0.72rem]" style={{ background: "rgba(216,106,82,.16)", border: "1px solid rgba(216,106,82,.5)", color: "#eaa088" }}>Spending exceeds cash on hand — draw financing or trim a desk before brewing.</div>}
             <Button variant="go" onClick={() => onPlay(mergeDecision(view, d, cityActions, poaches))} disabled={busy} className="mt-3 w-full py-3 text-base">
               {busy ? "Working…" : submitLabel ?? `Brew & Resolve Round ${Math.min(view.round + 1, view.nRounds)}`}
             </Button>
-            <div className="mt-1.5 text-center text-[0.66rem] text-inksoft">{footerNote ?? "7 rival breweries (adaptive AI) brew at the same time."}</div>
+            <div className="mt-1.5 text-center text-[0.66rem]" style={{ color: "#a98a5f" }}>{footerNote ?? "Seven rival breweries brew at the same time."}</div>
           </div>
         </div>
+      </div>
+      {/* Mobile-only sticky Commit/Brew bar — always reachable while tuning desks (pr-16 clears the day/night toggle). */}
+      <div className="fixed inset-x-0 bottom-0 z-30 flex items-center gap-3 border-t border-line2 bg-panel/95 px-4 pr-16 py-2.5 backdrop-blur lg:hidden" style={{ paddingBottom: "max(0.6rem, env(safe-area-inset-bottom))" }}>
+        <div className="min-w-0">
+          <div className="font-mono text-[0.5rem] uppercase tracking-[0.1em] text-inksoft">Cash · pre-sales</div>
+          <div className="tnum text-lg font-bold leading-none" style={{ color: overcommit ? "var(--color-brick)" : "var(--color-ink)" }}>{fmt.money(projectedCash)}</div>
+        </div>
+        <button onClick={() => onPlay(mergeDecision(view, d, cityActions, poaches))} disabled={busy} className="tt-btn tt-btn--go ml-auto flex-none">
+          {busy ? "Working…" : submitLabel ?? `Brew round ${Math.min(view.round + 1, view.nRounds)} →`}
+        </button>
       </div>
     </div>
   );
 }
 
+// Rows inside the dark-walnut commit rail — fixed light-on-dark tones (mode-independent).
 function CommitRow({ label, value, tone }: { label: string; value: string; tone?: "hop" | "brick" }) {
   return (
     <div className="flex items-baseline justify-between text-[0.78rem]">
-      <span className="text-inksoft">{label}</span>
-      <span className="tnum font-semibold" style={{ color: tone === "hop" ? "var(--color-hop)" : tone === "brick" ? "var(--color-brick)" : "var(--color-ink)" }}>{value}</span>
+      <span style={{ color: "#bda079" }}>{label}</span>
+      <span className="tnum font-semibold" style={{ color: tone === "hop" ? "#9fce63" : tone === "brick" ? "#e59178" : "#f2e4c4" }}>{value}</span>
     </div>
   );
 }
