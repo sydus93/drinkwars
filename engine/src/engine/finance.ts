@@ -163,9 +163,14 @@ export function buildStatements(input: FinanceInputs): FinanceOutput {
     Math.max(0, ppeBegin + Math.max(0, input.invest.cap) - depreciation),
   );
 
-  // --- Endogenous cost of capital (§7.4) — leverage counts ALL debt-like balances ---
+  // --- Endogenous cost of capital (§7.4) — leverage counts ALL debt-like balances.
+  // Clamped at 10× (deep covenant-breach territory, > 3× the max_leverage cap): with
+  // equity near/below zero the raw ratio explodes toward debt/EPS ≈ 1e11, which used
+  // to price interest into the quadrillions for insolvent firms and distort every
+  // rival's within-round z-scores. A bank prices a broke borrower punitively, not
+  // astronomically — the firm still fails, with sane numbers. ---
   const instrDebtNow = (conv?.principal ?? 0) + rbfPrin;
-  const leverage = (debtEff + instrDebtNow) / Math.max(equityAfter, EPS);
+  const leverage = Math.min(10, (debtEff + instrDebtNow) / Math.max(equityAfter, EPS));
   let spread =
     c.finance.base_spread +
     c.finance.spread_leverage_k * Math.max(0, leverage - c.finance.leverage_ref) -
@@ -224,13 +229,15 @@ export function buildStatements(input: FinanceInputs): FinanceOutput {
   const assets = cashNext + ppeNext + invEnd;
   const equity = paidNext + retainedNext;
 
-  // --- Invariants (§7.2) ---
-  if (Math.abs(assets - (debtTotal + equity)) > 1e-3) {
+  // --- Invariants (§7.2) — tolerance is RELATIVE at scale (double-precision ulp
+  // grows with magnitude; at $1e16 one ulp is ~4, so a fixed 1e-3 would false-fire
+  // on float roundoff, not real imbalance) ---
+  if (Math.abs(assets - (debtTotal + equity)) > Math.max(1e-3, 1e-9 * Math.abs(assets))) {
     throw new InvariantError(
       `Balance sheet does not balance for ${f.id}: assets=${assets.toFixed(4)} vs L+E=${(debtTotal + equity).toFixed(4)}`,
     );
   }
-  if (Math.abs(cashNext - cashBegin - deltaCash) > 1e-6) {
+  if (Math.abs(cashNext - cashBegin - deltaCash) > Math.max(1e-6, 1e-12 * Math.abs(cashNext))) {
     throw new InvariantError(`Cash flow does not reconcile for ${f.id}`);
   }
 

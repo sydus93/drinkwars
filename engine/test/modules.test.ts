@@ -48,8 +48,9 @@ test("all live modules on together: a full game runs and the §7.2 invariants ho
   for (const r of history) {
     for (const f of r.firm_results) {
       const bs = f.balance_sheet;
-      assert.ok(Math.abs(bs.assets - (bs.debt + bs.equity)) < 1e-3, `balance ${f.firm_id} r${f.round}`);
-      assert.ok(Math.abs(bs.assets - (bs.cash + bs.ppe + bs.inventory)) < 1e-3, `assets=cash+ppe+inv ${f.firm_id} r${f.round}`);
+      const tol = Math.max(1e-3, 1e-9 * Math.abs(bs.assets)); // relative at scale (float ulp grows with $)
+      assert.ok(Math.abs(bs.assets - (bs.debt + bs.equity)) < tol, `balance ${f.firm_id} r${f.round}`);
+      assert.ok(Math.abs(bs.assets - (bs.cash + bs.ppe + bs.inventory)) < tol, `assets=cash+ppe+inv ${f.firm_id} r${f.round}`);
     }
     rounds++;
   }
@@ -62,10 +63,11 @@ test("facilities (MOD-B11): a build capitalizes into PP&E, adds capacity, and ke
   const builderId = w.firms[0].id;
   const otherId = w.firms[1].id;
 
-  // Round 0: the builder breaks ground on a production brewery (online next round);
+  // Round 0: the builder breaks ground on a nano brewery (affordable from starting
+  // cash — the $750k production brewery is a debt-funded mid-game build now);
   // an idle peer is the capitalization control.
   const decs0 = w.firms.map((f) =>
-    mkDecision(f.id, w, f.id === builderId ? { build_facilities: [{ type: "brewery_large", name: "South Side" }] } : {}),
+    mkDecision(f.id, w, f.id === builderId ? { build_facilities: [{ type: "brewery_small", name: "South Side" }] } : {}),
   );
   const r0 = resolveRound(w, decs0, c);
   w = r0.world;
@@ -423,7 +425,7 @@ test("MOD-B04 R&D race: heavy R&D opens the frontier early and grants a first-mo
   assert.equal(world.segments.find((s) => s.id === "frontier")!.active, false, "frontier starts inactive (timed round 9)");
   let firstMover: string | null = null;
   for (let r = 0; r < 5; r++) {
-    const decs = world.firms.filter((f) => f.status === "active").map((f) => mkDecision(f.id, world, f.id === "firm_1" ? { invest_rnd: 450 } : {}));
+    const decs = world.firms.filter((f) => f.status === "active").map((f) => mkDecision(f.id, world, f.id === "firm_1" ? { invest_rnd: 180_000 } : {}));
     world = resolveRound(world, decs, c).world;
     if (world.frontier_first_mover) firstMover = world.frontier_first_mover.firm_id;
     if (world.segments.find((s) => s.id === "frontier")!.active) break;
@@ -538,7 +540,7 @@ test("MOD-A09 lobbying: spend pushes an initiative, a cleared threshold fires th
   const c = loadConfig(modulesOverride(["lobbying"]));
   const w = initGame(c);
   // A big one-shot push clears the quality-standards threshold this round.
-  const r = resolveRound(w, [mkDecision("firm_1", w, { lobby_spend: 300, lobby_initiative: "quality_standards" }), mkDecision("firm_2", w)], c);
+  const r = resolveRound(w, [mkDecision("firm_1", w, { lobby_spend: 120_000, lobby_initiative: "quality_standards" }), mkDecision("firm_2", w)], c);
   const init = r.world.lobbying_initiatives?.find((i) => i.id === "quality_standards");
   assert.ok(init?.fired, "the regulation fires once its threshold is cleared");
   // The fired regulation lands as a βq lift on its segments (the existing mod channel).
@@ -550,13 +552,13 @@ test("MOD-A09 lobbying: spend pushes an initiative, a cleared threshold fires th
   assert.ok(opexLob > noLob, "offensive lobbying costs the firm");
   // Counter-lobbying bleeds an initiative's progress back down.
   const w2 = initGame(c);
-  const push = resolveRound(w2, [mkDecision("firm_1", w2, { lobby_spend: 100, lobby_initiative: "craft_promotion" }), mkDecision("firm_2", w2)], c);
-  const after = resolveRound(push.world, [mkDecision("firm_1", push.world), mkDecision("firm_2", push.world, { lobby_spend: 200, lobby_counter: "craft_promotion" })], c);
+  const push = resolveRound(w2, [mkDecision("firm_1", w2, { lobby_spend: 40_000, lobby_initiative: "craft_promotion" }), mkDecision("firm_2", w2)], c);
+  const after = resolveRound(push.world, [mkDecision("firm_1", push.world), mkDecision("firm_2", push.world, { lobby_spend: 80_000, lobby_counter: "craft_promotion" })], c);
   const cp0 = push.world.lobbying_initiatives!.find((i) => i.id === "craft_promotion")!.progress;
   const cp1 = after.world.lobbying_initiatives!.find((i) => i.id === "craft_promotion")!.progress;
   assert.ok(cp1 < cp0, "a counter-lobby reduces the initiative's progress");
   // Off ⇒ a lobby action is inert.
-  const off = resolveRound(initGame(loadConfig()), [mkDecision("firm_1", w, { lobby_spend: 300, lobby_initiative: "quality_standards" }), mkDecision("firm_2", w)], loadConfig());
+  const off = resolveRound(initGame(loadConfig()), [mkDecision("firm_1", w, { lobby_spend: 120_000, lobby_initiative: "quality_standards" }), mkDecision("firm_2", w)], loadConfig());
   assert.equal(off.world.lobbying_initiatives, undefined, "no initiatives tracked when the module is off");
 });
 

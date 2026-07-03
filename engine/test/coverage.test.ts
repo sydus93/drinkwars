@@ -60,7 +60,13 @@ test("operator-to-investor: voluntary exit buys a stake at fair value (§8.4)", 
   // make firm_1 overproduce and fail the stake-affordability gate.
   const c = loadConfig({ modules: { inventory: { enabled: false } } } as never);
   const world = initGame(c);
-  const decisions = [decision("firm_1", world, { exit_action: { type: "voluntary", path: "invest", target_firm: "firm_2" } })];
+  // firm_2 must be a going concern (real price/presence) — a zero-filled dummy sells
+  // nothing, and 12× its first-round loss prices its fair value below zero, which
+  // correctly forecloses the stake purchase (§7.5). The test targets §8.4, not that.
+  const decisions = [
+    decision("firm_1", world, { exit_action: { type: "voluntary", path: "invest", target_firm: "firm_2" } }),
+    decision("firm_2", world),
+  ];
   const { world: next } = resolveRound(world, decisions, c);
   const f1 = next.firms.find((f) => f.id === "firm_1")!;
   const f2 = next.firms.find((f) => f.id === "firm_2")!;

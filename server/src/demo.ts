@@ -37,7 +37,7 @@ function decide(firm: Firm, activeSegs: SegmentId[], c: Config, idx: number): Fi
     buy_info: idx === 0, // team 1 buys market research each round
     agreement_actions: [],
     exit_action: null,
-    beliefs: { own_rank: 1 + (idx % 8), market_size: 1400, rival_move: "raise quality" },
+    beliefs: { own_rank: 1 + (idx % 8), market_size: 560_000, rival_move: "raise quality" },
     reflection: `Round play: hold ${activeSegs.join("+")}, markup ${markup.toFixed(2)}.`,
   };
 }

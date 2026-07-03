@@ -38,14 +38,14 @@ export const defaultModules: ModulesConfig = {
     enabled: false,
     decay: 0.1,
     goods: [
-      { id: "regional_marketing", benefit: "demand", threshold: 0, max_effect: 0.15, halfsat: 150 },
-      { id: "water_commons", benefit: "water_resilience", threshold: 100, max_effect: 0.4, halfsat: 200 },
-      { id: "quality_certification", benefit: "quality", threshold: 150, max_effect: 0.06, halfsat: 150 },
+      { id: "regional_marketing", benefit: "demand", threshold: 0, max_effect: 0.15, halfsat: 60_000 },
+      { id: "water_commons", benefit: "water_resilience", threshold: 40_000, max_effect: 0.4, halfsat: 80_000 },
+      { id: "quality_certification", benefit: "quality", threshold: 60_000, max_effect: 0.06, halfsat: 60_000 },
     ],
   },
   sustainability: {
     enabled: false,
-    gain: 0.6,
+    gain: 0.03, // sqrt conversion on $ invested (toy 0.6 ÷ √400)
     depreciation: 0.08,
     resilience_k: 0.4, // up to +40% mitigation on water shocks at full efficiency
     resilience_halfsat: 15,
@@ -56,7 +56,7 @@ export const defaultModules: ModulesConfig = {
     cooldown_rounds: 3,
     spike_magnitude: 7, // brand-equivalent; meaningful next to a ~10 starting brand
     spike_decay_rate: 0.4, // burns off in 1–2 rounds (vs ~0.18 brand depreciation)
-    cost: 90,
+    cost: 36_000, // a real festival activation / collab launch budget
     type_bonus: { festival: 1.0, collab: 1.15, viral: 1.3 },
     negative_pr_enabled: true,
     negative_pr_probability: 0.06,
@@ -64,7 +64,7 @@ export const defaultModules: ModulesConfig = {
     negative_pr_brand_damage: 9,
   },
   contingentContracts: { enabled: false, max_clauses_per_agreement: 2, suspend_rounds: 2, distress_rounds: 2 },
-  renegotiation: { enabled: false, call_cost: 40, exit_breach_fraction: 0.4 },
+  renegotiation: { enabled: false, call_cost: 16_000, exit_breach_fraction: 0.4 },
   asymmetricStarts: {
     enabled: false,
     incumbent_count: 2, // first N firms start as incumbents; the rest as entrants
@@ -87,17 +87,17 @@ export const defaultModules: ModulesConfig = {
     // so no new demand/cost plumbing is needed. Thresholds are sized so a regulation
     // wants ~3–4 rounds of sustained funding (net of decay) before it passes.
     initiatives: [
-      { id: "quality_standards", regulation: "quality_standards", label: "Quality standards", threshold: 180, segments: ["mass", "niche"], effect: 0.05 },
-      { id: "ad_restrictions", regulation: "ad_restrictions", label: "Advertising limits", threshold: 180, segments: ["mass", "niche"], effect: 0.05 },
-      { id: "craft_promotion", regulation: "craft_promotion", label: "Craft promotion", threshold: 160, segments: ["niche"], effect: 0.4 },
+      { id: "quality_standards", regulation: "quality_standards", label: "Quality standards", threshold: 72_000, segments: ["mass", "niche"], effect: 0.05 },
+      { id: "ad_restrictions", regulation: "ad_restrictions", label: "Advertising limits", threshold: 72_000, segments: ["mass", "niche"], effect: 0.05 },
+      { id: "craft_promotion", regulation: "craft_promotion", label: "Craft promotion", threshold: 64_000, segments: ["niche"], effect: 0.4 },
     ],
     duration: 3,
     decay: 0.1,
     counter_effectiveness: 1.0,
     scrutiny_base_prob: 0.25,
-    scrutiny_spend_halfsat: 120,
+    scrutiny_spend_halfsat: 48_000,
     scrutiny_tgov_k: 0.04,
-    scrutiny_fine: 200,
+    scrutiny_fine: 80_000,
   },
   // ---- Tier B — medium lift ----
   geography: {
@@ -105,11 +105,11 @@ export const defaultModules: ModulesConfig = {
     // Capacity is SPLIT across markets, not multiplied — entering a region trades
     // home presence for reach. Regions reshape tastes; brand carries at a discount.
     markets: [
-      { id: "home", label: "Home region", kind: "home", demand_mult: 1.0, beta_p_mult: 1.0, beta_q_mult: 1.0, beta_b_mult: 1.0, brand_transfer: 1.0, entry_cost: 0, distribution_cost_per_unit: 0, tariff_rate: 0, fx_volatility: 0, lots: SITE_LOTS, geo: [-105.3, 39.7], demand_growth: 0 },
-      { id: "heartland", label: "Heartland", kind: "domestic", demand_mult: 1.3, beta_p_mult: 1.3, beta_q_mult: 0.7, beta_b_mult: 0.8, brand_transfer: 0.7, entry_cost: 200, distribution_cost_per_unit: 0.4, tariff_rate: 0, fx_volatility: 0, lots: SITE_LOTS, geo: [-92.5, 41.6], demand_growth: 0.03 },
-      { id: "coastal", label: "Coastal cities", kind: "domestic", demand_mult: 0.75, beta_p_mult: 0.7, beta_q_mult: 1.3, beta_b_mult: 1.15, brand_transfer: 0.7, entry_cost: 300, distribution_cost_per_unit: 0.5, tariff_rate: 0, fx_volatility: 0, lots: SITE_LOTS, geo: [-74.0, 40.6], demand_growth: -0.02 },
-      { id: "export_eu", label: "European export", kind: "export", demand_mult: 0.9, beta_p_mult: 0.8, beta_q_mult: 1.2, beta_b_mult: 1.1, brand_transfer: 0.4, entry_cost: 400, distribution_cost_per_unit: 0.6, tariff_rate: 0.12, fx_volatility: 0.05, lots: SITE_LOTS, geo: [-0.1, 51.5], demand_growth: 0.04 },
-      { id: "export_asia", label: "Asia-Pacific export", kind: "export", demand_mult: 1.2, beta_p_mult: 1.1, beta_q_mult: 1.0, beta_b_mult: 1.2, brand_transfer: 0.4, entry_cost: 450, distribution_cost_per_unit: 0.7, tariff_rate: 0.08, fx_volatility: 0.08, lots: SITE_LOTS, geo: [121.5, 31.2], demand_growth: 0.06 },
+      { id: "home", label: "Home region", kind: "home", population: 180_000, demand_mult: 1.0, beta_p_mult: 1.0, beta_q_mult: 1.0, beta_b_mult: 1.0, brand_transfer: 1.0, entry_cost: 0, distribution_cost_per_unit: 0, tariff_rate: 0, fx_volatility: 0, lots: SITE_LOTS, geo: [-105.3, 39.7], demand_growth: 0 },
+      { id: "heartland", label: "Heartland", kind: "domestic", population: 235_000, demand_mult: 1.3, beta_p_mult: 1.3, beta_q_mult: 0.7, beta_b_mult: 0.8, brand_transfer: 0.7, entry_cost: 80_000, distribution_cost_per_unit: 0.4, tariff_rate: 0, fx_volatility: 0, lots: SITE_LOTS, geo: [-92.5, 41.6], demand_growth: 0.03 },
+      { id: "coastal", label: "Coastal cities", kind: "domestic", population: 135_000, demand_mult: 0.75, beta_p_mult: 0.7, beta_q_mult: 1.3, beta_b_mult: 1.15, brand_transfer: 0.7, entry_cost: 120_000, distribution_cost_per_unit: 0.5, tariff_rate: 0, fx_volatility: 0, lots: SITE_LOTS, geo: [-74.0, 40.6], demand_growth: -0.02 },
+      { id: "export_eu", label: "European export", kind: "export", population: 160_000, demand_mult: 0.9, beta_p_mult: 0.8, beta_q_mult: 1.2, beta_b_mult: 1.1, brand_transfer: 0.4, entry_cost: 160_000, distribution_cost_per_unit: 0.6, tariff_rate: 0.12, fx_volatility: 0.05, lots: SITE_LOTS, geo: [-0.1, 51.5], demand_growth: 0.04 },
+      { id: "export_asia", label: "Asia-Pacific export", kind: "export", population: 215_000, demand_mult: 1.2, beta_p_mult: 1.1, beta_q_mult: 1.0, beta_b_mult: 1.2, brand_transfer: 0.4, entry_cost: 180_000, distribution_cost_per_unit: 0.7, tariff_rate: 0.08, fx_volatility: 0.08, lots: SITE_LOTS, geo: [121.5, 31.2], demand_growth: 0.06 },
     ],
     // Phase 3: per-unit, per-geo-distance shipping when you sell far from where you produce.
     // Domestic lanes are cheap (~0.05/u); home→Asia is steep (~0.9/u) — a reason to PRODUCE there.
@@ -119,22 +119,22 @@ export const defaultModules: ModulesConfig = {
   laborMarket: {
     enabled: false,
     roles: [
-      { id: "head_brewer", label: "Head brewer", bonus: { Q: 5 }, salary: 18, signing_bonus: 36 },
-      { id: "sales_director", label: "Sales director", bonus: { B: 4, T_emp: 1 }, salary: 16, signing_bonus: 32 },
-      { id: "ops_manager", label: "Operations manager", bonus: { process: 4 }, salary: 15, signing_bonus: 30 },
+      { id: "head_brewer", label: "Head brewer", bonus: { Q: 5 }, salary: 7_200, signing_bonus: 14_400 },
+      { id: "sales_director", label: "Sales director", bonus: { B: 4, T_emp: 1 }, salary: 6_400, signing_bonus: 12_800 },
+      { id: "ops_manager", label: "Operations manager", bonus: { process: 4 }, salary: 6_000, signing_bonus: 12_000 },
     ],
     departure_prob: 0.07,
     t_emp_mitigation: 0.6,
     t_emp_halfsat: 20,
   },
-  rndRace: { enabled: false, gain: 1.0, threshold: 60, first_mover_brand_bonus: 8, first_mover_duration: 3 },
+  rndRace: { enabled: false, gain: 0.05, threshold: 60, first_mover_brand_bonus: 8, first_mover_duration: 3 }, // gain: sqrt conversion on $ (toy 1.0 ÷ √400); threshold stays in progress units
   teamRoles: { enabled: false, noise: { cfo: 0.08, cmo: 0.1, coo: 0.05, ceo: 0.15 } },
   verticalIntegration: {
     enabled: false,
     max_assets: 2,
     assets: [
-      { id: "hop_supplier", label: "Hop & grain supplier", type: "upstream", cost: 280, unit_cost_reduction: 0.1, reg_relief: 0, integration_lag: 2, antitrust_units: 0 },
-      { id: "distributor", label: "Regional distributor", type: "downstream", cost: 380, unit_cost_reduction: 0, reg_relief: 0.5, integration_lag: 2, antitrust_units: 1 },
+      { id: "hop_supplier", label: "Hop & grain supplier", type: "upstream", cost: 112_000, unit_cost_reduction: 0.1, reg_relief: 0, integration_lag: 2, antitrust_units: 0 },
+      { id: "distributor", label: "Regional distributor", type: "downstream", cost: 152_000, unit_cost_reduction: 0, reg_relief: 0.5, integration_lag: 2, antitrust_units: 1 },
     ],
   },
   // Conquest guards (tuned on the all-modules sweep): a target must be deeply
@@ -143,7 +143,7 @@ export const defaultModules: ModulesConfig = {
   ma: { enabled: false, integration_discount: 0.6, min_price_fraction: 0.75, min_distress_rounds: 2, max_acquisitions: 2 },
   financialInstruments: {
     enabled: false,
-    convertible: { rate: 0.04, term: 4, max_equity_fraction: 1.0 },
+    convertible: { rate: 0.02, term: 4, max_equity_fraction: 1.0 }, // 8% APR note
     rbf: { payment_rate: 0.07, multiple: 1.3, max_revenue_fraction: 1.0 },
   },
   // MOD-B09 — fully implemented. OFF by default: enabling it reopens the strategic
@@ -164,13 +164,19 @@ export const defaultModules: ModulesConfig = {
     // production shocks); retail_draw = local demand/brand pull + catchment weight (foot traffic, the
     // thing crowding acts on). Production brewery = pure producer; bottle shop = pure retail; nano,
     // brewpub, taproom mix. So a Shanghai taproom no longer counts as a full Shanghai production base.
+    // Capacities/draws are drinks per quarter; base_cost = one-time build (capex,
+    // benchmark-calibrated: 7bbl install ~$150-225k, taproom buildout $100-200k,
+    // 30bbl production plant $700k-1M, automated canning line $100-250k);
+    // fixed_cost = $/qtr lease + utilities (industrial ~$10-12/sqft/yr, downtown
+    // retail $20-30 — district rent_mult layers on top); maintenance_effect =
+    // condition per $ maintained per round (full upkeep ≈ 4%/yr of capex).
     types: [
-      { id: "brewery_large", label: "Production brewery", production_capacity: 320, retail_draw: 0, base_cost: 520, fixed_cost: 30, build_rounds: 2, condition_decay: 0.05, maintenance_effect: 0.0025 },
-      { id: "canning_line", label: "Canning line", production_capacity: 160, retail_draw: 0, base_cost: 300, fixed_cost: 16, build_rounds: 1, condition_decay: 0.06, maintenance_effect: 0.004 },
-      { id: "brewery_small", label: "Nano brewery", production_capacity: 120, retail_draw: 10, base_cost: 220, fixed_cost: 14, build_rounds: 1, condition_decay: 0.06, maintenance_effect: 0.004 },
-      { id: "brewpub", label: "Brewpub", production_capacity: 90, retail_draw: 26, base_cost: 240, fixed_cost: 15, build_rounds: 1, condition_decay: 0.06, maintenance_effect: 0.0045 },
-      { id: "taproom", label: "Taproom", production_capacity: 28, retail_draw: 40, base_cost: 180, fixed_cost: 12, build_rounds: 1, condition_decay: 0.07, maintenance_effect: 0.005 },
-      { id: "bottle_shop", label: "Bottle shop", production_capacity: 0, retail_draw: 30, base_cost: 120, fixed_cost: 9, build_rounds: 0, condition_decay: 0.06, maintenance_effect: 0.005 },
+      { id: "brewery_large", label: "Production brewery", production_capacity: 128_000, retail_draw: 0, base_cost: 750_000, fixed_cost: 22_000, build_rounds: 2, condition_decay: 0.05, maintenance_effect: 0.00000625 },
+      { id: "canning_line", label: "Canning line", production_capacity: 64_000, retail_draw: 0, base_cost: 150_000, fixed_cost: 8_000, build_rounds: 1, condition_decay: 0.06, maintenance_effect: 0.00001 },
+      { id: "brewery_small", label: "Nano brewery", production_capacity: 48_000, retail_draw: 4_000, base_cost: 200_000, fixed_cost: 9_000, build_rounds: 1, condition_decay: 0.06, maintenance_effect: 0.00001 },
+      { id: "brewpub", label: "Brewpub", production_capacity: 36_000, retail_draw: 10_400, base_cost: 350_000, fixed_cost: 15_000, build_rounds: 1, condition_decay: 0.06, maintenance_effect: 0.00001125 },
+      { id: "taproom", label: "Taproom", production_capacity: 11_200, retail_draw: 16_000, base_cost: 220_000, fixed_cost: 12_000, build_rounds: 1, condition_decay: 0.07, maintenance_effect: 0.0000125 },
+      { id: "bottle_shop", label: "Bottle shop", production_capacity: 0, retail_draw: 12_000, base_cost: 90_000, fixed_cost: 6_000, build_rounds: 0, condition_decay: 0.06, maintenance_effect: 0.0000125 },
     ],
     // Each district is a real siting tradeoff (rent × capacity × brand draw), not flavor.
     // Downtown: pricey + cramped, but huge brand visibility (a taproom play). Riverside:
@@ -195,13 +201,17 @@ export const defaultModules: ModulesConfig = {
     enabled: false,
     max_employees: 6,
     market_size: 4,
+    // base_salary = fully-loaded $/qtr at skill 3 (market rate = base × (0.55+0.15×skill)),
+    // benchmark-calibrated: head brewer ~$21k/qtr loaded, taproom manager ~$19k, etc.
+    // gain_per_skill scaled with salaries (×2.5) so the hire-vs-invest tradeoff keeps
+    // its shape: top talent (skill 4-5) beats direct stock investment, journeymen don't.
     roles: [
-      { id: "head_brewer", label: "Head Brewer", primary_stock: "Q", gain_per_skill: 0.9, base_salary: 16 },
-      { id: "brand_manager", label: "Brand Manager", primary_stock: "B", gain_per_skill: 0.8, base_salary: 15 },
-      { id: "operations_manager", label: "Operations Manager", primary_stock: "process", gain_per_skill: 0.7, base_salary: 15 },
-      { id: "taproom_manager", label: "Taproom Manager", primary_stock: "T_emp", gain_per_skill: 0.7, base_salary: 13 },
-      { id: "finance_lead", label: "Finance Lead", primary_stock: "T_inv", gain_per_skill: 0.6, base_salary: 16 },
-      { id: "sales_director", label: "Sales Director", primary_stock: "T_gov", gain_per_skill: 0.6, base_salary: 15 },
+      { id: "head_brewer", label: "Head Brewer", primary_stock: "Q", gain_per_skill: 2.25, base_salary: 20_000 },
+      { id: "brand_manager", label: "Brand Manager", primary_stock: "B", gain_per_skill: 2.0, base_salary: 18_000 },
+      { id: "operations_manager", label: "Operations Manager", primary_stock: "process", gain_per_skill: 1.75, base_salary: 17_000 },
+      { id: "taproom_manager", label: "Taproom Manager", primary_stock: "T_emp", gain_per_skill: 1.75, base_salary: 14_000 },
+      { id: "finance_lead", label: "Finance Lead", primary_stock: "T_inv", gain_per_skill: 1.5, base_salary: 18_000 },
+      { id: "sales_director", label: "Sales Director", primary_stock: "T_gov", gain_per_skill: 1.5, base_salary: 19_000 },
     ],
     starting_satisfaction: 0.7,
     tenure_bump: 0.1,
@@ -216,7 +226,7 @@ export const defaultModules: ModulesConfig = {
     fair_markup: 2.2,
     sensitivity: 1.0,
     quality_weight: 0.6,
-    fine_scale: 220,
+    fine_scale: 88_000,
     fine_cap_frac: 0.15,
     brand_scale: 9,
     tgov_k: 0.5,

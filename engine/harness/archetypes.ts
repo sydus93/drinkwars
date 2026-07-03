@@ -96,23 +96,23 @@ function mkDecision(f: FirmState, world: WorldState, c: Config, p: Profile): Fir
     return true;
   };
   // Cheap recurring plays first; big one-time purchases compete for what's left.
-  const rndInvest = mods?.rndRace?.enabled && mp.rnd && world.segments.some((s) => !s.active) && f.cash > 300 && commit(mp.rnd) ? mp.rnd : 0;
-  const waterInvest = mods?.sustainability?.enabled && mp.water && f.cash > 500 && commit(mp.water) ? mp.water : 0;
+  const rndInvest = mods?.rndRace?.enabled && mp.rnd && world.segments.some((s) => !s.active) && f.cash > 120_000 && commit(mp.rnd) ? mp.rnd : 0;
+  const waterInvest = mods?.sustainability?.enabled && mp.water && f.cash > 200_000 && commit(mp.water) ? mp.water : 0;
   const goodsTotal = Object.values(mp.goods ?? {}).reduce((a, b) => a + b, 0);
-  const contributions = mods?.publicGoods?.enabled && mp.goods && f.cash > 600 && commit(goodsTotal) ? mp.goods : {};
+  const contributions = mods?.publicGoods?.enabled && mp.goods && f.cash > 240_000 && commit(goodsTotal) ? mp.goods : {};
   let prAction: "festival" | "collab" | "viral" | null = null;
   if (mods?.prEvents?.enabled && mp.pr && (f.pr_cooldown_until == null || world.round >= f.pr_cooldown_until) && f.cash > mods.prEvents.cost * 3 && commit(mods.prEvents.cost)) {
     prAction = mp.pr;
   }
   const hireRoles: string[] = [];
-  if (mods?.laborMarket?.enabled && mp.hire && f.cash > 700 && !(f.key_hires ?? []).some((h) => h.role === mp.hire)) {
+  if (mods?.laborMarket?.enabled && mp.hire && f.cash > 280_000 && !(f.key_hires ?? []).some((h) => h.role === mp.hire)) {
     const role = mods.laborMarket.roles.find((r) => r.id === mp.hire);
     if (role && commit(role.signing_bonus + role.salary)) hireRoles.push(role.id);
   }
   let marketPresence: Record<string, number> | undefined;
   if (mods?.geography?.enabled && mp.region && world.round >= 2) {
     const target = mods.geography.markets.find((m) => m.id === mp.region && (m.kind !== "export" || mods.international?.enabled));
-    if (target && f.cash > target.entry_cost + 900) {
+    if (target && f.cash > target.entry_cost + 360_000) {
       const entered = (f.markets_entered ?? ["home"]).includes(target.id);
       if (entered || commit(target.entry_cost)) marketPresence = { home: 0.7, [target.id]: 0.3 };
     }
@@ -121,13 +121,13 @@ function mkDecision(f: FirmState, world: WorldState, c: Config, p: Profile): Fir
   if (mods?.verticalIntegration?.enabled && mp.vertical && (f.vertical_assets ?? []).length < mods.verticalIntegration.max_assets) {
     const ownedIds = new Set((f.vertical_assets ?? []).map((a) => a.id));
     const asset = mods.verticalIntegration.assets.find((a) => a.type === mp.vertical && !ownedIds.has(a.id));
-    if (asset && f.cash > asset.cost + 800 && commit(asset.cost)) buyVertical.push(asset.id);
+    if (asset && f.cash > asset.cost + 320_000 && commit(asset.cost)) buyVertical.push(asset.id);
   }
 
   // Lobbying (MOD-A09): push the configured regulation each round while cash allows.
   let lobbySpend = 0;
   let lobbyInitiative: string | null = null;
-  if (mods?.lobbying?.enabled && mp.lobby && f.cash > 300 && commit(mp.lobby.spend)) {
+  if (mods?.lobbying?.enabled && mp.lobby && f.cash > 120_000 && commit(mp.lobby.spend)) {
     lobbySpend = mp.lobby.spend;
     lobbyInitiative = mp.lobby.initiative;
   }
@@ -190,16 +190,16 @@ function mkDecision(f: FirmState, world: WorldState, c: Config, p: Profile): Fir
 }
 
 const PROFILES: Record<ArchetypeId, Profile> = {
-  balanced: { focus: { mass: 1, niche: 1, frontier: 1 }, markup: { mass: 1.8, niche: 2.1, frontier: 2.0 }, invest: { Q: 30, B: 30, process: 25, T_emp: 15, T_inv: 10, T_gov: 10 }, modules: { goods: { regional_marketing: 10 }, hire: "head_brewer" } },
-  cost_leader: { focus: { mass: 1 }, markup: 1.5, invest: { cap: 40, process: 70, T_emp: 20 }, cash_guard: 0.5, run_rate: 1.0, modules: { vertical: "upstream", region: "heartland", hire: "ops_manager" } },
-  differentiator: { focus: { niche: 1, frontier: 1 }, markup: 2.2, invest: { Q: 70, B: 40, T_emp: 10 }, run_rate: 0.8, modules: { rnd: 50, pr: "collab", region: "coastal", hire: "head_brewer" } },
-  brand_builder: { focus: { mass: 1, niche: 1, frontier: 1 }, markup: 1.9, invest: { B: 80, Q: 20, T_emp: 10 }, modules: { pr: "viral", hire: "sales_director" } },
-  stakeholder: { focus: { mass: 1, niche: 1 }, markup: 1.8, invest: { T_emp: 40, T_inv: 30, T_gov: 30, process: 30 }, modules: { water: 30, goods: { regional_marketing: 10, water_commons: 15 }, vertical: "downstream", lobby: { initiative: "craft_promotion", spend: 30 } } },
-  aggressive: { focus: { mass: 1, niche: 1 }, markup: 1.6, invest: { cap: 90, Q: 25, B: 25 }, debt_draw: 150, cash_guard: 0.6, run_rate: 1.0, modules: { region: "export_asia", vertical: "upstream" } },
-  conservative: { focus: { mass: 1 }, markup: 1.9, invest: { Q: 15, B: 15 }, debt_repay: 30, cash_guard: 0.2, run_rate: 0.75, modules: { water: 30 } },
-  niche_specialist: { focus: { niche: 1, frontier: 1 }, markup: 2.4, invest: { Q: 90, B: 40 }, run_rate: 0.75, modules: { rnd: 60, region: "coastal" } },
-  cartel_member: { focus: { mass: 1, niche: 1 }, markup: 2.0, invest: { Q: 40, B: 40, T_gov: 60 }, modules: { goods: { regional_marketing: 20 }, vertical: "downstream", lobby: { initiative: "quality_standards", spend: 40 }, pact: { form: "formal", template: "capacity_coordination", clause: { condition: "harvest_shock", action: "suspend" } } } },
-  defector: { focus: { mass: 1, niche: 1 }, markup: 1.7, invest: { Q: 50, B: 50 }, modules: { pr: "festival" } },
+  balanced: { focus: { mass: 1, niche: 1, frontier: 1 }, markup: { mass: 1.8, niche: 2.1, frontier: 2.0 }, invest: { Q: 12_000, B: 12_000, process: 10_000, T_emp: 6_000, T_inv: 4_000, T_gov: 4_000 }, modules: { goods: { regional_marketing: 4_000 }, hire: "head_brewer" } },
+  cost_leader: { focus: { mass: 1 }, markup: 1.5, invest: { cap: 16_000, process: 28_000, T_emp: 8_000 }, cash_guard: 0.5, run_rate: 1.0, modules: { vertical: "upstream", region: "heartland", hire: "ops_manager" } },
+  differentiator: { focus: { niche: 1, frontier: 1 }, markup: 2.2, invest: { Q: 28_000, B: 16_000, T_emp: 4_000 }, run_rate: 0.8, modules: { rnd: 20_000, pr: "collab", region: "coastal", hire: "head_brewer" } },
+  brand_builder: { focus: { mass: 1, niche: 1, frontier: 1 }, markup: 1.9, invest: { B: 32_000, Q: 8_000, T_emp: 4_000 }, modules: { pr: "viral", hire: "sales_director" } },
+  stakeholder: { focus: { mass: 1, niche: 1 }, markup: 1.8, invest: { T_emp: 16_000, T_inv: 12_000, T_gov: 12_000, process: 12_000 }, modules: { water: 12_000, goods: { regional_marketing: 4_000, water_commons: 6_000 }, vertical: "downstream", lobby: { initiative: "craft_promotion", spend: 12_000 } } },
+  aggressive: { focus: { mass: 1, niche: 1 }, markup: 1.6, invest: { cap: 36_000, Q: 10_000, B: 10_000 }, debt_draw: 60_000, cash_guard: 0.6, run_rate: 1.0, modules: { region: "export_asia", vertical: "upstream" } },
+  conservative: { focus: { mass: 1 }, markup: 1.9, invest: { Q: 6_000, B: 6_000 }, debt_repay: 12_000, cash_guard: 0.2, run_rate: 0.75, modules: { water: 12_000 } },
+  niche_specialist: { focus: { niche: 1, frontier: 1 }, markup: 2.4, invest: { Q: 36_000, B: 16_000 }, run_rate: 0.75, modules: { rnd: 24_000, region: "coastal" } },
+  cartel_member: { focus: { mass: 1, niche: 1 }, markup: 2.0, invest: { Q: 16_000, B: 16_000, T_gov: 24_000 }, modules: { goods: { regional_marketing: 8_000 }, vertical: "downstream", lobby: { initiative: "quality_standards", spend: 16_000 }, pact: { form: "formal", template: "capacity_coordination", clause: { condition: "harvest_shock", action: "suspend" } } } },
+  defector: { focus: { mass: 1, niche: 1 }, markup: 1.7, invest: { Q: 20_000, B: 20_000 }, modules: { pr: "festival" } },
 };
 
 export function decideFor(archetype: ArchetypeId, f: FirmState, world: WorldState, c: Config): FirmDecision {

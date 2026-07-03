@@ -13,10 +13,11 @@
  * dossier (FirmDetail) with its research-gated poach flow. Nothing here changes engine math.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { Config } from "drinkwars-engine";
 import type { GameView, MarketView, MarketSegmentStanding, MarketLot } from "../game/controller.js";
 import type { CityActions } from "../game/cityActions.js";
 import { marketPresenceFrom } from "../game/cityActions.js";
-import { SEG_LABEL, SEG_CHARACTER, DISTRICT_BEST, MARKET_META, ZONE_OF, ZONE_TONE, FAC_TAG, FAC_NOTE, fmt } from "../labels.js";
+import { SEG_LABEL, SEG_CHARACTER, DISTRICT_BEST, MARKET_META, ZONE_OF, ZONE_TONE, FAC_TAG, FAC_NOTE, fmt, rankDistrictsForType, districtFitScore } from "../labels.js";
 import { firmColor } from "../lib/teamColors.js";
 import { FacilityChip, flowBadge } from "./FacilityGlyph.js";
 import { WORLD_LAND_PATH } from "./worldland.js";
@@ -229,14 +230,18 @@ function building(ctx: CanvasRenderingContext2D, cx: number, cy: number, h: numb
   ctx.beginPath(); ctx.moveTo(bb[0], bb[1]); ctx.lineTo(bb[0], bb[1] - h); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(bt[0], bt[1] - h); ctx.lineTo(br[0], br[1] - h); ctx.lineTo(bb[0], bb[1] - h); ctx.lineTo(bl[0], bl[1] - h); ctx.closePath(); ctx.stroke();
 }
-function rivalTone(firmId: string) { const c = cssColor(firmId); return { roof: shade(c, 0.45), l: shade(c, 0.12), r: shade(c, -0.28) }; }
-function drawCity(cv: HTMLCanvasElement, plan: Plan, layer: string, youId: string) {
+function toneFromColor(c: string) { const x = resolveColor(c); return { roof: shade(x, 0.45), l: shade(x, 0.12), r: shade(x, -0.28) }; }
+function rivalTone(firmId: string) { return toneFromColor(firmColor(firmId)); }
+// youColor: paint "your" buildings in an explicit house colour (the founding site map, where the
+// player's colour isn't yet registered on a firm id). Omitted in live play ⇒ derive from youId.
+function drawCity(cv: HTMLCanvasElement, plan: Plan, layer: string, youId: string, youColor?: string) {
   const r = cv.getBoundingClientRect(); if (r.width < 2 || r.height < 2) return;
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   cv.width = Math.round(r.width * dpr); cv.height = Math.round(r.height * dpr);
   const ctx = cv.getContext("2d"); if (!ctx) return;
-  const mineTone = rivalTone(youId); // your buildings paint in your chosen house colour
-  const mineOutline = shade(cssColor(youId), -0.45);
+  const selfColor = youColor ?? firmColor(youId); // your buildings paint in your chosen house colour
+  const mineTone = toneFromColor(selfColor);
+  const mineOutline = shade(resolveColor(selfColor), -0.45);
   ctx.setTransform(cv.width / 1000, 0, 0, cv.height / 680, 0, 0);
   ctx.fillStyle = PAL.mapbg; ctx.fillRect(0, 0, 1000, 680);
   for (const cell of plan.cells) {
@@ -990,6 +995,156 @@ export function CityView({ view, actions, setActions, onInspect, extraBuilds = [
       })()}
 
       {globeOpen && <GlobeOverlay cities={cities} homeGeo={homeGeo} onClose={() => setGlobeOpen(false)} onPick={(id) => { setGlobeOpen(false); selectCity(id); }} />}
+    </div>
+  );
+}
+
+// ═══════════════════════ Founding site picker ═══════════════════════
+// The create-a-firm "where do I open?" surface — the same isometric home map, driven straight
+// from CONFIG (no live game yet) so the founding choice sees the exact rent × output × brand ×
+// zoning tradeoff it will pay all season. Reuses cityPlan/drawCity; a lot click (or a district
+// card) reports the chosen spot back to the firm builder, which stores it on the founding facility.
+
+export interface FoundingPlacement { type: string; lot?: string; district?: string }
+
+/** A CityModel for the home market built from config alone. `placed` founding facilities show as
+ *  pending (their lots read taken). No rivals/standings — founding is before the field exists. */
+function foundingCityModel(cfg: Config, placed: FoundingPlacement[]): CityModel {
+  const meta = MARKET_META.home ?? { city: "Home region", region: "", geo: [0, 0] as [number, number], coast: null, seed: 7 };
+  const dCfg = cfg.modules?.facilities?.districts ?? [];
+  const districts: DistrictModel[] = dCfg.map((d) => ({
+    key: d.id, label: d.label, arch: ARCH_OF[d.kind] ?? "arts", kind: d.kind,
+    rent: d.rent_mult, out: d.capacity_mult ?? 1, brand: d.brand_boost ?? 0, best: DISTRICT_BEST[d.id] ?? d.blurb ?? "",
+  }));
+  const fallback = districts[0]?.key ?? "downtown";
+  const homeMkt = cfg.modules?.geography?.markets?.find((m) => m.kind === "home");
+  const rawLots = (homeMkt?.lots ?? []).filter((L) => (L.unlock_round ?? 0) <= 0);
+  const districtOfLot = (id?: string) => rawLots.find((L) => L.id === id)?.district;
+  const lots: MarketLot[] = rawLots.map((L) => ({ id: L.id, x: L.x, y: L.y, district: L.district, unlocked: true, occupant: null }));
+  const mine: MineModel[] = placed.map((p, i) => ({ id: `founding_${i}`, type: p.type, district: p.district ?? districtOfLot(p.lot) ?? fallback, lot: p.lot, active: true, pending: true }));
+  return {
+    id: "home", name: meta.city, region: meta.region || "Home region", kind: "home",
+    entered: true, entryCost: 0, fx: 1, geo: meta.geo, coast: meta.coast, seed: meta.seed, roadEvery: 4,
+    districts, mine, rivals: [], segments: [], lots, catchment: cfg.modules?.facilities?.catchment,
+  };
+}
+
+const crowdTag = (cr: number): { label: string; color: string } =>
+  cr < 0.25 ? { label: "Blue ocean", color: "var(--color-hop)" } : cr < 0.9 ? { label: "Some competition", color: "var(--color-gold)" } : { label: "Crowded", color: "var(--color-brick)" };
+
+export function FoundingSiteMap({ cfg, color, placed, sitingType, onPick }: {
+  cfg: Config;
+  color: string;
+  placed: FoundingPlacement[];
+  sitingType: string | null; // the facility TYPE being sited right now
+  onPick: (loc: { lot?: string; district: string }) => void;
+}) {
+  const dCfg = useMemo(() => cfg.modules?.facilities?.districts ?? [], [cfg]);
+  const facTypes = useMemo(() => cfg.modules?.facilities?.types ?? [], [cfg]);
+  const typeOf = (id: string | null) => facTypes.find((t) => t.id === id);
+  const t = typeOf(sitingType);
+  const model = useMemo(() => foundingCityModel(cfg, placed), [cfg, placed]);
+  const plan = useMemo(() => cityPlan(model), [model]);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  useEffect(() => {
+    const draw = () => { if (canvasRef.current) try { drawCity(canvasRef.current, plan, "map", "you", color); } catch { /* ignore */ } };
+    const id = window.setTimeout(draw, 0);
+    window.addEventListener("resize", draw);
+    return () => { clearTimeout(id); window.removeEventListener("resize", draw); };
+  }, [plan, color]);
+
+  const dByKey = (k: string) => model.districts.find((d) => d.key === k);
+  const zoneOf = (kind?: string) => ZONE_OF[kind ?? ""] ?? { zone: "", allow: [] as string[] };
+  const allowsType = (kind?: string) => !sitingType || zoneOf(kind).allow.includes(sitingType);
+  // Recommended home for the type being sited: the best-fit zoning-permitted district that still
+  // has a free parcel (falls through to the next district if the best one is full).
+  const ranked = t ? rankDistrictsForType(t, dCfg) : [];
+  const freeLotsIn = (key: string) => plan.leases.filter((L) => L.district === key);
+  const recDistrict = ranked.find((d) => freeLotsIn(d.id).length > 0)?.id ?? ranked[0]?.id ?? null;
+  const recLot = recDistrict ? (freeLotsIn(recDistrict).slice().sort((a, b) => a.crowd - b.crowd)[0]?.lot ?? null) : null;
+
+  const pickLot = (lot: string, district: string) => { if (allowsType(dByKey(district)?.kind)) onPick({ lot, district }); };
+  const pickDistrict = (key: string) => {
+    if (!allowsType(dByKey(key)?.kind)) return;
+    const free = freeLotsIn(key).slice().sort((a, b) => a.crowd - b.crowd)[0];
+    onPick(free ? { lot: free.lot, district: key } : { district: key }); // no free lot ⇒ district-only (geography off)
+  };
+
+  const hasLots = model.lots.length > 0;
+
+  return (
+    <div className="grid gap-3.5 lg:grid-cols-[minmax(0,1fr)_300px]">
+      {/* map stage — the same isometric home city as in play */}
+      <div>
+        <div className="mb-2 flex items-center gap-2">
+          <span className="font-mono text-[0.55rem] font-semibold uppercase tracking-[0.14em] text-copperdeep">Home market · {model.name}</span>
+          <span className="flex-1" />
+          <span className="text-sm italic text-inksoft">{t ? `Siting your ${t.label.toLowerCase()}` : "Your footprint"}</span>
+        </div>
+        <div className="card relative w-full overflow-visible p-0" style={{ aspectRatio: "1000 / 680" }}>
+          <div className="absolute inset-0 overflow-visible rounded-[14px]" style={{ background: PAL.mapbg }}>
+            <canvas ref={canvasRef} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", display: "block", borderRadius: 14 }} />
+
+            {/* district labels + rent/output chips */}
+            {plan.districts.map((d) => { const ec = dByKey(d.key); if (!ec) return null; const p = pct(d.cx, d.cy, 60, "map"); const ok = allowsType(ec.kind); return (
+              <div key={d.key} className="pointer-events-none absolute z-[4] flex flex-col items-center gap-0.5" style={{ left: `${p.l}%`, top: `${p.t}%`, transform: "translate(-50%,-100%)", opacity: ok ? 1 : 0.4 }}>
+                <div className="display whitespace-nowrap text-[0.8rem] tracking-[0.1em]" style={{ color: "rgba(44,29,17,.78)", textShadow: `0 1px 3px ${PAL.mapbg}, 0 0 6px ${PAL.mapbg}` }}>{ec.label}</div>
+                <div className="flex items-center gap-1">
+                  <span className="rounded border border-line bg-panel/90 px-1 py-px font-mono text-[0.55rem]" style={{ color: ec.rent > 1.05 ? "var(--color-brick)" : ec.rent < 0.95 ? "var(--color-hop)" : "var(--color-inksoft)" }} title="Rent multiplier on upkeep">R×{ec.rent.toFixed(2)}</span>
+                  <span className="rounded border border-line bg-panel/90 px-1 py-px font-mono text-[0.55rem]" style={{ color: ec.out > 1.02 ? "var(--color-hop)" : ec.out < 0.98 ? "var(--color-brick)" : "var(--color-inksoft)" }} title="Output multiplier">O×{ec.out.toFixed(2)}</span>
+                  {ec.brand > 0 && <span className="rounded border border-line bg-panel/90 px-1 py-px font-mono text-[0.55rem] text-aero" title="Brand draw per round">B+{ec.brand}</span>}
+                </div>
+              </div>
+            ); })}
+
+            {/* FOR-LEASE parcels — click to site the selected facility here */}
+            {hasLots && plan.leases.map((L, i) => { const p = pct(L.cx, L.cy, 0, "map"); const ec = dByKey(L.district); const z = zoneOf(ec?.kind); const ct = crowdTag(L.crowd); const ok = allowsType(ec?.kind); const isRec = L.lot === recLot; return (
+              <button key={i} onClick={() => pickLot(L.lot, L.district)} disabled={!ok} title={ok ? `Lease in ${ec?.label ?? L.district} · ${ct.label}${isRec ? " · recommended" : ""}` : `${t?.label ?? "This type"} can't be zoned in ${ec?.label ?? L.district}`} className="absolute z-[5] cursor-pointer border-none bg-none p-0 disabled:cursor-not-allowed" style={{ left: `${p.l}%`, top: `${p.t}%`, transform: "translate(-50%,-100%)", opacity: ok ? 1 : 0.32 }}>
+                <span className="block rounded-t-[3px] border px-1.5 py-0.5 font-mono text-[0.5rem] font-bold uppercase tracking-wide text-white" style={{ background: isRec && ok ? "var(--color-hop)" : "var(--color-copperdeep)", borderColor: "#6e3914", boxShadow: isRec && ok ? "0 0 0 2px color-mix(in srgb, var(--color-hop) 50%, transparent)" : undefined }}>{isRec && ok ? "BEST" : "FOR LEASE"}</span>
+                <span className="flex items-center justify-center gap-0.5 rounded-b-[3px] border border-t-0 px-1 py-px text-center font-mono text-[0.44rem] font-bold uppercase text-copperdeep" style={{ background: "#f3e6c8", borderColor: "#6e3914" }}><span className="h-1.5 w-1.5 rounded-full" style={{ background: ct.color }} />{z?.zone ?? ""}</span>
+                <span className="mx-auto block h-2 w-px" style={{ background: "#6e3914" }} />
+              </button>
+            ); })}
+
+            {/* already-placed founding facilities */}
+            {plan.facilities.map((f) => { const p = pct(f.cx, f.cy, f.h, "map"); const ec = dByKey(f.district); const tt = typeOf(f.type); return (
+              <div key={f.id} title={`${tt?.label ?? f.type} · ${ec?.label ?? f.district}`} className="pointer-events-none absolute z-[7] flex flex-col items-center" style={{ left: `${p.l}%`, top: `${p.t}%`, transform: "translate(-50%,-100%)", filter: "drop-shadow(0 3px 5px rgba(40,25,8,.32))" }}>
+                <FacilityChip type={f.type} color={color} size={30} mine style={{ outline: "2px dashed #7e3f18", outlineOffset: 1 }} />
+              </div>
+            ); })}
+          </div>
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-inksoft">
+          <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm" style={{ background: color }} />Your sites</span>
+          <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-[3px] border border-dashed border-copperdeep" style={{ background: "rgba(224,165,47,.32)" }} />For lease</span>
+          <span className="flex-1" />
+          <span className="italic">{hasLots ? "Tap a parcel — or a district card — to site it" : "Tap a district to site it"}</span>
+        </div>
+      </div>
+
+      {/* district tradeoff cards — the rent/output/brand economics, best fit first */}
+      <div className="grid content-start gap-2">
+        <div className="eyebrow">{t ? "Best fit for this facility" : "The districts"}</div>
+        {(t ? [...model.districts].sort((a, b) => districtFitScore(t, dCfg.find((d) => d.id === b.key)!) - districtFitScore(t, dCfg.find((d) => d.id === a.key)!)) : model.districts).map((d) => {
+          const ok = allowsType(d.kind); const isRec = d.key === recDistrict; const free = freeLotsIn(d.key).length;
+          return (
+            <button key={d.key} onClick={() => pickDistrict(d.key)} disabled={!ok || (hasLots && free === 0)} title={ok ? d.best : `Not zoned for ${t?.label ?? "this type"}`} className="rounded-xl border p-2.5 text-left transition-colors disabled:opacity-45" style={{ borderColor: isRec && ok ? "var(--color-hop)" : "var(--color-line2)", background: isRec && ok ? "color-mix(in srgb, var(--color-hop) 8%, var(--color-panel))" : "var(--color-panel)" }}>
+              <div className="flex items-center gap-1.5">
+                <span className="display text-[0.95rem] text-ink">{d.label}</span>
+                {isRec && ok && <span className="rounded-full px-1.5 py-px font-mono text-[0.5rem] font-bold uppercase tracking-wide text-white" style={{ background: "var(--color-hop)" }}>Best</span>}
+                <span className="flex-1" />
+                {hasLots && <span className="font-mono text-[0.55rem] text-inksoft">{free} open</span>}
+              </div>
+              <div className="mt-1 flex flex-wrap gap-1.5">
+                <span className="rounded border border-line px-1 py-px font-mono text-[0.55rem]" style={{ color: d.rent > 1.05 ? "var(--color-brick)" : d.rent < 0.95 ? "var(--color-hop)" : "var(--color-inksoft)" }}>Rent ×{d.rent.toFixed(2)}</span>
+                <span className="rounded border border-line px-1 py-px font-mono text-[0.55rem]" style={{ color: d.out > 1.02 ? "var(--color-hop)" : d.out < 0.98 ? "var(--color-brick)" : "var(--color-inksoft)" }}>Output ×{d.out.toFixed(2)}</span>
+                {d.brand > 0 && <span className="rounded border border-line px-1 py-px font-mono text-[0.55rem] text-aero">Brand +{d.brand}</span>}
+              </div>
+              <div className="mt-1 text-[0.68rem] leading-snug text-inksoft">{ok ? d.best : `Zoning doesn't allow a ${t?.label.toLowerCase() ?? "facility"} here.`}</div>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }

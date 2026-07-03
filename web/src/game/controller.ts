@@ -8,6 +8,7 @@ import { GameOrchestrator, InMemoryAdapter, randomBreweryNames, renameFirms } fr
 import { resolveConfig, decideAdaptive, ADAPTIVE_LEANS, inventoryEnabled, roleBriefings, summarizeAgreementsFor, summarizeLobbying, generateHiringMarket, projectMarkets, projectFirms, projectShocks, projectHistory } from "drinkwars-engine";
 import type { RoleBriefing, AllianceSummary, LobbySummary, Candidate } from "drinkwars-engine";
 import type { Config, ConfigOverride, FirmDecision, FirmId, FirmRoundResult, FirmState, Lean, ModulesConfig, RoundResult, SegmentId, WorldState } from "drinkwars-engine";
+import { rankDistrictsForType } from "../labels.js";
 
 export type Difficulty = "relaxed" | "competitive" | "cutthroat";
 
@@ -191,9 +192,9 @@ export class SinglePlayerGame {
   private tagline = "";
   // Firm-builder founding choices, pre-filled into the round-0 decision (so starting
   // facilities/hires flow through the normal pipeline rather than mutating append-only state).
-  private founding: { facilities: { type: string; lot?: string }[]; hires: string[] } | null = null;
+  private founding: { facilities: { type: string; district?: string; lot?: string }[]; hires: string[] } | null = null;
 
-  async start(opts: { breweryName?: string; difficulty?: Difficulty; override?: ConfigOverride; tagline?: string; founding?: { facilities: { type: string; lot?: string }[]; hires: string[] } } = {}): Promise<void> {
+  async start(opts: { breweryName?: string; difficulty?: Difficulty; override?: ConfigOverride; tagline?: string; founding?: { facilities: { type: string; district?: string; lot?: string }[]; hires: string[] } } = {}): Promise<void> {
     this.config = resolveConfig(opts.override);
     this.difficulty = opts.difficulty ?? "competitive";
     this.tagline = opts.tagline ?? "";
@@ -353,20 +354,31 @@ export class SinglePlayerGame {
       invest_T_inv: 0, invest_T_gov: 0,
       debt_draw: 0, debt_repay: 0, equity_raise: 0, dividend: 0,
       buy_info: false, agreement_actions: [], exit_action: null, beliefs: {}, reflection: "",
-      // Founding choices from the firm builder seed the opening round (then never repeat).
-      // Each founding facility carries the parcel the player sited it on (geography on); any
-      // without an explicit lot (legacy / geography-off / unpicked) auto-takes the next free
-      // home parcel so a starting site is a true spatial lot, not a district-centroid ghost.
-      build_facilities: ((): { type: string; market: string; lot?: string }[] => {
+      // Founding choices from the firm builder seed the opening round (then never repeat). The
+      // player sites each facility in the City View that pops up on selection, so it carries an
+      // explicit district (rent/output/brand) and usually a specific parcel. Anything left unsited
+      // (edge cases) auto-takes a free home parcel in the district that best FITS the type — a
+      // production brewery lands in cheap, roomy industrial land, a taproom downtown — never just
+      // the next slot in config order (which used to shove everyone into cramped downtown).
+      build_facilities: ((): { type: string; market: string; location?: string; lot?: string }[] => {
         const used = new Set((this.founding?.facilities ?? []).map((f) => f.lot).filter(Boolean) as string[]);
-        let next = 0;
-        const nextFreeLot = (): string | undefined => {
-          while (next < homeFoundingLots.length && used.has(homeFoundingLots[next].id)) next++;
-          const L = homeFoundingLots[next];
-          if (L) { used.add(L.id); next++; }
-          return L?.id;
+        const dCfg = this.config.modules?.facilities?.districts ?? [];
+        const facTypes = this.config.modules?.facilities?.types ?? [];
+        // Free home parcel in a preferred district, else any free parcel.
+        const nextFreeLot = (preferDistrict?: string): typeof homeFoundingLots[number] | undefined => {
+          const free = homeFoundingLots.filter((L) => !used.has(L.id));
+          const pick = (preferDistrict && free.find((L) => L.district === preferDistrict)) || free[0];
+          if (pick) used.add(pick.id);
+          return pick;
         };
-        return (this.founding?.facilities ?? []).map((f) => ({ type: f.type, market: "home", lot: f.lot ?? nextFreeLot() }));
+        return (this.founding?.facilities ?? []).map((f) => {
+          if (f.lot) { used.add(f.lot); return { type: f.type, market: "home", location: f.district, lot: f.lot }; }
+          // Unsited: pick the best-fit zoning-permitted district for this type, then a parcel there.
+          const t = facTypes.find((x) => x.id === f.type);
+          const best = f.district ?? (t ? rankDistrictsForType(t, dCfg)[0]?.id : undefined);
+          const L = nextFreeLot(best);
+          return { type: f.type, market: "home", location: f.district ?? L?.district ?? best, lot: L?.id };
+        });
       })(),
       hire_employees: this.founding?.hires ?? [],
     };

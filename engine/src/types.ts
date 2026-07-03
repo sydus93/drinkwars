@@ -325,6 +325,7 @@ export interface MarketConfig {
   lots?: Lot[]; // MOD-B11 spatial siting: the fixed buildable parcels in this market (Phase 2)
   geo?: [number, number]; // [lon, lat] — drives shipping distance between markets (Phase 3)
   demand_growth?: number; // per-round compounding change to this market's demand size (Phase 3 heterogeneity)
+  population?: number; // informational: addressable metro population the demand pool derives from (~4.3 craft drinks/resident/qtr, DW-029)
 }
 
 /** One buildable parcel within a market (Phase 2 spatial siting). A facility occupies a

@@ -190,7 +190,7 @@ export function Play({
         </div>
         <div className="flex gap-5 sm:gap-6">
           <Stat label="Cash" value={fmt.money(view.own.cash)} accent={view.own.cash < 300 ? "brick" : "ink"} />
-          <Stat label="Capacity" value={fmt.int(view.own.cap)} sub="units/rd" />
+          <Stat label="Capacity" value={fmt.int(view.own.cap)} sub="drinks/rd" />
           {view.ownResult && (
             <span className="hidden sm:block">
               <Stat label="Net income" value={fmt.signed(view.ownResult.pnl.net_income)} accent={view.ownResult.pnl.net_income < 0 ? "brick" : "ink"} />

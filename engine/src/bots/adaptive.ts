@@ -142,7 +142,7 @@ export function decideAdaptive(lean: Lean, f: FirmState, world: WorldState, c: C
   // posture once the mid-game shock window opens (~round 5+) rather than reacting
   // to a countdown — the §9.4 preparedness lesson without a telegraph to game.
   const shockSeason = world.round >= 5;
-  const resilienceBoost = shockSeason ? 30 : 10;
+  const resilienceBoost = shockSeason ? 12_000 : 4_000;
 
   // ---- Expansion-module levers (each gated on its module; lean-differentiated so
   // the field stays heterogeneous: brand bots play PR, cost bots integrate upstream,
@@ -171,24 +171,24 @@ export function decideAdaptive(lean: Lean, f: FirmState, world: WorldState, c: C
   // Water efficiency — ops/stakeholder bots keep the drought hedge funded through
   // the shock season (an unpredictable drought rewards standing efficiency).
   let waterInvest = 0;
-  if (mods?.sustainability?.enabled && shockSeason && (lean.bias.process >= 1.2 || lean.bias.T_emp >= 1.4) && commit(40)) {
-    waterInvest = 40;
+  if (mods?.sustainability?.enabled && shockSeason && (lean.bias.process >= 1.2 || lean.bias.T_emp >= 1.4) && commit(16_000)) {
+    waterInvest = 16_000;
   }
 
   // Public goods — civic leans contribute; aggressive leans free-ride (the lesson).
   const contributions: Record<string, number> = {};
-  if (mods?.publicGoods?.enabled && lean.bias.T_gov >= 0.8 && lean.cashGuard <= 0.45 && f.cash > 400) {
-    const want = 15 + (shockSeason ? 20 : 0);
+  if (mods?.publicGoods?.enabled && lean.bias.T_gov >= 0.8 && lean.cashGuard <= 0.45 && f.cash > 160_000) {
+    const want = 6_000 + (shockSeason ? 8_000 : 0);
     if (commit(want)) {
-      contributions.regional_marketing = 15;
-      if (shockSeason) contributions.water_commons = 20;
+      contributions.regional_marketing = 6_000;
+      if (shockSeason) contributions.water_commons = 8_000;
     }
   }
 
   // R&D race — quality leans chase the new category while it's still closed.
   let rndInvest = 0;
-  if (mods?.rndRace?.enabled && lean.bias.Q >= 1.2 && world.segments.some((s) => !s.active) && commit(50)) {
-    rndInvest = 50;
+  if (mods?.rndRace?.enabled && lean.bias.Q >= 1.2 && world.segments.some((s) => !s.active) && commit(20_000)) {
+    rndInvest = 20_000;
   }
 
   // Geography — expand into the region that suits the lean once cash allows.
@@ -197,13 +197,13 @@ export function decideAdaptive(lean: Lean, f: FirmState, world: WorldState, c: C
     const markets = mods.geography.markets.filter((m) => m.kind !== "export" || mods.international?.enabled);
     const wantsCheap = lean.bias.process >= 1.8 || lean.bias.cap >= 1.8;
     const target = markets.find((m) => m.kind === "domestic" && (wantsCheap ? m.beta_p_mult > 1 : m.beta_q_mult > 1));
-    if (target && f.cash > target.entry_cost + 500) {
+    if (target && f.cash > target.entry_cost + 200_000) {
       const entered = (f.markets_entered ?? ["home"]).includes(target.id);
       if (entered || commit(target.entry_cost)) {
         marketPresence = { home: 0.7, [target.id]: 0.3 };
         // Aggressive, brand-rich bots also probe an export lane when international is on.
         const exp = markets.find((m) => m.kind === "export");
-        if (exp && lean.debtDraw >= 160 && f.B > 25 && f.cash > target.entry_cost + exp.entry_cost + 700) {
+        if (exp && lean.debtDraw >= 64_000 && f.B > 25 && f.cash > target.entry_cost + exp.entry_cost + 280_000) {
           const expEntered = (f.markets_entered ?? []).includes(exp.id);
           if (expEntered || commit(exp.entry_cost)) marketPresence = { home: 0.6, [target.id]: 0.25, [exp.id]: 0.15 };
         }
@@ -217,16 +217,16 @@ export function decideAdaptive(lean: Lean, f: FirmState, world: WorldState, c: C
     const ownedIds = new Set((f.vertical_assets ?? []).map((a) => a.id));
     const up = mods.verticalIntegration.assets.find((a) => a.type === "upstream" && !ownedIds.has(a.id));
     const down = mods.verticalIntegration.assets.find((a) => a.type === "downstream" && !ownedIds.has(a.id));
-    if (up && (lean.bias.process >= 1.8 || lean.bias.cap >= 1.8) && f.cash > up.cost + 400 && commit(up.cost)) {
+    if (up && (lean.bias.process >= 1.8 || lean.bias.cap >= 1.8) && f.cash > up.cost + 160_000 && commit(up.cost)) {
       buyVertical.push(up.id);
-    } else if (down && lean.bias.T_gov >= 1.4 && f.cash > down.cost + 500 && commit(down.cost)) {
+    } else if (down && lean.bias.T_gov >= 1.4 && f.cash > down.cost + 200_000 && commit(down.cost)) {
       buyVertical.push(down.id);
     }
   }
 
   // Key hires — hire the specialist matching the lean's strongest capability bias.
   const hireRoles: string[] = [];
-  if (mods?.laborMarket?.enabled && f.cash > 500) {
+  if (mods?.laborMarket?.enabled && f.cash > 200_000) {
     const staffed = new Set((f.key_hires ?? []).map((h) => h.role));
     const pref =
       lean.bias.Q >= Math.max(lean.bias.B, lean.bias.process) ? "head_brewer" :
@@ -242,9 +242,9 @@ export function decideAdaptive(lean: Lean, f: FirmState, world: WorldState, c: C
   // lean, staged to a modest target (the shared market is a menu, not a fixed pool, so
   // this never starves the human's hiring options).
   const hireEmployees: string[] = [];
-  if (mods?.employees?.enabled && f.cash > 250) {
+  if (mods?.employees?.enabled && f.cash > 100_000) {
     const have = (f.employees ?? []).length;
-    const target = Math.min(lean.debtDraw >= 160 ? 3 : 2, mods.employees.max_employees);
+    const target = Math.min(lean.debtDraw >= 64_000 ? 3 : 2, mods.employees.max_employees);
     if (have < target) {
       const prefStock = lean.bias.Q >= Math.max(lean.bias.B, lean.bias.process) ? "Q" : lean.bias.B >= lean.bias.process ? "B" : "process";
       const market = generateHiringMarket(c, world.seed, world.round).filter((cnd) => cnd.salary <= 0.2 * Math.max(0, f.cash));
@@ -276,9 +276,9 @@ export function decideAdaptive(lean: Lean, f: FirmState, world: WorldState, c: C
       : typeById("brewery_large") ?? typeById("brewery_small");
     const preferKind = buildType?.id === "taproom" ? "downtown" : "industrial";
     // Pace + reach: a site by r1, a second by r3, then aggressive/scale bots keep expanding.
-    const target = lean.debtDraw >= 160 || lean.bias.cap >= 1.6 ? 5 : 3;
+    const target = lean.debtDraw >= 64_000 || lean.bias.cap >= 1.6 ? 5 : 3;
     const ready = have === 0 ? world.round >= 1 : have === 1 ? world.round >= 3 : world.round >= 5 && world.round % 2 === 1;
-    if (buildType && have < target && ready && f.cash > buildType.base_cost + 300) {
+    if (buildType && have < target && ready && f.cash > buildType.base_cost + 120_000) {
       const lot = mods.geography?.enabled ? pickLot(world, c, facMarket ?? "home", preferKind) : undefined;
       // With geography on, only build if we found a real parcel (lands on the map + feels catchment).
       if (!mods.geography?.enabled || lot) {
@@ -290,17 +290,17 @@ export function decideAdaptive(lean: Lean, f: FirmState, world: WorldState, c: C
 
   // Revenue financing — a cash-poor but levered-tolerant bot grabs a lifeline.
   let drawRbf = 0;
-  if (mods?.financialInstruments?.enabled && f.cash < 150 && (f.rbf_outstanding ?? 0) <= 0 && lean.cashGuard >= 0.4) {
-    drawRbf = 200;
+  if (mods?.financialInstruments?.enabled && f.cash < 60_000 && (f.rbf_outstanding ?? 0) <= 0 && lean.cashGuard >= 0.4) {
+    drawRbf = 80_000;
   }
 
   // M&A — the aggressive lean bids on a distressed rival at a fair-value price.
   let acquisitionBid: { target: string; price: number } | null = null;
-  if (mods?.ma?.enabled && lean.debtDraw >= 160 && (f.acquisitions_made ?? 0) < mods.ma.max_acquisitions) {
+  if (mods?.ma?.enabled && lean.debtDraw >= 64_000 && (f.acquisitions_made ?? 0) < mods.ma.max_acquisitions) {
     const prey = rivals.filter((r) => r.rounds_below_health >= mods.ma!.min_distress_rounds).sort((a, b) => a.cash - b.cash)[0];
     if (prey) {
-      const price = Math.max(50, (mods.ma.min_price_fraction + 0.1) * Math.max(0, firmValuation(prey, c)));
-      if (f.cash > price + 300) acquisitionBid = { target: prey.id, price };
+      const price = Math.max(20_000, (mods.ma.min_price_fraction + 0.1) * Math.max(0, firmValuation(prey, c)));
+      if (f.cash > price + 120_000) acquisitionBid = { target: prey.id, price };
     }
   }
 
@@ -309,16 +309,16 @@ export function decideAdaptive(lean: Lean, f: FirmState, world: WorldState, c: C
   // leader wants ad limits, otherwise craft promotion grows the premium segment.
   let lobbySpend = 0;
   let lobbyInitiative: string | null = null;
-  if (mods?.lobbying?.enabled && lean.bias.T_gov >= 1.4 && mods.lobbying.initiatives.length && f.cash > 300 && commit(40)) {
+  if (mods?.lobbying?.enabled && lean.bias.T_gov >= 1.4 && mods.lobbying.initiatives.length && f.cash > 120_000 && commit(16_000)) {
     const wantId =
       lean.bias.Q >= 1.4 ? "quality_standards" :
       lean.bias.B <= 0.6 ? "ad_restrictions" : "craft_promotion";
     const init = mods.lobbying.initiatives.find((i) => i.id === wantId) ?? mods.lobbying.initiatives[0];
     lobbyInitiative = init.id;
-    lobbySpend = 40;
+    lobbySpend = 16_000;
   }
 
-  const base = 65;
+  const base = 26_000;
   let spend = {
     Q: base * lean.bias.Q * qualityWeight,
     B: base * lean.bias.B * qualityWeight,
@@ -385,10 +385,10 @@ export function decideAdaptive(lean: Lean, f: FirmState, world: WorldState, c: C
 export const ADAPTIVE_LEANS: Lean[] = [
   { id: "ad_generalist", bias: { Q: 1, B: 1, process: 1, cap: 1, T_emp: 1, T_inv: 1, T_gov: 1 }, cashGuard: 0.4, debtDraw: 0 },
   { id: "ad_quality", bias: { Q: 2.2, B: 1.2, process: 0.6, cap: 0.6, T_emp: 0.6, T_inv: 0.5, T_gov: 0.5 }, cashGuard: 0.4, debtDraw: 0 },
-  { id: "ad_cost", bias: { Q: 0.4, B: 0.4, process: 2.2, cap: 1.8, T_emp: 1.0, T_inv: 0.5, T_gov: 0.5 }, cashGuard: 0.5, debtDraw: 80 },
+  { id: "ad_cost", bias: { Q: 0.4, B: 0.4, process: 2.2, cap: 1.8, T_emp: 1.0, T_inv: 0.5, T_gov: 0.5 }, cashGuard: 0.5, debtDraw: 32_000 },
   { id: "ad_brand", bias: { Q: 0.8, B: 2.4, process: 0.6, cap: 0.7, T_emp: 0.6, T_inv: 0.5, T_gov: 0.5 }, cashGuard: 0.4, debtDraw: 0 },
   { id: "ad_stakeholder", bias: { Q: 0.8, B: 0.8, process: 1.2, cap: 0.8, T_emp: 2.0, T_inv: 1.6, T_gov: 1.6 }, cashGuard: 0.4, debtDraw: 0 },
-  { id: "ad_aggressive", bias: { Q: 1.2, B: 1.2, process: 1.2, cap: 2.0, T_emp: 0.6, T_inv: 0.6, T_gov: 0.4 }, cashGuard: 0.6, debtDraw: 160 },
+  { id: "ad_aggressive", bias: { Q: 1.2, B: 1.2, process: 1.2, cap: 2.0, T_emp: 0.6, T_inv: 0.6, T_gov: 0.4 }, cashGuard: 0.6, debtDraw: 64_000 },
   { id: "ad_lean_ops", bias: { Q: 0.6, B: 0.6, process: 1.8, cap: 1.0, T_emp: 1.4, T_inv: 0.6, T_gov: 0.6 }, cashGuard: 0.35, debtDraw: 0 },
   { id: "ad_conservative", bias: { Q: 0.8, B: 0.8, process: 0.8, cap: 0.7, T_emp: 0.8, T_inv: 0.8, T_gov: 0.8 }, cashGuard: 0.25, debtDraw: 0 },
 ];

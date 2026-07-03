@@ -433,7 +433,7 @@ export function DecisionForm({
                   <label className="text-sm font-semibold">{f.label}</label>
                   <span className="tnum text-xs text-inksoft">{fmt.money(d[f.key])}</span>
                 </div>
-                <input type="range" min="0" max={Math.max(300, Math.round(cash * 0.5))} step="10" value={d[f.key]} onChange={(e) => set({ [f.key]: +e.target.value } as Partial<FirmDecision>)} className="mt-1 w-full" />
+                <input type="range" min="0" max={Math.max(120_000, Math.round(cash * 0.5))} step="1000" value={d[f.key]} onChange={(e) => set({ [f.key]: +e.target.value } as Partial<FirmDecision>)} className="mt-1 w-full" />
                 <div className="text-[0.68rem] leading-snug text-inksoft">{f.hint}</div>
               </div>
             ))}
@@ -553,7 +553,7 @@ export function DecisionForm({
                         <span className="tnum w-9 text-right text-[0.66rem] text-inksoft">{condPct}%</span>
                       </div>
                       <div className="mt-1 flex items-center justify-between gap-2 text-[0.66rem] text-inksoft">
-                        <span>{online ? `+${fmt.int(liveCap)} units/rd` : "online soon"} · {fmt.money(t?.fixed_cost ?? 0)}/round</span>
+                        <span>{online ? `+${fmt.int(liveCap)} drinks/rd` : "online soon"} · {fmt.money(t?.fixed_cost ?? 0)}/round</span>
                         {active && online && (
                           <label className="flex items-center gap-1">
                             <span>Upkeep $</span>
@@ -601,7 +601,7 @@ export function DecisionForm({
                     <button key={t.id} type="button" onClick={() => addBuild(t.id)} disabled={cash < t.base_cost}
                       className="flex items-center gap-2 rounded-md border border-line p-2 text-left transition-colors hover:border-copper disabled:cursor-not-allowed disabled:opacity-40">
                       <span className="text-sm font-semibold text-ink">{t.label}</span>
-                      <span className="text-[0.64rem] text-inksoft">+{fmt.int(t.production_capacity ?? t.capacity_contribution ?? 0)} units/rd{(t.retail_draw ?? 0) > 0 ? ` · +${fmt.int(t.retail_draw ?? 0)} retail` : ""} · {t.build_rounds}r · {fmt.money(t.fixed_cost)}/rd</span>
+                      <span className="text-[0.64rem] text-inksoft">+{fmt.int(t.production_capacity ?? t.capacity_contribution ?? 0)} drinks/rd{(t.retail_draw ?? 0) > 0 ? ` · +${fmt.int(t.retail_draw ?? 0)} retail` : ""} · {t.build_rounds}r · {fmt.money(t.fixed_cost)}/rd</span>
                       <span className="tnum ml-auto text-[0.72rem] text-copperdeep">{fmt.money(t.base_cost)}</span>
                     </button>
                   ))}
@@ -804,7 +804,7 @@ export function DecisionForm({
                   <span className="text-sm font-semibold">Water efficiency</span>
                   <span className="tnum text-xs text-inksoft">{fmt.money(waterSpend)}</span>
                 </div>
-                <input type="range" min="0" max={Math.max(200, Math.round(cash * 0.3))} step="10" value={waterSpend} onChange={(e) => set({ invest_water_efficiency: +e.target.value })} className="mt-1 w-full" />
+                <input type="range" min="0" max={Math.max(80_000, Math.round(cash * 0.3))} step="1000" value={waterSpend} onChange={(e) => set({ invest_water_efficiency: +e.target.value })} className="mt-1 w-full" />
                 <div className="text-[0.68rem] leading-snug text-inksoft">
                   Builds resilience to the water shock &amp; earns regulator goodwill. {view.own.water_efficiency > 0.1 ? `Efficiency stock ${view.own.water_efficiency.toFixed(1)}.` : ""}
                 </div>
@@ -817,7 +817,7 @@ export function DecisionForm({
                   <span className="text-sm font-semibold">R&amp;D — the new category</span>
                   <span className="tnum text-xs text-inksoft">{fmt.money(rndSpend)}</span>
                 </div>
-                <input type="range" min="0" max={Math.max(300, Math.round(cash * 0.4))} step="10" value={rndSpend} onChange={(e) => set({ invest_rnd: +e.target.value })} className="mt-1 w-full" />
+                <input type="range" min="0" max={Math.max(120_000, Math.round(cash * 0.4))} step="1000" value={rndSpend} onChange={(e) => set({ invest_rnd: +e.target.value })} className="mt-1 w-full" />
                 <div className="text-[0.68rem] leading-snug text-inksoft">
                   {frontierActive ? "The frontier category is open — R&D no longer pulls it forward." : "Race to open the frontier category early; the leader gets a first-mover head start."}
                   {view.own.rnd_progress > 0.1 ? ` Your progress ${view.own.rnd_progress.toFixed(0)}.` : ""}
@@ -985,7 +985,7 @@ export function DecisionForm({
                   <span className="text-[0.72rem] text-inksoft">Lobbying budget {lobTargeted ? "" : "— pick a target below"}</span>
                   <span className="tnum text-xs text-inksoft">{fmt.money(lobSpendEff)}</span>
                 </div>
-                <input type="range" min="0" max={Math.max(200, Math.round(cash * 0.3))} step="10" value={lobSpend} onChange={(e) => setLobby({ lobby_spend: +e.target.value })} className="mt-1 w-full" />
+                <input type="range" min="0" max={Math.max(80_000, Math.round(cash * 0.3))} step="1000" value={lobSpend} onChange={(e) => setLobby({ lobby_spend: +e.target.value })} className="mt-1 w-full" />
                 <div className="mt-1 grid gap-1.5">
                   {lobInits.map((it) => {
                     const pushing = d?.lobby_initiative === it.id && !d?.lobby_counter;

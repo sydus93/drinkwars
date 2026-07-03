@@ -1,3 +1,5 @@
+import type { FacilityTypeConfig, DistrictConfig } from "drinkwars-engine";
+
 /** Beverage vocabulary for the UI (presentation layer only — engine keys stay generic). */
 export const SEG_LABEL: Record<string, string> = {
   mass: "Lagers & Light",
@@ -73,28 +75,21 @@ export const STOCK_LABEL = {
 const money0 = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
 /**
- * The engine is a toy-scale economy (all magnitudes O(1–1000)). To make the numbers
- * read like a real brewery WITHOUT touching the balance-tuned engine (bots, harness,
- * invariants, tests), the web reinterprets the units at the display/input boundary —
- * and, crucially, keeps unit economics consistent (price × quantity = revenue), which
- * students compute. Three display bases, tied by revenue = price × quantity:
+ * DW-029: the engine now speaks REAL DOLLARS and REAL DRINKS natively (round =
+ * fiscal quarter; see engine/src/config/defaults.ts header). The old 3-base
+ * display reinterpretation (×100 money/volume over a toy-scale engine) collapsed
+ * to the identity — these constants and converters are kept so call sites and
+ * any future rescale stay one-line changes.
  *
- *   • MONEY_DISPLAY (×100) — AGGREGATE dollars: cash, revenue, COGS, spend, financing,
- *     valuation, salaries, penalties. So ~$115k startup, $3,000 research, not $1,150/$30.
- *   • per-unit PRICES (×1) — price, unit cost, per-drink margin. So ~$7.65 / drink, real.
- *   • VOLUME_DISPLAY (×100) — DRINK quantities: units sold, demand, capacity, inventory,
- *     shipping. So a firm moves ~10,000 drinks/round, and $7.65 × 10,000 = ~$76,500 rev.
- *
- * VOLUME_DISPLAY must equal MONEY_DISPLAY (since prices are ×1) for the identity to hold.
- * fmt.price is ×1; fmt.int is the drink-VOLUME formatter (×VOLUME_DISPLAY, used only for
- * volumes — never plain counts like rounds/ranks, which render raw). Money the player
- * TYPES is divided back out before it reaches the engine (see toEngineMoney).
+ * NOTE: games created BEFORE the engine rescale (their persisted config is toy
+ * scale) will render their true engine numbers here — small but internally
+ * consistent. New games read at real scale.
  */
-export const MONEY_DISPLAY = 100;
-export const VOLUME_DISPLAY = MONEY_DISPLAY; // drink volumes scale with money (prices are ×1)
-/** engine units → display dollars (for input `value=` and readouts not using fmt). */
+export const MONEY_DISPLAY = 1;
+export const VOLUME_DISPLAY = MONEY_DISPLAY; // drink volumes share the money scale (prices per-drink)
+/** engine units → display dollars (identity since DW-029; kept for call-site stability). */
 export const toDisplayMoney = (n: number): number => n * MONEY_DISPLAY;
-/** display dollars → engine units (for money input onChange handlers). */
+/** display dollars → engine units (identity since DW-029). */
 export const toEngineMoney = (n: number): number => n / MONEY_DISPLAY;
 
 export const fmt = {
@@ -134,6 +129,35 @@ export const ZONE_TONE: Record<string, string> = {
   "Mixed-use": "var(--color-gold)",
   Waterfront: "var(--color-aero)",
 };
+
+/** A facility type's producer↔retail mix (0 = pure retail, 1 = pure producer). Drives what a
+ *  district is worth to it — a production brewery lives for output/cheap land, a taproom for the
+ *  brand halo. Reads the producer/retail SPECTRUM the same way the engine does. */
+export function producerWeight(t: FacilityTypeConfig): number {
+  const prod = t.production_capacity ?? t.capacity_contribution ?? 0;
+  const retail = t.retail_draw ?? 0;
+  return prod / (prod + retail || 1);
+}
+
+/** How well a district SUITS a facility type — the single "is this a good spot?" number behind
+ *  the founding recommendation and the type-aware auto-siting fallback. Producers reward output
+ *  (capacity_mult) and punish rent; retail rewards the district brand draw and lightly punishes
+ *  rent. Purely a ranking heuristic (the engine math is unchanged); higher = better fit. */
+export function districtFitScore(t: FacilityTypeConfig, d: DistrictConfig): number {
+  const pw = producerWeight(t), rw = 1 - pw;
+  const out = d.capacity_mult ?? 1, rent = d.rent_mult ?? 1, brand = d.brand_boost ?? 0;
+  return pw * (out - (rent - 1) * 0.6) + rw * (brand / 3 - (rent - 1) * 0.3);
+}
+
+/** Districts whose zoning permits a facility type (keyed by district kind → ZONE_OF.allow). */
+export function allowedDistrictsForType(typeId: string, districts: DistrictConfig[]): DistrictConfig[] {
+  return districts.filter((d) => (ZONE_OF[d.kind]?.allow ?? []).includes(typeId));
+}
+
+/** Zoning-permitted districts for a type, best fit first — [0] is the recommended home. */
+export function rankDistrictsForType(t: FacilityTypeConfig, districts: DistrictConfig[]): DistrictConfig[] {
+  return allowedDistrictsForType(t.id, districts).sort((a, b) => districtFitScore(t, b) - districtFitScore(t, a));
+}
 
 /** Single-letter tags + a one-line role note for each facility type (City View pins/cards). */
 export const FAC_TAG: Record<string, string> = { brewery_small: "n", brewery_large: "B", taproom: "T", canning_line: "C", brewpub: "P", bottle_shop: "S" };

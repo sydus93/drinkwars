@@ -7,13 +7,16 @@ import { Button } from "../components/ui.js";
 import { ModeSelector } from "./ModeSelector.js";
 import { Avatar, SkillStars } from "../components/People.js";
 import { FacilityChip, Emblem, EMBLEM_IDS } from "../components/FacilityGlyph.js";
+import { FoundingSiteMap } from "../components/CityView.js";
 import { FIRM_COLORS } from "../lib/teamColors.js";
 import { fmt } from "../labels.js";
 
-/** A founding facility: a type, optionally sited on a specific home parcel (when geography
- *  is on, the player picks the parcel; otherwise it's a district-less legacy build). */
+/** A founding facility: a type sited at a chosen spot. `district` is where its rent/output/brand
+ *  economics come from; `lot` is the specific home parcel (when spatial siting is available). The
+ *  player picks the location in the City View that pops up when they add a facility. */
 export interface FoundingFacility {
   type: string;
+  district?: string;
   lot?: string;
 }
 
@@ -49,14 +52,17 @@ export function FirmBuilder({ onStart, busy }: { onStart: (c: FoundingChoices) =
   const [showModes, setShowModes] = useState(false);
   const [facPick, setFacPick] = useState<FoundingFacility[]>([]);
   const [hirePick, setHirePick] = useState<string[]>([]);
+  const [siteFor, setSiteFor] = useState<string | null>(null); // facility type currently being sited (City View popup open)
 
   const cfg = useMemo(() => resolveConfig(Object.keys(modules).length ? ({ modules } as unknown as ConfigOverride) : undefined), [modules]);
   const facOn = !!cfg.modules?.facilities?.enabled;
   const empOn = !!cfg.modules?.employees?.enabled;
   const facTypes = facOn ? cfg.modules?.facilities?.types ?? [] : [];
+  const districts = cfg.modules?.facilities?.districts ?? [];
   const facMax = cfg.modules?.facilities?.max_facilities ?? 0;
   const candidates = empOn ? generateHiringMarket(cfg, cfg.game.seed, 0) : [];
   const roleLabel = (id: string) => cfg.modules?.employees?.roles.find((r) => r.id === id)?.label ?? id;
+  const districtLabel = (id?: string) => districts.find((d) => d.id === id)?.label ?? id ?? "—";
   const startCash = cfg.init.starting_cash;
   const typeOf = (id: string) => facTypes.find((t) => t.id === id);
   const facCost = facPick.reduce((s, f) => s + (typeOf(f.type)?.base_cost ?? 0), 0);
@@ -68,10 +74,16 @@ export function FirmBuilder({ onStart, busy }: { onStart: (c: FoundingChoices) =
   const steps = ["Identity", "The field", "Founding", "Review"];
   const finish = () => onStart({ name, tagline: "", color, emblem, difficulty, modules, founding: { facilities: facPick, hires: hirePick } });
 
-  // Founding sites a facility TYPE in the single home market (one per type). The lot is left
-  // unset — the controller auto-assigns a free home parcel — so founding stays a simple
-  // "what do you open with" choice; where each site sits is decided later in the City View.
-  const toggleFac = (id: string) => setFacPick((p) => (p.some((f) => f.type === id) ? p.filter((f) => f.type !== id) : p.length < facMax ? [...p, { type: id }] : p));
+  // Adding a facility opens the City View so the player picks WHERE it opens — the district
+  // (rent × output × brand) it sits in is a real, season-long tradeoff, so the choice is made
+  // up front rather than auto-assigned. `placeFac` handles both first placement and "Move".
+  const addFac = (id: string) => { if (facPick.some((f) => f.type === id) || facPick.length >= facMax) return; setSiteFor(id); };
+  const placeFac = (loc: { lot?: string; district: string }) => {
+    const id = siteFor; if (!id) return;
+    setFacPick((p) => [...p.filter((f) => f.type !== id), { type: id, lot: loc.lot, district: loc.district }]);
+    setSiteFor(null);
+  };
+  const removeFac = (id: string) => setFacPick((p) => p.filter((f) => f.type !== id));
   const toggleHire = (id: string) => setHirePick((p) => (p.includes(id) ? p.filter((x) => x !== id) : p.length < FOUNDING_HIRE_CAP ? [...p, id] : p));
 
   // The live identity card + how the firm's sites read on the map — the design's
@@ -114,7 +126,7 @@ export function FirmBuilder({ onStart, busy }: { onStart: (c: FoundingChoices) =
 
       <div className="rounded-2xl border border-line bg-panel p-4">
         <div className="mb-2 font-mono text-[0.55rem] uppercase tracking-[0.1em] text-inksoft">You open round 1 with</div>
-        {([["Seed capital", fmt.money(startCash)], ["Home lease", "1 lot"], ["Format", `${cfg.game.n_rounds ?? 16}-round season`]] as [string, string][]).map(([k, v]) => (
+        {([["Seed capital", fmt.money(startCash)], facOn ? ["Starting sites", facPick.length ? `${facPick.length} sited` : "pick on the map"] : ["Home lease", "1 lot"], ["Format", `${cfg.game.n_rounds ?? 16}-round season`]] as [string, string][]).map(([k, v]) => (
           <div key={k} className="flex justify-between border-b border-line py-1.5 last:border-0"><span className="text-[0.8rem] text-ink">{k}</span><span className="font-mono text-[0.72rem] font-bold text-copperdeep">{v}</span></div>
         ))}
       </div>
@@ -234,22 +246,33 @@ export function FirmBuilder({ onStart, busy }: { onStart: (c: FoundingChoices) =
                     <div>
                       <div className="mb-1.5 flex items-baseline justify-between">
                         <div className="text-sm font-semibold text-ink">Starting facilities <span className="text-[0.7rem] font-normal text-inksoft">· {facPick.length}/{facMax}</span></div>
-                        <div className="text-[0.66rem] text-inksoft">Open in your home market · Front Range</div>
+                        <div className="text-[0.66rem] text-inksoft">Home market · Front Range — you choose the district</div>
                       </div>
                       <div className="grid gap-1.5 sm:grid-cols-2">
                         {facTypes.map((t) => {
-                          const on = facPick.some((f) => f.type === t.id);
+                          const pick = facPick.find((f) => f.type === t.id);
+                          const on = !!pick;
                           const afford = on || (remaining - t.base_cost >= 0 && facPick.length < facMax);
                           return (
-                            <button key={t.id} type="button" onClick={() => toggleFac(t.id)} disabled={!afford} className={`flex items-center gap-2 rounded-md border p-2.5 text-left transition-colors disabled:opacity-40 ${on ? "border-copper bg-copper/[0.06]" : "border-line hover:border-copper"}`}>
+                            <div key={t.id} className={`flex items-center gap-2 rounded-md border p-2.5 ${on ? "border-copper bg-copper/[0.06]" : afford ? "border-line" : "border-line opacity-40"}`}>
                               <FacilityChip type={t.id} color={color} size={26} mine />
                               <div className="min-w-0 flex-1">
                                 <div className="text-sm font-semibold text-ink">{t.label}</div>
-                                <div className="text-[0.64rem] text-inksoft">+{fmt.int(t.production_capacity ?? t.capacity_contribution ?? 0)} units/rd{(t.retail_draw ?? 0) > 0 ? ` · +${fmt.int(t.retail_draw ?? 0)} retail` : ""} · {fmt.money(t.fixed_cost)}/rd</div>
+                                {on ? (
+                                  <div className="truncate text-[0.64rem] font-semibold text-copperdeep">📍 {districtLabel(pick!.district)} · {fmt.money(t.fixed_cost)}/rd upkeep</div>
+                                ) : (
+                                  <div className="text-[0.64rem] text-inksoft">+{fmt.int(t.production_capacity ?? t.capacity_contribution ?? 0)} drinks/rd{(t.retail_draw ?? 0) > 0 ? ` · +${fmt.int(t.retail_draw ?? 0)} retail` : ""} · {fmt.money(t.base_cost)}</div>
+                                )}
                               </div>
-                              <span className="tnum shrink-0 text-[0.72rem] text-copperdeep">{fmt.money(t.base_cost)}</span>
-                              <span className="shrink-0 text-[0.7rem] font-semibold text-copperdeep">{on ? "✓" : "+"}</span>
-                            </button>
+                              {on ? (
+                                <div className="flex shrink-0 items-center gap-1">
+                                  <button type="button" onClick={() => setSiteFor(t.id)} className="rounded border border-line2 px-1.5 py-1 font-mono text-[0.55rem] font-semibold uppercase tracking-wide text-copperdeep">Move</button>
+                                  <button type="button" onClick={() => removeFac(t.id)} className="rounded border border-line2 px-1.5 py-1 font-mono text-[0.55rem] font-semibold uppercase tracking-wide text-inksoft">Remove</button>
+                                </div>
+                              ) : (
+                                <button type="button" onClick={() => addFac(t.id)} disabled={!afford} className="shrink-0 rounded border border-copper px-2 py-1.5 font-mono text-[0.6rem] font-semibold uppercase tracking-wide text-copperdeep transition-colors hover:bg-copper/10 disabled:opacity-40">Site →</button>
+                              )}
+                            </div>
                           );
                         })}
                       </div>
@@ -288,7 +311,7 @@ export function FirmBuilder({ onStart, busy }: { onStart: (c: FoundingChoices) =
               <div className="grid content-start gap-2 text-sm">
                 <Row label="Rivals" value={DIFFICULTIES.find((d) => d.id === difficulty)?.label ?? difficulty} />
                 <Row label="Expansions" value={Object.keys(modules).length ? `${Object.keys(modules).length} on` : "Standard game"} />
-                {facOn && <Row label="Starting facilities" value={facPick.length ? facPick.map((f) => typeOf(f.type)?.label ?? f.type).join(", ") : "None"} />}
+                {facOn && <Row label="Starting facilities" value={facPick.length ? facPick.map((f) => `${typeOf(f.type)?.label ?? f.type} · ${districtLabel(f.district)}`).join(", ") : "None"} />}
                 {empOn && <Row label="Founding team" value={hirePick.length ? `${hirePick.length} hired` : "None"} />}
                 {hasFounding && <Row label="Opening cash after founding" value={fmt.money(remaining)} strong />}
                 <p className="mt-2 text-[0.74rem] leading-snug text-inksoft">Your founding picks are queued into round one — you can still adjust them before you brew.</p>
@@ -308,6 +331,26 @@ export function FirmBuilder({ onStart, busy }: { onStart: (c: FoundingChoices) =
         </div>
         <p className="mt-4 font-mono text-[0.7rem] tracking-wide text-inksoft">Single-player · 16 rounds · seven rival breweries</p>
       </div>
+
+      {/* City View popup — choose WHERE the selected facility opens (district = rent/output/brand) */}
+      {siteFor && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-3 backdrop-blur-sm sm:p-4" onMouseDown={(ev) => { if (ev.target === ev.currentTarget) setSiteFor(null); }}>
+          <div className="relative flex max-h-[94vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-line2 bg-paper shadow-2xl">
+            <header className="flex items-center gap-2.5 border-b border-line px-4 py-3">
+              <FacilityChip type={siteFor} color={color} size={24} mine />
+              <div className="min-w-0">
+                <div className="display text-lg leading-tight text-ink">Where should your {typeOf(siteFor)?.label ?? "facility"} open?</div>
+                <div className="text-[0.72rem] leading-snug text-inksoft">Rent, output and brand draw all follow the district — pick the spot that fits the build.</div>
+              </div>
+              <span className="flex-1" />
+              <button type="button" onClick={() => setSiteFor(null)} className="shrink-0 rounded-md border border-line2 px-3 py-1.5 text-sm text-inksoft transition-colors hover:border-line hover:text-ink">Cancel</button>
+            </header>
+            <div className="overflow-y-auto p-4">
+              <FoundingSiteMap cfg={cfg} color={color} placed={facPick.filter((f) => f.type !== siteFor)} sitingType={siteFor} onPick={placeFac} />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
