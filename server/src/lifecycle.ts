@@ -131,7 +131,7 @@ export class GameOrchestrator {
    * student from reading the join code or another team. `userId` is the caller's
    * resolved identity (a roster user via claim_code, or an ephemeral anon user).
    */
-  async joinGame(code: string, displayName: string, userId: string, opts: { teamId?: string; role?: string } = {}): Promise<{ gameId: string; teamId: string; firmId: FirmId; role?: string }> {
+  async joinGame(code: string, displayName: string, userId: string, opts: { teamId?: string; role?: string } = {}): Promise<{ gameId: string; teamId: string; firmId: FirmId; role?: string; claim?: string }> {
     const game = await this.store.getGameByCode(code);
     if (!game) throw new LifecycleError(`no game found for join code "${code}"`);
     const teams = await this.store.getTeams(game.id);
@@ -140,10 +140,15 @@ export class GameOrchestrator {
       // Returning player keeps their seat (recovered from storage) unless they pick a new one.
       if (opts.role) await this.store.setMemberRole(mine.id, userId, opts.role);
       const role = opts.role ?? (await this.store.getMemberRole(mine.id, userId)) ?? undefined;
-      return { gameId: game.id, teamId: mine.id, firmId: mine.firm_id, role };
+      return { gameId: game.id, teamId: mine.id, firmId: mine.firm_id, role, claim: await this.ensureClaimCode(userId) };
     }
     if (!(await this.store.getUser(userId))) {
-      await this.store.createUser({ id: userId, role: "student", email: null, consent: false, deid_code: `deid_${userId.slice(0, 8)}` });
+      // A fresh (anonymous) joiner: mint the user WITH a durable claim code + display
+      // name, so even a casual player gets optional persistent identity for free — they
+      // can return to this brewery and their game list later (getMyGames), no instructor
+      // provisioning required. Roster students arrive via a claim code and already have
+      // both, so this branch is skipped for them.
+      await this.store.createUser({ id: userId, role: "student", email: null, consent: false, deid_code: `deid_${userId.slice(0, 8)}`, display_name: displayName || null, claim_code: GameOrchestrator.makeClaimCode() });
     }
     let target: TeamRecord | undefined;
     if (game.firm_mode === "team") {
@@ -159,7 +164,19 @@ export class GameOrchestrator {
     await this.store.addTeamMember(target.id, userId);
     if (opts.role) await this.store.setMemberRole(target.id, userId, opts.role); // persist the seat (authoritative across devices)
     if (wasEmpty) await this.store.setTeamName(target.id, displayName); // the first member names the firm
-    return { gameId: game.id, teamId: target.id, firmId: target.firm_id, role: opts.role };
+    return { gameId: game.id, teamId: target.id, firmId: target.firm_id, role: opts.role, claim: await this.ensureClaimCode(userId) };
+  }
+
+  /** The user's durable claim code, minting one if they somehow lack it (a legacy
+   *  anonymous user created before auto-issue). Never overwrites an existing code, so a
+   *  roster student's provisioned credential is preserved. */
+  private async ensureClaimCode(userId: string): Promise<string | undefined> {
+    const u = await this.store.getUser(userId);
+    if (!u) return undefined;
+    if (u.claim_code) return u.claim_code;
+    const claim = GameOrchestrator.makeClaimCode();
+    await this.store.upsertUser({ ...u, claim_code: claim });
+    return claim;
   }
 
   /**

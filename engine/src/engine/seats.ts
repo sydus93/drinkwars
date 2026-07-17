@@ -14,36 +14,45 @@
  */
 import type { FirmDecision } from "../types.js";
 
-export type SeatDesk = "commercial" | "operations" | "finance" | "relations";
+export type SeatDesk = "commercial" | "operations" | "people" | "finance" | "strategy";
 
 /** A role's primary desk. "all" = a generalist seat (CEO / solo controller / a lone
- *  member) that fills every desk, then specialists override their own slice. */
+ *  member) that fills every desk, then specialists override their own slice. The CEO
+ *  stays generalist (integrator + gap-filler) and owns the `strategy` desk by default —
+ *  the corporate-development/external levers no functional specialist holds. (DW-031 L1.5:
+ *  the partition is realigned so each desk maps 1:1 to a C-suite discipline — brand sits
+ *  with the CMO, investor relations with the CFO, people on their own desk.) */
 export const ROLE_DESK: Record<string, SeatDesk | "all"> = {
   cmo: "commercial",
   coo: "operations",
-  chro: "operations", // people levers live on the operations desk
+  chro: "people",
   cfo: "finance",
   ceo: "all",
   member: "all",
 };
 
-/** Every FirmDecision lever, partitioned across the four desks (exactly once each).
- *  `firm_id` is excluded — it's identity, always carried from the base decision. */
+/** Every FirmDecision lever, partitioned across the five role-aligned desks (exactly once
+ *  each). `firm_id` is excluded — it's identity, always carried from the base decision. */
 export const DESK_LEVERS: Record<SeatDesk, (keyof FirmDecision)[]> = {
-  commercial: ["price", "presence", "pr_action", "market_presence", "market_supply", "buy_info", "beliefs", "reflection"],
+  // CMO — go-to-market + the brand stock that demand rides on.
+  commercial: ["price", "presence", "pr_action", "market_presence", "market_supply", "buy_info", "beliefs", "invest_B", "reflection"],
+  // COO — capacity, process, quality, facilities: the making of the product.
   operations: [
-    "run_rate", "invest_water_efficiency", "invest_rnd", "buy_vertical", "hire_roles", "fire_roles",
+    "run_rate", "invest_water_efficiency", "invest_rnd", "buy_vertical",
     "build_facilities", "maintain_facilities", "mothball_facilities", "reactivate_facilities", "divest_facilities",
-    "hire_employees", "fire_employees", "raise_employees", "poach_employees",
-    "invest_cap", "invest_process", "invest_Q", "invest_B", "invest_T_emp", "invest_T_inv", "invest_T_gov",
+    "invest_cap", "invest_process", "invest_Q",
   ],
-  finance: ["draw_convertible", "draw_rbf", "debt_draw", "debt_repay", "equity_raise", "dividend"],
-  relations: ["public_good_contributions", "acquisition_bid", "agreement_actions", "lobby_spend", "lobby_initiative", "lobby_counter", "exit_action"],
+  // CHRO — the organization: staffing, wages, morale/employee relations.
+  people: ["hire_roles", "fire_roles", "hire_employees", "fire_employees", "raise_employees", "poach_employees", "invest_T_emp"],
+  // CFO — capital structure, distributions, and the investor relationship.
+  finance: ["draw_convertible", "draw_rbf", "debt_draw", "debt_repay", "equity_raise", "dividend", "invest_T_inv"],
+  // CEO / Corporate development — deals, alliances, government affairs, exit.
+  strategy: ["public_good_contributions", "acquisition_bid", "agreement_actions", "lobby_spend", "lobby_initiative", "lobby_counter", "exit_action", "invest_T_gov"],
 };
 
 /** All lever keys (every desk's fields). Used by the "all" / generalist seat. */
 export const ALL_LEVERS: (keyof FirmDecision)[] = [
-  ...DESK_LEVERS.commercial, ...DESK_LEVERS.operations, ...DESK_LEVERS.finance, ...DESK_LEVERS.relations,
+  ...DESK_LEVERS.commercial, ...DESK_LEVERS.operations, ...DESK_LEVERS.people, ...DESK_LEVERS.finance, ...DESK_LEVERS.strategy,
 ];
 
 /** One seat's contribution: the levers it set, plus its role (or an explicit desk). */

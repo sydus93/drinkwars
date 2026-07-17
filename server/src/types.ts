@@ -172,6 +172,11 @@ export interface DistinctivenessRow {
  * upserts as a pact dissolves.
  */
 export interface StorageAdapter {
+  // Liveness — a cheap DB touch for the /health keep-alive (see the keep-alive
+  // GitHub Action). Supabase: a HEAD count so the project registers activity and
+  // Supabase's free-tier inactivity auto-pause never trips. Memory: a no-op.
+  ping(): Promise<void>;
+
   // Game
   createGame(g: GameRecord): Promise<void>;
   getGame(id: string): Promise<GameRecord | null>;

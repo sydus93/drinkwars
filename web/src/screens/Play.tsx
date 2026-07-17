@@ -10,6 +10,9 @@ import { Events } from "../components/Events.js";
 import { FirmDetail } from "../components/FirmDetail.js";
 import { parseEvents } from "../components/eventFeed.js";
 import { Boardroom } from "../components/Boardroom.js";
+import { DeskCockpit } from "../components/DeskCockpit.js";
+import { RoundTable } from "../components/RoundTable.js";
+import { Analysis } from "../components/Analysis.js";
 import { Sparkline } from "../components/Sparkline.js";
 import { Trends } from "../components/Trends.js";
 import { Field } from "../components/Field.js";
@@ -26,7 +29,7 @@ const SEAT_LABEL: Record<string, string> = { ceo: "CEO", cfo: "CFO", cmo: "CMO",
 /** Primary destinations (design: Review · Decide · Map). Distribution is a drawer
  *  inside Map / a panel inside Decide, NOT a destination. */
 type Dest = "review" | "decide" | "map";
-type RTab = "dispatch" | "trends" | "field";
+type RTab = "dispatch" | "trends" | "analysis" | "field";
 
 const NAV_ICON: Record<Dest, JSX.Element> = {
   review: <path d="M4 5h13v14H5a1 1 0 0 1-1-1ZM17 8h3v9a2 2 0 0 1-2 2M7 8h7M7 11h7M7 14h4" />,
@@ -40,8 +43,9 @@ const DESKS: { id: DeskId; label: string; color: string }[] = [
   { id: "all", label: "All", color: "var(--color-inksoft)" },
   { id: "commercial", label: "Commercial", color: "var(--color-copper)" },
   { id: "operations", label: "Operations", color: "var(--color-aero)" },
+  { id: "people", label: "People", color: "var(--color-gold)" },
   { id: "finance", label: "Finance", color: "var(--color-hop)" },
-  { id: "relations", label: "Relations", color: "var(--color-plum)" },
+  { id: "strategy", label: "Strategy", color: "var(--color-plum)" },
 ];
 
 export function Play({
@@ -92,6 +96,9 @@ export function Play({
   // (Map ↔ Decide edit ONE round decision, merged at submit). Reset each round.
   const [cityActions, setCityActions] = useState<CityActions>(() => emptyCityActions(view));
   const [decision, setDecision] = useState<FirmDecision | null>(null);
+  // Per-desk rationale note (the §4.4 "your call" field) — a thinking aid this pass; the seam
+  // for the team huddle. Keyed by desk so switching cockpits keeps each officer's note.
+  const [rationale, setRationale] = useState<Record<string, string>>({});
   const seenRound = useRef<string | null>(null);
 
   // New game (no results yet) → start on Decide.
@@ -102,6 +109,7 @@ export function Play({
   useEffect(() => {
     setInfoPreview(false);
     setPoaches([]);
+    setRationale({});
     setCityActions(emptyCityActions(view));
     let live = true;
     defaultDecision().then((dd) => {
@@ -236,6 +244,11 @@ export function Play({
               <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
               <div className="min-w-0">
                 {view.ownActive && !view.complete && (
+                  <div className="mb-4">
+                    <DeskCockpit desk={desk} view={view} seatRole={seatRole} rationale={rationale[desk] ?? ""} onRationale={(v) => setRationale((p) => ({ ...p, [desk]: v }))} />
+                  </div>
+                )}
+                {view.ownActive && !view.complete && (
                   <DecisionForm view={view} defaultDecision={defaultDecision} onPlay={handlePlay} busy={busy} infoCost={infoCost} onInfoChange={setInfoPreview} poaches={poaches} onPoach={queuePoach} cityActions={cityActions} decision={decision} setDecision={setDecision} desk={desk} submitLabel={submitLabel} footerNote={footerNote} />
                 )}
                 {!view.ownActive && !view.complete && (
@@ -252,18 +265,8 @@ export function Play({
               </div>
               <div className="grid content-start gap-4 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:self-start lg:overflow-y-auto">
                 <Standings view={view} onSelect={setDetailFirm} />
-                {view.seats.length > 0 && (
-                  <Card>
-                    <Eyebrow>Your firm's desks</Eyebrow>
-                    <div className="mt-1 grid gap-1">
-                      {view.seats.map((st, i) => (
-                        <div key={i} className="flex items-center justify-between text-[0.78rem]">
-                          <span className="truncate text-ink">{st.name} {st.role && <span className="font-mono text-[0.6rem] uppercase text-copperdeep">{st.role}</span>}{st.desk && st.desk !== "all" && <span className="text-[0.66rem] text-inksoft"> · {st.desk}</span>}</span>
-                          <span className="font-mono text-[0.58rem] font-bold uppercase tracking-wide" style={{ color: st.submitted ? "var(--color-hop)" : "var(--color-inksoft)" }}>{st.submitted ? "✓ in" : "waiting"}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </Card>
+                {view.ownActive && !view.complete && (
+                  <RoundTable view={view} rationale={rationale} seatRole={seatRole} onFocusDesk={setDesk} />
                 )}
                 {view.briefings.length > 0 && <Boardroom briefings={view.briefings} />}
                 {view.history.length > 1 && (
@@ -287,7 +290,7 @@ export function Play({
               <div className="sticky top-0 z-[5] flex flex-wrap items-center gap-2.5 rounded-t-[14px] border-b border-line bg-panel px-4 py-2.5">
                 <span className="display text-lg font-bold text-ink">Review</span>
                 <div className="inline-flex gap-0.5 rounded-[9px] border border-line2 bg-panel2 p-0.5">
-                  {([["dispatch", "Dispatch"], ["trends", "Trends"], ["field", "Field & Intel"]] as [RTab, string][]).map(([id, label]) => (
+                  {([["dispatch", "Dispatch"], ["trends", "Trends"], ["analysis", "Analysis"], ["field", "Field & Intel"]] as [RTab, string][]).map(([id, label]) => (
                     <button key={id} disabled={(id !== "dispatch") && !hasHistory} onClick={() => setRtab(id)} className="rounded-[7px] px-3 py-1.5 font-mono text-[0.62rem] uppercase tracking-wide transition-colors disabled:opacity-30" style={{ background: rtab === id ? "var(--color-panel)" : "transparent", color: rtab === id ? "var(--color-copperdeep)" : "var(--color-inksoft)", fontWeight: rtab === id ? 700 : 500, boxShadow: rtab === id ? "inset 0 1px 0 rgba(255,255,255,.6),0 1px 0 var(--color-line2)" : undefined }}>{label}</button>
                   ))}
                 </div>
@@ -317,6 +320,7 @@ export function Play({
                   </div>
                 )}
                 {rtab === "trends" && (hasHistory ? <Trends view={view} /> : <Card>Trends open once a round has resolved.</Card>)}
+                {rtab === "analysis" && (hasHistory ? <Analysis view={view} /> : <Card>The analysis dashboards open once a round has resolved.</Card>)}
                 {rtab === "field" && (hasHistory ? <Field view={view} infoActive={infoActive} onInspect={setDetailFirm} /> : <Card>Field intel opens once a round has resolved.</Card>)}
               </div>
             </div>

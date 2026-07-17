@@ -7,6 +7,8 @@ out/
 .vite/
 # Generated Edge Function bundle (regenerate: npm run build:edge)
 server/supabase/functions/drinkwars/drinkwars-core.js
+# Supabase CLI cache at repo root (linked-project state) — the real project lives in server/supabase/
+/supabase/
 
 # Logs & OS
 *.log

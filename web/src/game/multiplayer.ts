@@ -74,6 +74,17 @@ export async function fetchMyGames(claim: string, base: string = TRANSPORT_URL):
   return res.json();
 }
 
+/** What the public game-peek endpoint returns — enough to shape the Join flow
+ *  (firm_mode gates the C-suite seat picker) WITHOUT joining or minting a user. */
+export interface GamePeek { firmMode: "solo" | "team"; title: string | null; nRounds: number; round: number; lifecycle: string; slotsTotal: number; slotsOpen: number }
+
+/** Validate a join code + learn the game's shape before a student founds a team. */
+export async function peekGame(code: string, base: string = TRANSPORT_URL): Promise<GamePeek> {
+  const res = await fetch(`${base}/game?code=${encodeURIComponent(code.trim().toUpperCase())}`);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || "no game found for that code");
+  return res.json();
+}
+
 export class StudentClient {
   constructor(private base: string = TRANSPORT_URL) {}
   token = "";
@@ -83,11 +94,14 @@ export class StudentClient {
   nRounds = 0;
   firmMode: "solo" | "team" = "solo"; // team ⇒ this client submits its SEAT's slice
   role: string | null = null; // the player's C-suite seat in a team firm (null = solo controller)
+  claim = ""; // this player's durable return code (roster-provided OR auto-issued on join)
+  claimIssued = false; // true when the server AUTO-issued the code this join (no claim entered) → worth surfacing
   private last: RawView | null = null;
   private lastDecision: FirmDecision | null = null;
 
   /** Join by code. Roster students pass their `claim` code (persistent identity); team
-   *  games take a `role` (C-suite seat) and optional `teamId` (which firm to join). */
+   *  games take a `role` (C-suite seat) and optional `teamId` (which firm to join). An
+   *  anonymous joiner gets a claim code auto-issued (returned as `claim`). */
   async join(code: string, name: string, opts: { claim?: string; teamId?: string; role?: string } = {}): Promise<void> {
     const r = await api(this.base, "/join", { method: "POST", body: JSON.stringify({ code, name, claim: opts.claim, teamId: opts.teamId, role: opts.role }) });
     this.token = r.token;
@@ -97,13 +111,15 @@ export class StudentClient {
     this.nRounds = r.nRounds;
     this.firmMode = r.firmMode === "team" ? "team" : "solo";
     this.role = r.role ?? opts.role ?? null;
+    this.claim = r.claim ?? opts.claim ?? "";
+    this.claimIssued = !opts.claim && !!r.claim; // surfaced once for a casual player, not for roster students
     this.save();
   }
 
   /** Persist the (stateless, signed) token + config so a refresh resumes the SAME firm. */
   private save() {
     try {
-      localStorage.setItem("dw_mp", JSON.stringify({ token: this.token, config: this.config, firmId: this.firmId, nRounds: this.nRounds, firmMode: this.firmMode, role: this.role }));
+      localStorage.setItem("dw_mp", JSON.stringify({ token: this.token, config: this.config, firmId: this.firmId, nRounds: this.nRounds, firmMode: this.firmMode, role: this.role, claim: this.claim, claimIssued: this.claimIssued }));
     } catch {
       /* localStorage unavailable — just no resume */
     }
@@ -126,6 +142,8 @@ export class StudentClient {
       c.nRounds = s.nRounds ?? 0;
       c.firmMode = s.firmMode === "team" ? "team" : "solo";
       c.role = s.role ?? null;
+      c.claim = s.claim ?? "";
+      c.claimIssued = !!s.claimIssued;
       return c;
     } catch {
       return null;

@@ -30,16 +30,19 @@ const GOOD_BLURB: Record<string, string> = {
 };
 
 type InvestKey = "invest_Q" | "invest_B" | "invest_process" | "invest_T_emp" | "invest_T_inv" | "invest_T_gov";
-const INVEST_FIELDS: { key: InvestKey; label: string; hint: string }[] = [
-  { key: "invest_Q", label: STOCK_LABEL.Q, hint: "Brewing talent, recipes, and consistency." },
-  { key: "invest_B", label: STOCK_LABEL.B, hint: "Awareness, identity, and reputation." },
-  { key: "invest_process", label: STOCK_LABEL.process, hint: "Operational efficiency and yield." },
-  { key: "invest_T_emp", label: STOCK_LABEL.T_emp, hint: "Your taproom regulars and crew." },
-  { key: "invest_T_inv", label: STOCK_LABEL.T_inv, hint: "Standing with your lenders and investors." },
-  { key: "invest_T_gov", label: STOCK_LABEL.T_gov, hint: "Standing with your distributors and regulators." },
+// `desk` aligns each stock-investment slider to the officer who owns it (DW-031 L1.5) —
+// brand to the CMO, quality/process to the COO, employee relations to People, investor to
+// the CFO, regulator to Strategy — so a focused desk shows only its own capital calls.
+const INVEST_FIELDS: { key: InvestKey; label: string; hint: string; desk: DeskId }[] = [
+  { key: "invest_Q", label: STOCK_LABEL.Q, hint: "Brewing talent, recipes, and consistency.", desk: "operations" },
+  { key: "invest_B", label: STOCK_LABEL.B, hint: "Awareness, identity, and reputation.", desk: "commercial" },
+  { key: "invest_process", label: STOCK_LABEL.process, hint: "Operational efficiency and yield.", desk: "operations" },
+  { key: "invest_T_emp", label: STOCK_LABEL.T_emp, hint: "Your taproom regulars and crew.", desk: "people" },
+  { key: "invest_T_inv", label: STOCK_LABEL.T_inv, hint: "Standing with your lenders and investors.", desk: "finance" },
+  { key: "invest_T_gov", label: STOCK_LABEL.T_gov, hint: "Standing with your distributors and regulators.", desk: "strategy" },
 ];
 
-export type DeskId = "all" | "commercial" | "operations" | "finance" | "relations";
+export type DeskId = "all" | "commercial" | "operations" | "people" | "finance" | "strategy";
 
 export function DecisionForm({
   view,
@@ -423,12 +426,13 @@ export function DecisionForm({
           )}
         </Card>
 
-        {/* Investments */}
-        <Card className={deskCls("operations")}>
+        {/* Investments — each stock slider carries its owning desk, so a focused cockpit
+            shows only its own capital calls (brand→CMO, quality/process→COO, etc.). */}
+        <Card className={desk === "all" || INVEST_FIELDS.some((f) => f.desk === desk) ? "" : "hidden"}>
           <Eyebrow>Build the Brewery</Eyebrow>
           <div className="grid gap-3 sm:grid-cols-2">
             {INVEST_FIELDS.map((f) => (
-              <div key={f.key}>
+              <div key={f.key} className={deskCls(f.desk)}>
                 <div className="flex items-center justify-between">
                   <label className="text-sm font-semibold">{f.label}</label>
                   <span className="tnum text-xs text-inksoft">{fmt.money(d[f.key])}</span>
@@ -626,7 +630,7 @@ export function DecisionForm({
 
         {/* Team (MOD-B12) — named human capital */}
         {empOn && (
-          <Card className={deskCls("operations")}>
+          <Card className={deskCls("people")}>
             <div className="mb-2 flex items-center gap-2">
               <Eyebrow>Team</Eyebrow>
               <InfoDot title="Your team" align="right">
@@ -771,7 +775,7 @@ export function DecisionForm({
 
         {/* Expansion-module plays & programs (only the enabled ones render) */}
         {anyModuleControls && (
-          <Card className={desk === "finance" ? "hidden" : ""}>
+          <Card className={desk === "finance" || desk === "people" ? "hidden" : ""}>
             <div className="flex items-center gap-1.5">
               <Eyebrow>Plays &amp; Programs</Eyebrow>
               <InfoDot title="Expansion modes">These controls appear because your instructor enabled extra modes for this game. They're off in a standard game.</InfoDot>
@@ -1017,7 +1021,7 @@ export function DecisionForm({
 
         {/* Alliances (MOD-A05 contingent contracts + MOD-A06 renegotiation) */}
         {coopOn && (
-          <Card className={deskCls("relations")}>
+          <Card className={deskCls("strategy")}>
             <div className="flex items-center gap-1.5">
               <Eyebrow>Alliances</Eyebrow>
               <InfoDot title="Coopetition">Form a pact with a rival — pool brand, coordinate capacity, or share supply. The governance form is the real choice: a handshake costs trust to break, a formal contract costs cash but supports contingent clauses and renegotiation, a guild is powerful but draws antitrust.</InfoDot>

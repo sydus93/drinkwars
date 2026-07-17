@@ -66,11 +66,15 @@ test("a desk with no seat keeps the base value (nothing fabricated)", () => {
   assert.equal(merged.invest_cap, 0, "operations untouched → base");
 });
 
-test("ROLE_DESK maps the C-suite onto the four desks", () => {
+test("ROLE_DESK maps the C-suite onto the five role-aligned desks", () => {
   assert.equal(ROLE_DESK.cmo, "commercial");
   assert.equal(ROLE_DESK.cfo, "finance");
   assert.equal(ROLE_DESK.coo, "operations");
-  assert.equal(ROLE_DESK.chro, "operations");
+  assert.equal(ROLE_DESK.chro, "people"); // people now have their own desk (L1.5)
   assert.equal(ROLE_DESK.ceo, "all");
-  assert.equal(DESK_LEVERS.relations.includes("agreement_actions"), true);
+  assert.equal(DESK_LEVERS.strategy.includes("agreement_actions"), true);
+  // L1.5 realignment: brand → commercial, investor relations → finance, people → their desk.
+  assert.equal(DESK_LEVERS.commercial.includes("invest_B"), true);
+  assert.equal(DESK_LEVERS.finance.includes("invest_T_inv"), true);
+  assert.equal(DESK_LEVERS.people.includes("invest_T_emp"), true);
 });

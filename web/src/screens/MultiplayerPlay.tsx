@@ -15,6 +15,18 @@ import { setSelfFirm } from "../lib/teamColors.js";
 export function MultiplayerPlay({ client, onExit }: { client: StudentClient; onExit: () => void }) {
   const [raw, setRaw] = useState<RawView | null>(client.raw());
   const [busy, setBusy] = useState(false);
+  // A casual (anonymous) joiner gets a durable claim code auto-issued — surface it ONCE
+  // so they can return to this brewery on any device. Roster students entered their own,
+  // so the server flags it not-issued and this stays hidden. Dismissal is per-code.
+  const [showClaim, setShowClaim] = useState<boolean>(() => {
+    if (!client.claimIssued || !client.claim) return false;
+    try { return localStorage.getItem("dw_claim_ack") !== client.claim; } catch { return true; }
+  });
+  const dismissClaim = () => {
+    try { localStorage.setItem("dw_claim_ack", client.claim); } catch { /* ignore */ }
+    setShowClaim(false);
+  };
+  const copyClaim = () => { try { navigator.clipboard?.writeText(client.claim); } catch { /* ignore */ } };
 
   useEffect(() => { setSelfFirm(client.firmId); }, [client.firmId]);
 
@@ -70,19 +82,32 @@ export function MultiplayerPlay({ client, onExit }: { client: StudentClient; onE
   const submitLabel = raw.submitted ? "Update my decision" : `Submit decision (round ${view.round + 1})`;
 
   return (
-    <Play
-      view={view}
-      busy={busy || !open}
-      infoCost={client.infoCost()}
-      onPlay={submit}
-      defaultDecision={defaultDecision}
-      onReset={onExit}
-      mp
-      seatRole={client.role}
-      banner={banner}
-      submitLabel={submitLabel}
-      footerNote="Your classmates brew at the same time; the instructor resolves the round."
-      onExit={onExit}
-    />
+    <>
+      {showClaim && (
+        <div className="mx-auto mt-3 max-w-[980px] px-4">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border px-3 py-2" style={{ borderColor: "color-mix(in srgb, var(--color-copper) 55%, transparent)", background: "color-mix(in srgb, var(--color-copper) 10%, var(--color-panel))" }}>
+            <span className="font-mono text-[0.56rem] font-bold uppercase tracking-[0.12em] text-copperdeep">Your return code</span>
+            <span className="wordmark text-lg tracking-[0.22em] text-copperdeep">{client.claim}</span>
+            <span className="min-w-0 flex-1 text-[0.78rem] leading-snug text-inksoft">Save this to pick your brewery back up on any device — enter it under “Returning player.”</span>
+            <button onClick={copyClaim} className="rounded-md border border-line2 bg-panel px-2.5 py-1 font-mono text-[0.6rem] uppercase tracking-wide text-inksoft transition-colors hover:text-copper">Copy</button>
+            <button onClick={dismissClaim} className="rounded-md border border-copper px-2.5 py-1 font-mono text-[0.6rem] font-bold uppercase tracking-wide text-copperdeep transition-colors hover:bg-copper/10">Got it</button>
+          </div>
+        </div>
+      )}
+      <Play
+        view={view}
+        busy={busy || !open}
+        infoCost={client.infoCost()}
+        onPlay={submit}
+        defaultDecision={defaultDecision}
+        onReset={onExit}
+        mp
+        seatRole={client.role}
+        banner={banner}
+        submitLabel={submitLabel}
+        footerNote="Your classmates brew at the same time; the instructor resolves the round."
+        onExit={onExit}
+      />
+    </>
   );
 }

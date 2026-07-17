@@ -169,7 +169,26 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
   const path = url.pathname;
   const method = req.method ?? "GET";
   if (method === "OPTIONS") return send(res, 204, {});
-  if (method === "GET" && path === "/health") return send(res, 200, { ok: true, adapter: useSupabase ? "supabase" : "memory" });
+  if (method === "GET" && path === "/health") {
+    // Touch the store so a keep-alive ping registers DB activity in supabase mode.
+    let dbOk = false;
+    try { await store.ping(); dbOk = true; } catch { /* still counts as activity */ }
+    return send(res, 200, { ok: true, adapter: useSupabase ? "supabase" : "memory", db: dbOk });
+  }
+
+  // Public game peek — the Join screen validates the code + learns firm_mode BEFORE
+  // a student founds a team, so solo games never show the C-suite seat picker.
+  if (method === "GET" && path === "/game") {
+    const code = (url.searchParams.get("code") ?? "").toUpperCase();
+    const game = code ? await store.getGameByCode(code) : null;
+    if (!game) return send(res, 404, { error: "no game found for that code" });
+    const teams = await store.getTeams(game.id);
+    return send(res, 200, {
+      firmMode: game.firm_mode ?? "solo", title: game.title ?? null, nRounds: game.n_rounds,
+      round: game.current_round, lifecycle: game.lifecycle,
+      slotsTotal: teams.length, slotsOpen: teams.filter((t) => t.member_user_ids.length === 0).length,
+    });
+  }
 
   // ---- student ----
   if (method === "POST" && path === "/join") {
@@ -205,7 +224,7 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     }
     const token = randomUUID();
     sessions.set(token, { gameId: joined.gameId, teamId: joined.teamId, userId, role: joined.role });
-    return send(res, 200, { token, gameId: joined.gameId, teamId: joined.teamId, firmId: joined.firmId, nRounds: game.n_rounds, config: game.config, firmMode: game.firm_mode ?? "solo", role: joined.role ?? null });
+    return send(res, 200, { token, gameId: joined.gameId, teamId: joined.teamId, firmId: joined.firmId, nRounds: game.n_rounds, config: game.config, firmMode: game.firm_mode ?? "solo", role: joined.role ?? null, claim: joined.claim ?? null });
   }
   // A player's games (return-to-game / career), resolved by their durable claim code.
   if (method === "GET" && path === "/me/games") {

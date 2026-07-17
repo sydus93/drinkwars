@@ -1,0 +1,27 @@
+name: Supabase keep-alive
+
+# Drink Wars runs on Supabase's free tier, which auto-pauses a project after ~7 days
+# of inactivity. This job pings the deployed Edge Function daily; its /health route
+# does a HEAD count against Postgres, so the DATABASE itself registers activity, not
+# just Edge compute. The URL is the same public endpoint the web client already ships
+# (see web/package.json → deploy), and the function runs with verify_jwt disabled, so
+# no secrets / anon key are required. If this ever starts 401-ing, add the project's
+# publishable anon key as an `apikey:` header here.
+
+on:
+  schedule:
+    - cron: "0 12 * * *" # 12:00 UTC daily — comfortably inside the ~7-day pause window
+  workflow_dispatch: {} # manual run from the Actions tab
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Drink Wars Edge Function health
+        run: |
+          URL="https://kikmdmldfgakdabbsdcq.supabase.co/functions/v1/drinkwars/health"
+          echo "Pinging $URL"
+          body=$(curl -fsS --max-time 30 "$URL") || { echo "::error::keep-alive request failed"; exit 1; }
+          echo "Response: $body"
+          echo "$body" | grep -q '"ok":true' || { echo "::error::unexpected health response"; exit 1; }
+          echo "$body" | grep -q '"db":true'  || echo "::warning::edge reachable but DB touch failed (project may be paused)"

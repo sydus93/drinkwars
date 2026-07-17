@@ -70,6 +70,13 @@ const mapPublicRound = (r: any): PublicRoundRecord => ({
 export class SupabaseAdapter implements StorageAdapter {
   constructor(private db: SupabaseClient) {}
 
+  // ── Liveness ────────────────────────────────────────────────────────────────
+  // A HEAD count — no rows shipped, just enough of a query to register project
+  // activity so Supabase's free-tier inactivity auto-pause never trips.
+  async ping(): Promise<void> {
+    must(await this.db.from("games").select("id", { count: "exact", head: true }));
+  }
+
   // ── Game ──────────────────────────────────────────────────────────────────
   async createGame(g: GameRecord): Promise<void> {
     must(await this.db.from("games").insert({

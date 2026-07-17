@@ -4,6 +4,8 @@ import { FirmBuilder } from "./screens/FirmBuilder.js";
 import { setPlayerColor, setPlayerEmblem } from "./lib/teamColors.js";
 import { Play } from "./screens/Play.js";
 import { Lobby } from "./screens/Lobby.js";
+import { ScenarioPicker } from "./screens/ScenarioPicker.js";
+import type { Scenario } from "./scenarios/catalog.js";
 import { Join } from "./screens/Join.js";
 import { PlayerHome } from "./screens/PlayerHome.js";
 import { MultiplayerPlay } from "./screens/MultiplayerPlay.js";
@@ -70,7 +72,23 @@ function Solo() {
   return <Play view={view} busy={busy} infoCost={infoCost()} onPlay={play} defaultDecision={defaultDecision} onReset={reset} />;
 }
 
-type Screen = "lobby" | "solo" | "join" | "instructor" | "player";
+/** Scenario mode: pick a focused challenge → play it with the objective pinned as a banner,
+ *  and the debrief surfaced when the short season completes. Reuses the whole Solo stack;
+ *  the only new inputs are the config override + the objective/debrief strings. */
+function Scenarios({ onExit }: { onExit: () => void }) {
+  const { view, busy, error, start, play, defaultDecision, infoCost, reset } = useGame();
+  const [active, setActive] = useState<Scenario | null>(null);
+  if (!active) return <ScenarioPicker onStart={(s) => { setActive(s); start({ breweryName: "Your Brewery", difficulty: s.id === "blue-water" ? "cutthroat" : "competitive", override: s.override }); }} onBack={onExit} />;
+  if (!view) return (
+    <div className="mx-auto mt-16 max-w-[640px] px-4 text-center text-inksoft">
+      {error ? <span className="text-brick">Couldn't start the scenario: {error}.</span> : "Setting up the scenario…"}
+    </div>
+  );
+  const banner = view.complete ? `Debrief — ${active.debrief}` : `Objective — ${active.objective}`;
+  return <Play view={view} busy={busy} infoCost={infoCost()} onPlay={play} defaultDecision={defaultDecision} onReset={() => { setActive(null); reset(); }} banner={banner} onExit={onExit} />;
+}
+
+type Screen = "lobby" | "solo" | "scenario" | "join" | "instructor" | "player";
 
 export function App() {
   // Resume a saved student session on load (refresh → same firm, not a new slot).
@@ -81,6 +99,7 @@ export function App() {
     <>
       {screen === "lobby" && <Lobby onPick={setScreen} />}
       {screen === "solo" && <Solo />}
+      {screen === "scenario" && <Scenarios onExit={() => setScreen("lobby")} />}
       {screen === "join" && MP_ENABLED &&
         (student ? (
           <MultiplayerPlay client={student} onExit={() => { setStudent(null); setScreen("lobby"); }} />

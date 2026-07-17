@@ -28,6 +28,10 @@ export class InMemoryAdapter implements StorageAdapter {
   private reflections: ReflectionRow[] = [];
   private distinctiveness: DistinctivenessRow[] = [];
 
+  async ping(): Promise<void> {
+    /* in-memory store has nothing to keep warm */
+  }
+
   async createGame(g: GameRecord): Promise<void> {
     if (this.games.has(g.id)) throw new Error(`game ${g.id} already exists`);
     this.games.set(g.id, clone(g));

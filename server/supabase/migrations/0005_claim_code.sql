@@ -1,0 +1,23 @@
+-- Drink Wars — durable per-student CLAIM CODE (the missing column behind
+-- "supabase: column users.claim_code does not exist").
+--
+-- The accounts/roster layer (0004) shipped its APP CODE — the Supabase adapter's
+-- USER_COLS select and provisionRoster() both read/write users.claim_code — but the
+-- matching column was never added to the schema, so EVERY user read (even an
+-- anonymous join, which calls getUser()) throws. This migration closes that gap.
+--
+-- Apply AFTER 0004_accounts_roles.sql. Additive, idempotent, nullable, and UNIQUE
+-- (Postgres unique ignores NULLs, so legacy/anonymous users are unaffected) — same
+-- all-off-parity spirit as 0004. Safe to re-run.
+--
+-- claim_code is the durable credential the instructor distributes: a student enters
+-- it on Join to (a) claim a seat under their persistent identity and (b) return to /
+-- list their games across a term (see GameOrchestrator.provisionRoster + getMyGames).
+--
+-- IMPORTANT (prod): if prod's 0004 history was applied by hand rather than via
+--   `supabase db push`, run `supabase migration list` first and, if 0004 shows only
+--   locally, `supabase migration repair --status applied 0004` before pushing 0005,
+--   so 0004_init's ADD COLUMNs don't re-run. (They're all `if not exists`, so a
+--   re-run is harmless either way — this note just keeps the history clean.)
+
+alter table users add column if not exists claim_code text unique;  -- durable seat/return credential
