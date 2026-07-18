@@ -343,6 +343,27 @@ export function decideAdaptive(lean: Lean, f: FirmState, world: WorldState, c: C
     spend = Object.fromEntries(Object.entries(spend).map(([k, v]) => [k, v * scale])) as typeof spend;
   }
 
+  // Mutual-consent coopetition: answer alliance overtures addressed to this firm.
+  // Deterministic, explainable policy — supply sharing is a plain mutual cost cut
+  // (accept); joint marketing pools brand (accept); capacity coordination only makes
+  // sense following a BIGGER rival (their restraint props prices more than ours binds
+  // us) and is antitrust bait besides, so accept only when the proposer out-scales us.
+  // Open renegotiation calls get the same treatment: a cost-cutting or unchanged deal
+  // is accepted, anything else rejected — so a human's call never hangs on an NPC.
+  const agreementActions: FirmDecision["agreement_actions"] = [];
+  for (const p of world.pending_agreements ?? []) {
+    if (!p.counterparties.includes(f.id) || p.accepted.includes(f.id)) continue;
+    const proposer = world.firms.find((x) => x.id === p.proposer);
+    const ok = p.template !== "capacity_coordination" || (proposer ? proposer.cap > f.cap : false);
+    agreementActions.push({ type: ok ? "accept_proposal" : "decline_proposal", proposal_id: p.id });
+  }
+  for (const ag of world.agreements) {
+    if (!ag.active || !ag.renegotiation || !ag.signatories.includes(f.id) || ag.renegotiation.caller === f.id) continue;
+    const to = ag.renegotiation.proposed_template ?? ag.template;
+    const ok = to === "supply_share" || to === ag.template;
+    agreementActions.push({ type: "renegotiate_response", agreement_id: ag.id, response: ok ? "accept" : "reject" });
+  }
+
   return {
     firm_id: f.id,
     price,
@@ -360,7 +381,7 @@ export function decideAdaptive(lean: Lean, f: FirmState, world: WorldState, c: C
     equity_raise: 0,
     dividend: 0,
     buy_info: shockSeason,
-    agreement_actions: [],
+    agreement_actions: agreementActions,
     exit_action: null,
     // Expansion-module levers (undefined/empty when the module is off).
     pr_action: prAction,

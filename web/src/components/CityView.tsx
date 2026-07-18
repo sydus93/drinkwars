@@ -686,14 +686,26 @@ export function CityView({ view, actions, setActions, onInspect, extraBuilds = [
                   <div className="text-[0.68rem] italic text-inksoft">{z.zone} · choose what to build</div>
                   <div className="mt-2 grid gap-1">
                     {facTypes.filter((t) => z.allow.includes(t.id)).map((t) => { const on = selType === t.id; const canAfford = view.own.cash - queuedSpend >= t.base_cost; return (
-                      <button key={t.id} onClick={() => setSiting({ lot: st.lot, district: st.district, type: t.id })} className="flex items-center gap-2 rounded-lg border px-2 py-1.5 text-left" style={{ borderColor: on ? "var(--color-copperdeep)" : "var(--color-line2)", background: on ? "color-mix(in srgb, var(--color-copper) 10%, var(--color-panel))" : "var(--color-panel)" }}>
+                      <button key={t.id} onClick={() => setSiting({ ...st, type: t.id })} className="flex items-center gap-2 rounded-lg border px-2 py-1.5 text-left" style={{ borderColor: on ? "var(--color-copperdeep)" : "var(--color-line2)", background: on ? "color-mix(in srgb, var(--color-copper) 10%, var(--color-panel))" : "var(--color-panel)" }}>
                         <FacilityChip type={t.id} color={cssColor(youId)} size={18} />
                         <span className="min-w-0 flex-1"><span className="block truncate text-[0.8rem] font-semibold text-ink">{t.label}</span><span className="block text-[0.54rem] text-inksoft">{fmt.money(t.fixed_cost)}/rd upkeep</span></span>
                         <span className="tnum shrink-0 text-right text-[0.62rem] leading-tight" style={{ color: canAfford ? "var(--color-copperdeep)" : "var(--color-brick)" }}>{fmt.money(t.base_cost)}<span className="block text-[0.5rem] font-normal text-inksoft">to build</span></span>
                       </button>
                     ); })}
                   </div>
-                  <button onClick={build} disabled={!can} className="tt-btn tt-btn--go mt-2.5 w-full py-2 text-[0.62rem]" style={{ opacity: can ? 1 : 0.55, cursor: can ? "pointer" : "not-allowed", filter: can ? undefined : "grayscale(0.4)" }}>{!selType ? "Pick a type" : !selOk ? "Not permitted here" : !afford ? "Not enough cash" : `Build · ${fmt.money(capex)}`}</button>
+                  {/* Site competition: if a rival goes for this same parcel this round, the
+                      higher premium wins it — only the winner pays. No premium = you lose
+                      any contested tie. (The auction is engine-side; see facilities.ts.) */}
+                  {selType && (
+                    <div className="mt-2 flex items-center justify-between gap-2 rounded-lg border border-line2 bg-panel2 px-2.5 py-1.5">
+                      <div className="min-w-0">
+                        <div className="font-mono text-[0.52rem] uppercase tracking-wide text-inksoft">Bid premium · optional</div>
+                        <div className="text-[0.58rem] leading-snug text-inksoft">If a rival wants this parcel too, the higher bid takes it — only the winner pays.</div>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1"><span className="text-[0.7rem] text-inksoft">$</span><input type="number" min="0" step="1000" value={st.bid ?? 0} onChange={(e) => setSiting((s) => (s ? { ...s, bid: Math.max(0, +e.target.value) } : s))} className="w-20 text-right text-[0.7rem]" /></div>
+                    </div>
+                  )}
+                  <button onClick={build} disabled={!can} className="tt-btn tt-btn--go mt-2.5 w-full py-2 text-[0.62rem]" style={{ opacity: can ? 1 : 0.55, cursor: can ? "pointer" : "not-allowed", filter: can ? undefined : "grayscale(0.4)" }}>{!selType ? "Pick a type" : !selOk ? "Not permitted here" : !afford ? "Not enough cash" : `Build · ${fmt.money(capex)}${st.bid ? ` + ${fmt.money(st.bid)} bid` : ""}`}</button>
                 </>
               );
               return (
@@ -838,7 +850,7 @@ export function CityView({ view, actions, setActions, onInspect, extraBuilds = [
                       </div>
                       <div className="flex flex-col gap-1.5">
                         {facTypes.map((t) => { const allowed = z.allow.includes(t.id), isSel = selType === t.id, canAfford = view.own.cash - queuedSpend >= t.base_cost; return (
-                          <button key={t.id} onClick={() => allowed && setSiting({ lot: siting.lot, district: siting.district, type: t.id })} disabled={!allowed} className="rounded-[10px] border p-2.5 text-left transition-colors" style={{ borderColor: !allowed ? "var(--color-line2)" : isSel ? "var(--color-copperdeep)" : "var(--color-line)", background: !allowed ? "color-mix(in srgb, var(--color-panel2) 50%, transparent)" : isSel ? "color-mix(in srgb, var(--color-copper) 10%, var(--color-panel))" : "var(--color-panel)", opacity: allowed ? 1 : 0.5, cursor: allowed ? "pointer" : "not-allowed" }}>
+                          <button key={t.id} onClick={() => allowed && setSiting({ ...siting, type: t.id })} disabled={!allowed} className="rounded-[10px] border p-2.5 text-left transition-colors" style={{ borderColor: !allowed ? "var(--color-line2)" : isSel ? "var(--color-copperdeep)" : "var(--color-line)", background: !allowed ? "color-mix(in srgb, var(--color-panel2) 50%, transparent)" : isSel ? "color-mix(in srgb, var(--color-copper) 10%, var(--color-panel))" : "var(--color-panel)", opacity: allowed ? 1 : 0.5, cursor: allowed ? "pointer" : "not-allowed" }}>
                             <div className="flex items-center gap-2.5">
                               <FacilityChip type={t.id} color={cssColor(youId)} size={22} />
                               <span className="display flex-1 text-[0.88rem] text-ink">{t.label}</span>

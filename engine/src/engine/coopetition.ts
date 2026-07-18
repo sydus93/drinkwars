@@ -2,15 +2,31 @@
  * Coopetition layer (§11). A fixed menu of templates (joint-marketing pact,
  * capacity-coordination pact, supply/infrastructure share) held under three
  * governance forms (relational, formal, collective). The pedagogically
- * interesting variation is the governance form, not the terms (§11). v1 has no
- * negotiation: the firm taking the `form` action pays the formation cost and the
- * named counterparties are bound (§11.3 simplification).
+ * interesting variation is the governance form, not the terms (§11).
+ *
+ * MUTUAL CONSENT (supersedes the §11.3 v1 "counterparties are bound" simplification,
+ * per live playtest feedback): a `form` action now creates a PENDING PROPOSAL. Every
+ * named counterparty must `accept_proposal` (usually the following round) before the
+ * pact binds; any `decline_proposal` kills it; unanswered proposals expire after
+ * PROPOSAL_TTL_ROUNDS. The proposer pays the formation cost at ACTIVATION, not at
+ * proposal — declined or expired overtures cost nothing. An identical proposal or an
+ * identical active pact (same template + segment + signatory set) dedupes, so a client
+ * that re-sends a form action can never stack duplicate pacts.
  *
  * Each template resolves as a modifier on the demand and/or cost engine plus a
  * trust effect; capacity-coordination and collective forms feed the antitrust
  * coordination signal (§9.3, §11.4).
  */
-import type { AgreementState, ClauseCondition, Config, FirmDecision, FirmId, SegmentId, WorldState } from "../types.js";
+import type { AgreementState, ClauseCondition, Config, FirmDecision, FirmId, PendingAgreement, SegmentId, WorldState } from "../types.js";
+
+/** Rounds a proposal stays open awaiting acceptance before it lapses. */
+export const PROPOSAL_TTL_ROUNDS = 2;
+
+/** Identity key for dedupe: a pact/proposal is "the same deal" if template, segment,
+ *  and the full signatory set match (governance form intentionally excluded — the same
+ *  deal under a different form is still the same deal on the table). */
+const dealKey = (template: string, segment: string | null, signatories: FirmId[]): string =>
+  `${template}::${segment ?? ""}::${[...signatories].sort().join("+")}`;
 
 export interface AgreementResolution {
   events: string[];
@@ -28,11 +44,42 @@ function addOpex(m: Map<FirmId, number>, id: FirmId, amt: number): void {
   m.set(id, (m.get(id) ?? 0) + amt);
 }
 
-/** Process form/defect actions in firm order; mutate the agreements registry. */
+/** Process form/accept/decline/defect actions in firm order; mutate the agreements
+ *  registry + the pending-proposal list. */
 export function resolveAgreementActions(world: WorldState, decisions: Map<FirmId, FirmDecision>, c: Config, round: number): AgreementResolution {
   const res: AgreementResolution = { events: [], trustHits: new Map(), extraOpex: new Map() };
   let seq = world.agreements.length;
   const activeIds = new Set(world.firms.filter((f) => f.status === "active").map((f) => f.id));
+  const pendings = (world.pending_agreements ??= []);
+  let pseq = pendings.length;
+
+  // The same deal can't be proposed or formed twice (client re-sends are harmless).
+  const activeKeys = new Set(world.agreements.filter((x) => x.active).map((x) => dealKey(x.template, x.segment, x.signatories)));
+  const pendingKeys = new Set(pendings.map((p) => dealKey(p.template, p.segment, [p.proposer, ...p.counterparties])));
+
+  /** All counterparties in — bind the pact. The proposer pays the formation cost NOW. */
+  const activate = (p: PendingAgreement): void => {
+    const agreement: AgreementState = {
+      id: `a_${round}_${seq++}`,
+      form: p.form,
+      template: p.template,
+      signatories: [p.proposer, ...p.counterparties],
+      segment: p.segment,
+      formation_round: round,
+      active: true,
+      dissolution_round: null,
+      dissolution_type: null,
+      constrained_until_round: null,
+    };
+    const ccfg = c.modules?.contingentContracts;
+    if (ccfg?.enabled && p.clauses?.length && (p.form === "formal" || p.form === "collective")) {
+      agreement.clauses = p.clauses.slice(0, ccfg.max_clauses_per_agreement).map((cl) => ({ condition: cl.condition, action: cl.action, fired_round: null }));
+    }
+    world.agreements.push(agreement);
+    activeKeys.add(dealKey(agreement.template, agreement.segment, agreement.signatories));
+    addOpex(res.extraOpex, p.proposer, c.coopetition.forms[p.form].formation_cost);
+    res.events.push(`${agreement.signatories.join("+")} formed ${p.form} ${p.template}${agreement.clauses?.length ? ` with ${agreement.clauses.length} contingent clause(s)` : ""}`);
+  };
 
   for (const f of world.firms) {
     if (f.status !== "active") continue;
@@ -48,29 +95,39 @@ export function resolveAgreementActions(world: WorldState, decisions: Map<FirmId
           continue;
         }
         if (signatories.length < 2) continue;
-        const formationCost = c.coopetition.forms[a.form].formation_cost;
-        addOpex(res.extraOpex, f.id, formationCost);
-        const agreement: AgreementState = {
-          id: `a_${round}_${seq++}`,
+        // Dedupe: the same deal already in force or already on the table ⇒ no new proposal.
+        const key = dealKey(a.template, a.template === "joint_marketing" ? a.segment ?? null : null, signatories);
+        if (activeKeys.has(key) || pendingKeys.has(key)) continue;
+        pendingKeys.add(key);
+        const proposal: PendingAgreement = {
+          id: `p_${round}_${pseq++}`,
           form: a.form,
           template: a.template,
-          signatories,
+          proposer: f.id,
+          counterparties,
           segment: a.template === "joint_marketing" ? a.segment ?? null : null,
-          formation_round: round,
-          active: true,
-          dissolution_round: null,
-          dissolution_type: null,
-          constrained_until_round: null,
+          clauses: a.clauses,
+          proposed_round: round,
+          accepted: [],
         };
-        // MOD-A05: attach contingent clauses (formal/collective contracts only).
-        const ccfg = c.modules?.contingentContracts;
-        if (ccfg?.enabled && a.clauses?.length && (a.form === "formal" || a.form === "collective")) {
-          agreement.clauses = a.clauses
-            .slice(0, ccfg.max_clauses_per_agreement)
-            .map((cl) => ({ condition: cl.condition, action: cl.action, fired_round: null }));
+        pendings.push(proposal);
+        res.events.push(`${f.id} proposes a ${a.form} ${a.template} to ${counterparties.join("+")} — awaiting their agreement`);
+      } else if ((a.type === "accept_proposal" || a.type === "decline_proposal") && a.proposal_id) {
+        const p = pendings.find((x) => x.id === a.proposal_id);
+        if (!p || !p.counterparties.includes(f.id)) continue; // only a named counterparty answers
+        if (a.type === "decline_proposal") {
+          pendings.splice(pendings.indexOf(p), 1);
+          pendingKeys.delete(dealKey(p.template, p.segment, [p.proposer, ...p.counterparties]));
+          res.events.push(`${f.id} declines ${p.proposer}'s ${p.form} ${p.template} proposal`);
+        } else if (!p.accepted.includes(f.id)) {
+          p.accepted.push(f.id);
+          if (p.counterparties.every((id) => p.accepted.includes(id))) {
+            pendings.splice(pendings.indexOf(p), 1);
+            activate(p);
+          } else {
+            res.events.push(`${f.id} accepts ${p.proposer}'s ${p.form} ${p.template} proposal — awaiting the remaining partner(s)`);
+          }
         }
-        world.agreements.push(agreement);
-        res.events.push(`${signatories.join("+")} formed ${a.form} ${a.template}${agreement.clauses?.length ? ` with ${agreement.clauses.length} contingent clause(s)` : ""}`);
       } else if (a.type === "renegotiate" && a.agreement_id) {
         // MOD-A06: call to renegotiate — pay the call cost, open the call, propose terms.
         const rcfg = c.modules?.renegotiation;
@@ -93,6 +150,10 @@ export function resolveAgreementActions(world: WorldState, decisions: Map<FirmId
         if (resp === "accept") {
           if (ag.renegotiation.proposed_template) ag.template = ag.renegotiation.proposed_template;
           if (ag.renegotiation.proposed_segment !== undefined) ag.segment = ag.template === "joint_marketing" ? ag.renegotiation.proposed_segment ?? ag.segment : null;
+          // Switching TO joint_marketing needs a category to pool brand in — if none was
+          // proposed and the pact never had one, default to the first active segment
+          // (a null segment would silently make the pact do nothing).
+          if (ag.template === "joint_marketing" && !ag.segment) ag.segment = world.segments.find((s) => s.active)?.id ?? null;
           res.events.push(`${f.id} accepts new terms on ${ag.form} ${ag.template} (${ag.id})`);
         } else if (resp === "exit") {
           ag.active = false;
@@ -118,6 +179,18 @@ export function resolveAgreementActions(world: WorldState, decisions: Map<FirmId
         }
         res.events.push(`${f.id} defected from ${ag.form} ${ag.template} (${ag.id})`);
       }
+    }
+  }
+
+  // Sweep the proposal list AFTER responses: overtures lapse once their response window
+  // (PROPOSAL_TTL_ROUNDS) passes, and any proposal touching an exited firm is void.
+  for (let i = pendings.length - 1; i >= 0; i--) {
+    const p = pendings[i];
+    const dead = !activeIds.has(p.proposer) || p.counterparties.some((id) => !activeIds.has(id));
+    const lapsed = round - p.proposed_round >= PROPOSAL_TTL_ROUNDS;
+    if (dead || lapsed) {
+      pendings.splice(i, 1);
+      if (lapsed && !dead) res.events.push(`${p.proposer}'s ${p.form} ${p.template} proposal to ${p.counterparties.join("+")} lapsed unanswered`);
     }
   }
   return res;

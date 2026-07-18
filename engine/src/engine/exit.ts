@@ -8,6 +8,8 @@
 import type { Config, FirmId, FirmState, SegmentId, WorldState } from "../types.js";
 import { emptyPipeline } from "./stocks.js";
 
+const fmNum = (n: number): string => Math.round(n).toLocaleString("en-US"); // comma-grouped for event prose
+
 export interface ExitInputs {
   world: WorldState;
   decisions: Map<FirmId, import("../types.js").FirmDecision>;
@@ -82,7 +84,7 @@ export function processExits(input: ExitInputs): { events: string[] } {
     const covenantBreach = f.rounds_below_health >= c.finance.solvency_runway_rounds && coverage < 1 && f.cash < cashSafety * 0.5;
     if (f.cash <= 0 || covenantBreach) {
       f.status = "bankrupt";
-      events.push(`FORCED EXIT (bankruptcy): ${f.id} (cash ${f.cash.toFixed(0)}, coverage ${coverage.toFixed(2)})`);
+      events.push(`FORCED EXIT (bankruptcy): ${f.id} (cash $${fmNum(f.cash)}, coverage ${coverage.toFixed(2)})`);
       registerDistressDumping(f);
       continue;
     }
@@ -101,7 +103,7 @@ export function processExits(input: ExitInputs): { events: string[] } {
     if (ea.path === "bank") {
       f.banked_cash += net;
       f.status = "exited_banked";
-      events.push(`CLEAN EXIT (bank): ${f.id} recovers ${net.toFixed(0)}`);
+      events.push(`CLEAN EXIT (bank): ${f.id} recovers $${fmNum(net)}`);
     } else if (ea.path === "invest" && ea.target_firm) {
       const target = world.firms.find((x) => x.id === ea.target_firm && x.status === "active");
       const V = input.valuationByFirm.get(ea.target_firm ?? "") ?? 0;
@@ -110,11 +112,11 @@ export function processExits(input: ExitInputs): { events: string[] } {
         target.cap_table.push({ holder_id: f.id, shares: stake });
         f.holdings.push({ firm_id: target.id, stake_fraction: stake, basis: net });
         f.status = "exited_invested";
-        events.push(`EXIT→INVEST: ${f.id} buys ${(stake * 100).toFixed(1)}% of ${target.id} at V=${V.toFixed(0)}`);
+        events.push(`EXIT→INVEST: ${f.id} buys ${(stake * 100).toFixed(1)}% of ${target.id} at V=$${fmNum(V)}`);
       } else {
         f.banked_cash += net;
         f.status = "exited_banked";
-        events.push(`EXIT→INVEST failed (no valid target); ${f.id} banked ${net.toFixed(0)}`);
+        events.push(`EXIT→INVEST failed (no valid target); ${f.id} banked $${fmNum(net)}`);
       }
     } else if (ea.path === "rebuild") {
       const reentryCost = c.exit.reentry_cost * Math.pow(c.exit.reentry_cost_escalation, f.reentry_count);
@@ -130,7 +132,7 @@ export function processExits(input: ExitInputs): { events: string[] } {
       f.cash -= reentryCost;
       f.retained_earnings -= reentryCost;
       f.status = "exited_rebuilt"; // re-activates after cooldown (see init/advance)
-      events.push(`EXIT→REBUILD: ${f.id} repositions to ${reposition ?? "(unset)"}, pays ${reentryCost.toFixed(0)} (cooldown to r${f.cooldown_until_round})`);
+      events.push(`EXIT→REBUILD: ${f.id} repositions to ${reposition ?? "(unset)"}, pays $${fmNum(reentryCost)} (cooldown to r${f.cooldown_until_round})`);
     }
   }
 

@@ -91,6 +91,7 @@ export function initGame(c: Config): WorldState {
     segments: c.segments.map((s) => ({ id: s.id, D: s.active_at_start ? s.D0 : 0, active: s.active_at_start })),
     firms,
     agreements: [],
+    pending_agreements: [],
     shock_timeline: rollTimeline(c, c.game.seed),
     pending_segment_mods: [],
     live_triggers: [],

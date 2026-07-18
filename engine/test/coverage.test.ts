@@ -26,32 +26,76 @@ function decision(firm_id: string, world: WorldState, over: Partial<FirmDecision
   };
 }
 
-test("supply_share agreement lowers signatories' unit cost (§11.2)", () => {
+test("supply_share agreement lowers signatories' unit cost once accepted (§11.2 + mutual consent)", () => {
   const c = loadConfig();
   const world = initGame(c);
-  const decisions = [
+  // Mutual consent: round 0 = firm_1 proposes (a pending overture, NO cost effect yet)…
+  const r0 = resolveRound(world, [
     decision("firm_1", world, { agreement_actions: [{ type: "form", form: "formal", template: "supply_share", counterparties: ["firm_2"] }] }),
     decision("firm_2", world),
-  ];
-  const { result } = resolveRound(world, decisions, c);
+  ], c);
+  const p0 = r0.result.firm_results.find((f) => f.firm_id === "firm_1")!;
+  assert.equal(p0.cost_buildup.supply_share, 1, "a mere proposal must have no cost effect");
+  assert.equal(r0.world.agreements.length, 0, "no pact binds before acceptance");
+  assert.equal(r0.world.pending_agreements?.length, 1, "the overture is pending");
+  // …round 1 = firm_2 accepts ⇒ the pact binds and the reduction applies.
+  const { result, world: w1 } = resolveRound(r0.world, [
+    decision("firm_1", r0.world),
+    decision("firm_2", r0.world, { agreement_actions: [{ type: "accept_proposal", proposal_id: r0.world.pending_agreements![0].id }] }),
+  ], c);
   const f1 = result.firm_results.find((f) => f.firm_id === "firm_1")!;
   const f3 = result.firm_results.find((f) => f.firm_id === "firm_3")!; // not a signatory
+  assert.ok(w1.agreements[0]?.active, "acceptance binds the pact");
   // supply_share factor in the cost build-up is (1 - reduction) < 1 for signatories.
   assert.ok(f1.cost_buildup.supply_share < 1, `signatory should get a cost reduction (got ${f1.cost_buildup.supply_share})`);
   assert.equal(f3.cost_buildup.supply_share, 1, "non-signatory should get no reduction");
 });
 
-test("joint_marketing pools brand into a signatory's segment utility (§11.2)", () => {
+test("joint_marketing pools brand into a signatory's segment utility once accepted (§11.2)", () => {
   const c = loadConfig();
   const world = initGame(c);
-  const decisions = [
+  const r0 = resolveRound(world, [
     decision("firm_1", world, { agreement_actions: [{ type: "form", form: "relational", template: "joint_marketing", counterparties: ["firm_2"], segment: "niche" }] }),
     decision("firm_2", world),
-  ];
-  const { result } = resolveRound(world, decisions, c);
+  ], c);
+  const { result } = resolveRound(r0.world, [
+    decision("firm_1", r0.world),
+    decision("firm_2", r0.world, { agreement_actions: [{ type: "accept_proposal", proposal_id: r0.world.pending_agreements![0].id }] }),
+  ], c);
   const f1 = result.firm_results.find((f) => f.firm_id === "firm_1")!;
   // The pooled-brand term shows up as the segment's "agreement" attraction component.
   assert.ok(f1.segments.niche.attraction.agreement > 0, "joint-marketing should add pooled brand to niche utility");
+});
+
+test("mutual consent: decline kills an overture; unanswered ones lapse; duplicates dedupe", () => {
+  const c = loadConfig();
+  const world = initGame(c);
+  const propose = (w: typeof world) =>
+    decision("firm_1", w, { agreement_actions: [{ type: "form", form: "formal", template: "supply_share", counterparties: ["firm_2"] }] });
+  // Decline: the overture dies, nothing binds, the proposer paid nothing.
+  const a0 = resolveRound(world, [propose(world), decision("firm_2", world)], c);
+  const a1 = resolveRound(a0.world, [
+    decision("firm_1", a0.world),
+    decision("firm_2", a0.world, { agreement_actions: [{ type: "decline_proposal", proposal_id: a0.world.pending_agreements![0].id }] }),
+  ], c);
+  assert.equal(a1.world.agreements.length, 0, "declined ⇒ no pact");
+  assert.equal(a1.world.pending_agreements!.length, 0, "declined ⇒ overture removed");
+  // Lapse: two rounds unanswered ⇒ the overture expires on its own.
+  const b0 = resolveRound(world, [propose(world), decision("firm_2", world)], c);
+  const b1 = resolveRound(b0.world, [decision("firm_1", b0.world), decision("firm_2", b0.world)], c);
+  const b2 = resolveRound(b1.world, [decision("firm_1", b1.world), decision("firm_2", b1.world)], c);
+  assert.equal(b2.world.pending_agreements!.length, 0, "unanswered overture lapses after its window");
+  assert.equal(b2.world.agreements.length, 0, "a lapsed overture never binds");
+  // Dedupe: re-sending the same form action every round (a client re-fire) stacks nothing.
+  const c0 = resolveRound(world, [propose(world), decision("firm_2", world)], c);
+  const c1 = resolveRound(c0.world, [
+    propose(c0.world), // duplicate proposal while the first is pending
+    decision("firm_2", c0.world, { agreement_actions: [{ type: "accept_proposal", proposal_id: c0.world.pending_agreements![0].id }] }),
+  ], c);
+  assert.equal(c1.world.agreements.length, 1, "one pact");
+  const c2 = resolveRound(c1.world, [propose(c1.world), decision("firm_2", c1.world)], c);
+  assert.equal(c2.world.agreements.filter((a) => a.active).length, 1, "an identical active pact dedupes any re-proposal");
+  assert.equal(c2.world.pending_agreements!.length, 0, "no shadow proposal accumulates");
 });
 
 test("operator-to-investor: voluntary exit buys a stake at fair value (§8.4)", () => {

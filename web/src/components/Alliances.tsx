@@ -68,6 +68,10 @@ export function Alliances({
   const actionFor = (agId: string) => actions.find((a) => a.agreement_id === agId);
   const setAgAction = (agId: string, action: AgreementAction | null) =>
     setActions([...actions.filter((a) => a.agreement_id !== agId), ...(action ? [action] : [])]);
+  // Pending-proposal responses key on proposal_id (mutual-consent formation).
+  const proposalActionFor = (pid: string) => actions.find((a) => a.proposal_id === pid);
+  const setProposalAction = (pid: string, action: AgreementAction | null) =>
+    setActions([...actions.filter((a) => a.proposal_id !== pid), ...(action ? [action] : [])]);
   const formAction = actions.find((a) => a.type === "form");
   const setFormAction = (action: AgreementAction | null) =>
     setActions([...actions.filter((a) => a.type !== "form"), ...(action ? [action] : [])]);
@@ -102,6 +106,48 @@ export function Alliances({
       ) : (
         <div className="grid gap-2">
           {view.agreements.map((a) => {
+            // A pending PROPOSAL (mutual consent) renders its own card: the counterparty
+            // gets Accept / Decline; the proposer sees who they're waiting on.
+            if (a.proposal) {
+              const p = a.proposal;
+              const q = proposalActionFor(a.id);
+              return (
+                <div key={a.id} className="rounded-md border border-copper/50 bg-copper/5 p-2.5">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <Tag tone="copper">Proposal</Tag>
+                    <span className="text-[0.8rem] font-semibold">{TEMPLATE_LABEL[a.template]}</span>
+                    <Tag tone="ink">{FORM_LABEL[a.form]}</Tag>
+                    {a.segment && <Tag tone="ink">{SEG_LABEL[a.segment] ?? a.segment}</Tag>}
+                  </div>
+                  <div className="mt-0.5 text-[0.7rem] text-inksoft">
+                    {p.proposerIsYou
+                      ? <>You proposed this to {a.partnerNames.join(", ")} — awaiting {p.awaitingNames.join(", ") || "no one"}. Lapses after round {p.expiresRound + 1} unanswered.</>
+                      : <>{p.proposerName} proposes this pact with you{a.partnerNames.length > 1 ? ` (and ${a.partnerNames.filter((n) => n !== p.proposerName).join(", ")})` : ""}. Nothing binds until you agree.</>}
+                  </div>
+                  {a.clauses.length > 0 && (
+                    <div className="mt-1 grid gap-0.5">
+                      {a.clauses.map((cl, i) => (
+                        <div key={i} className="text-[0.66rem] text-inksoft">↳ if {COND_LABEL[cl.condition]}, {ACTION_LABEL[cl.action]}</div>
+                      ))}
+                    </div>
+                  )}
+                  {p.youMustRespond ? (
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      <Button onClick={() => setProposalAction(a.id, q?.type === "accept_proposal" ? null : { type: "accept_proposal", proposal_id: a.id })}
+                        variant={q?.type === "accept_proposal" ? "go" : "solid"} className="px-3 py-1 text-[0.7rem]">
+                        {q?.type === "accept_proposal" ? "Accepting ✓" : "Accept"}
+                      </Button>
+                      <Button onClick={() => setProposalAction(a.id, q?.type === "decline_proposal" ? null : { type: "decline_proposal", proposal_id: a.id })}
+                        variant={q?.type === "decline_proposal" ? "go" : "ghost"} className="px-3 py-1 text-[0.7rem]">
+                        {q?.type === "decline_proposal" ? "Declining ✓" : "Decline"}
+                      </Button>
+                    </div>
+                  ) : !p.proposerIsYou ? (
+                    <div className="mt-1.5 text-[0.7rem] text-copperdeep">You've accepted — awaiting {p.awaitingNames.join(", ")}.</div>
+                  ) : null}
+                </div>
+              );
+            }
             const queued = actionFor(a.id);
             const openRenegForMe = a.reneg?.open && !a.reneg.callerIsYou;
             const iCalledReneg = a.reneg?.open && a.reneg.callerIsYou;
@@ -150,13 +196,21 @@ export function Alliances({
                   )}
                   {renegOn && !a.reneg?.open && !a.renegUsed && (a.form === "formal" || a.form === "collective") && (
                     queued?.type === "renegotiate" ? (
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex flex-wrap items-center gap-1.5">
                         <span className="text-[0.7rem] text-copperdeep">Propose switch to</span>
                         <select value={queued.proposed_template ?? a.template}
                           onChange={(e) => setAgAction(a.id, { ...queued, proposed_template: e.target.value as TemplateId })}
                           className="text-[0.7rem]">
                           {TEMPLATES.map((t) => <option key={t} value={t}>{TEMPLATE_LABEL[t]}</option>)}
                         </select>
+                        {/* Joint marketing pools brand in ONE category — the switch needs to name it. */}
+                        {(queued.proposed_template ?? a.template) === "joint_marketing" && (
+                          <select value={queued.proposed_segment ?? a.segment ?? activeSegs[0]}
+                            onChange={(e) => setAgAction(a.id, { ...queued, proposed_segment: e.target.value })}
+                            className="text-[0.7rem]">
+                            {activeSegs.map((s) => <option key={s} value={s}>{SEG_LABEL[s] ?? s}</option>)}
+                          </select>
+                        )}
                         <button className="text-[0.66rem] text-inksoft underline hover:text-ink" onClick={() => setAgAction(a.id, null)}>cancel</button>
                       </div>
                     ) : (
@@ -180,7 +234,7 @@ export function Alliances({
           )}
           {formAction && !showForm && (
             <div className="flex items-center justify-between gap-2 text-[0.72rem]">
-              <span>Proposing a {FORM_LABEL[formAction.form!].toLowerCase()} {TEMPLATE_LABEL[formAction.template!].toLowerCase()} with {(formAction.counterparties ?? []).map((id) => view.standings.find((s) => s.firm_id === id)?.name ?? id).join(", ")}{formAction.clauses?.length ? ` · ${formAction.clauses.length} clause(s)` : ""}.</span>
+              <span>Proposing a {FORM_LABEL[formAction.form!].toLowerCase()} {TEMPLATE_LABEL[formAction.template!].toLowerCase()} with {(formAction.counterparties ?? []).map((id) => view.standings.find((s) => s.firm_id === id)?.name ?? id).join(", ")}{formAction.clauses?.length ? ` · ${formAction.clauses.length} clause(s)` : ""} — they must accept before it binds.</span>
               <button className="text-inksoft underline hover:text-ink" onClick={() => setFormAction(null)}>cancel</button>
             </div>
           )}

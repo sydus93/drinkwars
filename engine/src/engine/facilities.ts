@@ -16,6 +16,8 @@
  */
 import type { Config, FacilityTypeConfig, FirmDecision, FirmId, FirmState, WorldState } from "../types.js";
 
+const fmNum = (n: number): string => Math.round(n).toLocaleString("en-US"); // comma-grouped for event prose
+
 export interface FacilitiesOutcome {
   capexByFirm: Map<FirmId, number>; // builds (capitalized into PP&E)
   opexByFirm: Map<FirmId, number>; // fixed cost + maintenance (expensed)
@@ -131,7 +133,7 @@ export function resolveFacilities(world: WorldState, decisions: Map<FirmId, Firm
         continue;
       }
       if (f.cash < t.base_cost) {
-        out.events.push(`BUILD BLOCKED: ${f.id} can't fund a ${t.label.toLowerCase()} (needs ${Math.round(t.base_cost)})`);
+        out.events.push(`BUILD BLOCKED: ${f.id} can't fund a ${t.label.toLowerCase()} (needs $${fmNum(t.base_cost)})`);
         continue; // can't finance the build this round
       }
       const id = `fac_${round}_${f.facilities.length}`;
@@ -148,9 +150,18 @@ export function resolveFacilities(world: WorldState, decisions: Map<FirmId, Firm
         if (!lot) { out.events.push(`BUILD BLOCKED: ${f.id} — parcel ${b.lot} not found in ${mk}`); continue; }
         if (round < (lot.unlock_round ?? 0)) { out.events.push(`BUILD BLOCKED: ${f.id} — that parcel isn't available yet`); continue; }
         const winner = lotWinner.get(`${mk}::${b.lot}`);
-        if (winner && winner !== f.id) { out.events.push(`OUTBID: ${f.id} lost a contested parcel in ${mk} to a higher bid`); continue; }
+        if (winner && winner !== f.id) {
+          // Honest loss report: a $0-vs-$0 tie resolves by firm order, not by "a higher
+          // bid" — say so, and teach the lever (the bid premium) either way.
+          const myBid = Math.max(0, b.bid ?? 0);
+          const winBid = Math.max(0, ...(bidsByLot.get(`${mk}::${b.lot}`) ?? []).filter((x) => x.firmId === winner).map((x) => x.bid));
+          out.events.push(winBid > myBid
+            ? `OUTBID: ${f.id} lost a contested parcel in ${mk} to a higher bid premium (theirs $${fmNum(winBid)} vs yours $${fmNum(myBid)})`
+            : `PARCEL LOST: ${f.id} lost a contested parcel in ${mk} on a tie-break — neither side offered a bid premium; next time a premium wins it outright`);
+          continue;
+        }
         if (occupied.get(mk)?.has(b.lot)) { out.events.push(`BUILD BLOCKED: ${f.id} — that parcel is already taken`); continue; }
-        if (winner === f.id && (b.bid ?? 0) > 0) { opex += Math.max(0, b.bid ?? 0); out.events.push(`PARCEL WON: ${f.id} wins a contested parcel in ${mk} (${Math.round(Math.max(0, b.bid ?? 0))} premium)`); }
+        if (winner === f.id && (b.bid ?? 0) > 0) { opex += Math.max(0, b.bid ?? 0); out.events.push(`PARCEL WON: ${f.id} wins a contested parcel in ${mk} ($${fmNum(Math.max(0, b.bid ?? 0))} premium)`); }
         lot_id = lot.id;
         location_id = lot.district;
         claim(mk, lot.id);

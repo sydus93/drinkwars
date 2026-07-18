@@ -19,6 +19,10 @@ export interface RoleBriefing {
 
 const firmIndex = (id: FirmId): number => Number(id.replace(/[^0-9]/g, "")) || 0;
 
+/** Comma-grouped integer for prose ("489,702", not "489702"). Explicit locale keeps
+ *  the output deterministic across environments. */
+const fm = (n: number): string => Math.round(n).toLocaleString("en-US");
+
 export function roleBriefings(world: WorldState, c: Config, firmId: FirmId): RoleBriefing[] {
   const cfg = c.modules?.teamRoles;
   if (!cfg?.enabled) return [];
@@ -53,7 +57,7 @@ export function roleBriefings(world: WorldState, c: Config, firmId: FirmId): Rol
     role: "cmo",
     title: "CMO briefing — demand",
     lines: [
-      ...grow.map((g) => `${g.id}: next-round demand near ${Math.round(g.next)} units.`),
+      ...grow.map((g) => `${g.id}: next-round demand near ${fm(g.next)} drinks.`),
       biggest ? `Largest pool of buyers next round: ${biggest.id}.` : "",
       c.modules?.consumerDrift?.enabled ? "Field reports: mainstream drinkers are getting steadily more quality-conscious." : "",
     ].filter(Boolean),
@@ -64,7 +68,7 @@ export function roleBriefings(world: WorldState, c: Config, firmId: FirmId): Rol
     role: "coo",
     title: "COO briefing — operations",
     lines: [
-      `Brewhouse cost runs about $${noisy(Math.max(0.5, me.unit_cost || c.costs.c_base), cfg.noise.coo).toFixed(2)} a unit right now.`,
+      `Brewhouse cost runs about $${noisy(Math.max(0.5, me.unit_cost || c.costs.c_base), cfg.noise.coo).toFixed(2)} a drink right now.`,
       me.process > 25 ? "Process maturity is paying off — yields are well above the field's baseline." : "There's still easy yield on the table — process investment buys cost down fastest.",
     ],
   };

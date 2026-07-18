@@ -15,6 +15,8 @@
 import type { Config, FirmDecision, FirmId, LobbyingInitiative, RegulationType, SegmentPriceMod, WorldState } from "../types.js";
 import { RNG, deriveSeed } from "../rng.js";
 
+const fmNum = (n: number): string => Math.round(n).toLocaleString("en-US"); // comma-grouped for event prose
+
 export interface LobbyingOutcome {
   costByFirm: Map<FirmId, number>; // offensive + counter spend + any scrutiny fine (→ opex)
   events: string[];
@@ -98,7 +100,7 @@ export function resolveLobbying(world: WorldState, decisions: Map<FirmId, FirmDe
     const prob = (cfg.scrutiny_base_prob * exposure) / (1 + cfg.scrutiny_tgov_k * (f.T_gov ?? 0));
     if (rng.bool(prob)) {
       add(out.costByFirm, f.id, cfg.scrutiny_fine);
-      out.events.push(`LOBBYING SCRUTINY: ${f.id} is fined for influence-peddling (−${cfg.scrutiny_fine})`);
+      out.events.push(`LOBBYING SCRUTINY: ${f.id} is fined for influence-peddling (−$${fmNum(cfg.scrutiny_fine)})`);
     }
   }
   return out;

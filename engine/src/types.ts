@@ -875,6 +875,25 @@ export interface WorldState {
   fx_rates?: Record<string, number>; // MOD-B02 per-export-market exchange rate (absent ⇒ none)
   frontier_first_mover?: { firm_id: string; segment: string; until_round: number } | null; // MOD-B04
   lobbying_initiatives?: LobbyingInitiative[]; // MOD-A09 active/fired regulation pushes (absent ⇒ none)
+  // Alliance proposals awaiting counterparty consent (mutual-consent formation — a pact
+  // only binds once every named counterparty accepts). Absent ⇒ none (older saved states).
+  pending_agreements?: PendingAgreement[];
+}
+
+/** A proposed alliance awaiting acceptance. Becomes an AgreementState (and the proposer
+ *  pays the formation cost) only when EVERY counterparty has accepted; a decline kills it;
+ *  unanswered proposals expire after PROPOSAL_TTL_ROUNDS. Not an agreement — it has no
+ *  demand/cost effect and never enters the agreements research table. */
+export interface PendingAgreement {
+  id: string;
+  form: GovernanceForm;
+  template: TemplateId;
+  proposer: FirmId;
+  counterparties: FirmId[]; // everyone who must accept (proposer implicitly consents)
+  segment: SegmentId | null; // for joint_marketing
+  clauses?: ContingentClause[]; // MOD-A05 clauses carried into the formed agreement
+  proposed_round: number;
+  accepted: FirmId[]; // counterparties who have said yes so far
 }
 
 // ----------------------------------------------------------------------------
@@ -882,13 +901,15 @@ export interface WorldState {
 // ----------------------------------------------------------------------------
 
 export interface AgreementAction {
-  type: "form" | "defect" | "renegotiate" | "renegotiate_response";
-  // form:
+  type: "form" | "defect" | "renegotiate" | "renegotiate_response" | "accept_proposal" | "decline_proposal";
+  // form (creates a PENDING proposal — counterparties must accept before the pact binds):
   form?: GovernanceForm;
   template?: TemplateId;
   counterparties?: FirmId[];
   segment?: SegmentId;
   clauses?: ContingentClause[]; // MOD-A05: contingent clauses attached at formation (formal/collective only)
+  // accept_proposal / decline_proposal: a counterparty's answer to a pending proposal.
+  proposal_id?: string;
   // defect / renegotiate / renegotiate_response:
   agreement_id?: string;
   // renegotiate (MOD-A06): the new terms the caller proposes.

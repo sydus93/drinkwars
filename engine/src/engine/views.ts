@@ -31,11 +31,14 @@ export interface AllianceSummary {
   // An open renegotiation call awaiting this team's (or a partner's) response.
   reneg: { open: boolean; callerName: string; callerIsYou: boolean; proposedTemplate: TemplateId | null; proposedSegment: SegmentId | null } | null;
   renegUsed: boolean; // the one renegotiation per agreement lifetime has been spent
+  // Non-null ⇒ this row is a PENDING PROPOSAL, not a binding pact (mutual consent):
+  // the counterparties still have to accept. youMustRespond ⇒ show Accept / Decline.
+  proposal: { proposerName: string; proposerIsYou: boolean; youMustRespond: boolean; awaitingNames: string[]; expiresRound: number } | null;
 }
 
 /** Active agreements this firm is party to, shaped for the Alliances panel. */
 export function summarizeAgreementsFor(world: WorldState, youId: FirmId, nameOf: (id: FirmId) => string): AllianceSummary[] {
-  return world.agreements
+  const pacts: AllianceSummary[] = world.agreements
     .filter((a) => a.active && a.signatories.includes(youId))
     .map((a) => {
       const reneg = a.renegotiation;
@@ -53,8 +56,37 @@ export function summarizeAgreementsFor(world: WorldState, youId: FirmId, nameOf:
           ? { open: true, callerName: nameOf(reneg.caller), callerIsYou: reneg.caller === youId, proposedTemplate: reneg.proposed_template ?? null, proposedSegment: reneg.proposed_segment ?? null }
           : null,
         renegUsed: !!a.renegotiation_used,
+        proposal: null,
       };
     });
+  // Pending proposals you sent or must answer (mutual-consent formation).
+  const proposals: AllianceSummary[] = (world.pending_agreements ?? [])
+    .filter((p) => p.proposer === youId || p.counterparties.includes(youId))
+    .map((p) => {
+      const all = [p.proposer, ...p.counterparties];
+      const awaiting = p.counterparties.filter((id) => !p.accepted.includes(id));
+      return {
+        id: p.id,
+        form: p.form,
+        template: p.template,
+        segment: p.segment,
+        signatories: all.map((id) => ({ firm_id: id, name: nameOf(id), isYou: id === youId })),
+        partnerNames: all.filter((id) => id !== youId).map((id) => nameOf(id)),
+        active: false,
+        suspendedUntil: null,
+        clauses: (p.clauses ?? []).map((cl) => ({ condition: cl.condition, action: cl.action, fired: false })),
+        reneg: null,
+        renegUsed: false,
+        proposal: {
+          proposerName: nameOf(p.proposer),
+          proposerIsYou: p.proposer === youId,
+          youMustRespond: p.counterparties.includes(youId) && !p.accepted.includes(youId),
+          awaitingNames: awaiting.map((id) => nameOf(id)),
+          expiresRound: p.proposed_round + 2, // PROPOSAL_TTL_ROUNDS
+        },
+      };
+    });
+  return [...proposals, ...pacts];
 }
 
 export interface LobbySummary {

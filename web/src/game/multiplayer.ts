@@ -223,6 +223,10 @@ export class StudentClient {
       return {
         ...this.lastDecision, firm_id: this.firmId, price, presence,
         debt_draw: 0, debt_repay: 0, equity_raise: 0, dividend: 0, buy_info: false, beliefs: {}, reflection: "",
+        // agreement_actions/exit_action MUST reset too (mirrors the solo controller) —
+        // otherwise a "form alliance" or exit action re-fires every round, silently
+        // re-proposing (and before mutual consent, re-FORMING) a duplicate pact.
+        agreement_actions: [], exit_action: null,
         // One-shot module actions are deliberate each round (don't auto-repeat).
         pr_action: null, invest_water_efficiency: 0, public_good_contributions: {},
         invest_rnd: 0, buy_vertical: [], hire_roles: [], fire_roles: [],

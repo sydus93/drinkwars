@@ -409,9 +409,12 @@ test("MOD-B10 reputation: signatories that honor deals build it; defection cuts 
   const c = loadConfig(modulesOverride(["reputation"]));
   const w = initGame(c);
   const form = mkDecision("firm_1", w, { agreement_actions: [{ type: "form", form: "relational", template: "joint_marketing", counterparties: ["firm_2"], segment: "niche" }] });
+  // Mutual consent: propose (r0) → accept (r1) → honor a round (r2).
   const r0 = resolveRound(w, [form, mkDecision("firm_2", w)], c);
-  const r1 = resolveRound(r0.world, [mkDecision("firm_1", r0.world), mkDecision("firm_2", r0.world)], c);
-  const f1 = r1.world.firms.find((f) => f.id === "firm_1")!;
+  const accept = mkDecision("firm_2", r0.world, { agreement_actions: [{ type: "accept_proposal", proposal_id: r0.world.pending_agreements![0].id }] });
+  const r1 = resolveRound(r0.world, [mkDecision("firm_1", r0.world), accept], c);
+  const r2 = resolveRound(r1.world, [mkDecision("firm_1", r1.world), mkDecision("firm_2", r1.world)], c);
+  const f1 = r2.world.firms.find((f) => f.id === "firm_1")!;
   assert.ok(f1.reputation > 0, "a signatory honoring the deal accrues reputation");
   // Off ⇒ the stock never moves.
   const offC = loadConfig();
@@ -570,11 +573,14 @@ test("MOD-A05 contingent contracts: a clause auto-fires on its condition (partne
   const form = mkDecision("firm_1", w, {
     agreement_actions: [{ type: "form", form: "formal", template: "capacity_coordination", counterparties: ["firm_2"], clauses: [{ condition: "partner_distress", action: "terminate" }] }],
   });
-  const r0 = resolveRound(w, [form, mkDecision("firm_2", w)], c);
+  // Mutual consent: propose (r0) → firm_2 accepts (r1) ⇒ pact binds, clauses attached.
+  const rp = resolveRound(w, [form, mkDecision("firm_2", w)], c);
+  const accept = mkDecision("firm_2", rp.world, { agreement_actions: [{ type: "accept_proposal", proposal_id: rp.world.pending_agreements![0].id }] });
+  const r0 = resolveRound(rp.world, [mkDecision("firm_1", rp.world), accept], c);
   const ag0 = r0.world.agreements.find((a) => a.signatories.includes("firm_1") && a.signatories.includes("firm_2"));
   assert.ok(ag0?.active && ag0.clauses?.length === 1, "pact forms with one contingent clause, dormant");
   assert.equal(ag0!.clauses![0].fired_round, null, "clause hasn't fired while partners are healthy");
-  // Round 1: firm_2 is now in distress ⇒ the clause fires and the pact terminates.
+  // Next round: firm_2 is now in distress ⇒ the clause fires and the pact terminates.
   r0.world.firms.find((f) => f.id === "firm_2")!.rounds_below_health = c.modules!.contingentContracts.distress_rounds;
   const r1 = resolveRound(r0.world, [mkDecision("firm_1", r0.world), mkDecision("firm_2", r0.world)], c);
   const ag1 = r1.world.agreements.find((a) => a.id === ag0!.id)!;
@@ -587,7 +593,12 @@ test("MOD-A06 renegotiation: call → accept updates terms; off ⇒ inert", () =
   const c = loadConfig(modulesOverride(["renegotiation"]));
   const w = initGame(c);
   const form = mkDecision("firm_1", w, { agreement_actions: [{ type: "form", form: "formal", template: "capacity_coordination", counterparties: ["firm_2"] }] });
-  const r0 = resolveRound(w, [form, mkDecision("firm_2", w)], c);
+  // Mutual consent: propose → accept before the renegotiation story begins.
+  const rp = resolveRound(w, [form, mkDecision("firm_2", w)], c);
+  const r0 = resolveRound(rp.world, [
+    mkDecision("firm_1", rp.world),
+    mkDecision("firm_2", rp.world, { agreement_actions: [{ type: "accept_proposal", proposal_id: rp.world.pending_agreements![0].id }] }),
+  ], c);
   const ag = r0.world.agreements.find((a) => a.signatories.includes("firm_1") && a.signatories.includes("firm_2"))!;
   // Round 1: firm_1 calls to renegotiate, proposing a switch to supply-share. Call costs cash.
   const call = mkDecision("firm_1", r0.world, { agreement_actions: [{ type: "renegotiate", agreement_id: ag.id, proposed_template: "supply_share" }] });
@@ -605,7 +616,12 @@ test("MOD-A06 renegotiation: call → accept updates terms; off ⇒ inert", () =
   assert.equal(ag2.renegotiation, null, "the open call is cleared on response");
   // Off ⇒ a renegotiate action does nothing (no open call, terms unchanged).
   const offC = loadConfig();
-  const offForm = resolveRound(initGame(offC), [mkDecision("firm_1", w, { agreement_actions: form.agreement_actions }), mkDecision("firm_2", w)], offC);
+  const offW = initGame(offC);
+  const offProp = resolveRound(offW, [mkDecision("firm_1", offW, { agreement_actions: form.agreement_actions }), mkDecision("firm_2", offW)], offC);
+  const offForm = resolveRound(offProp.world, [
+    mkDecision("firm_1", offProp.world),
+    mkDecision("firm_2", offProp.world, { agreement_actions: [{ type: "accept_proposal", proposal_id: offProp.world.pending_agreements![0].id }] }),
+  ], offC);
   const agOff = offForm.world.agreements[0];
   const offCall = resolveRound(offForm.world, [mkDecision("firm_1", offForm.world, { agreement_actions: [{ type: "renegotiate", agreement_id: agOff.id, proposed_template: "supply_share" }] }), mkDecision("firm_2", offForm.world)], offC);
   assert.ok(!offCall.world.agreements[0].renegotiation, "renegotiation is inert when the module is off");

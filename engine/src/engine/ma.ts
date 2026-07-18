@@ -13,6 +13,8 @@
 import type { Config, FirmDecision, FirmId, WorldState } from "../types.js";
 import { firmValuation } from "./finance.js";
 
+const fmNum = (n: number): string => Math.round(n).toLocaleString("en-US"); // comma-grouped for event prose
+
 export function resolveMa(world: WorldState, decisions: Map<FirmId, FirmDecision>, c: Config): string[] {
   const cfg = c.modules?.ma;
   if (!cfg?.enabled) return [];
@@ -58,7 +60,7 @@ export function resolveMa(world: WorldState, decisions: Map<FirmId, FirmDecision
     t.cash = 0; t.cap = 0; t.debt = 0; t.ppe_book = 0; t.inventory_units = 0; t.inventory_value = 0;
     t.retained_earnings = -t.paid_in_capital; // book equity → 0
 
-    events.push(`ACQUIRED: ${bidder} buys distressed ${targetId} for $${Math.round(price)} (assumes its debt)`);
+    events.push(`ACQUIRED: ${bidder} buys distressed ${targetId} for $${fmNum(price)} (assumes its debt)`);
   }
   return events;
 }
