@@ -343,14 +343,18 @@ export class SinglePlayerGame {
       price[s] = Math.round(unit * 1.8 * 100) / 100;
       presence[s] = 1;
     }
-    const budget = Math.max(0, own.cash) * 0.25;
     // Available home parcels for founding facilities (unlocked from the start). Empty ⇒ geography
     // off ⇒ founding builds carry no lot (legacy district-only behavior).
     const homeFoundingLots = (this.config.modules?.geography?.markets.find((m) => m.kind === "home")?.lots ?? []).filter((L) => (L.unlock_round ?? 0) <= 0);
     return {
       firm_id: this.humanFirmId, price, presence,
+      // Capacity MAINTENANCE stays defaulted (protection against silent decay, not
+      // strategy). Every strategic investment defaults to ZERO: the path-dependence
+      // audit (vault 09) showed the old standing 25%-of-cash package was a hidden
+      // autopilot that out-invested deliberate builders — investment is a DECISION.
+      // A value the player sets deliberately still carries forward as a standing lever.
       invest_cap: Math.round((this.config.capacity.depreciation * own.cap) / this.config.capacity.gain),
-      invest_process: Math.round(budget * 0.2), invest_Q: Math.round(budget * 0.3), invest_B: Math.round(budget * 0.3), invest_T_emp: Math.round(budget * 0.2),
+      invest_process: 0, invest_Q: 0, invest_B: 0, invest_T_emp: 0,
       invest_T_inv: 0, invest_T_gov: 0,
       debt_draw: 0, debt_repay: 0, equity_raise: 0, dividend: 0,
       buy_info: false, agreement_actions: [], exit_action: null, beliefs: {}, reflection: "",

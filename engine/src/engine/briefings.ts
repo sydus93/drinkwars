@@ -57,7 +57,7 @@ export function roleBriefings(world: WorldState, c: Config, firmId: FirmId): Rol
     role: "cmo",
     title: "CMO briefing — demand",
     lines: [
-      ...grow.map((g) => `${g.id}: next-round demand near ${fm(g.next)} drinks.`),
+      ...grow.map((g) => `${g.id}: next-round demand near ${fm(g.next)} units.`),
       biggest ? `Largest pool of buyers next round: ${biggest.id}.` : "",
       c.modules?.consumerDrift?.enabled ? "Field reports: mainstream drinkers are getting steadily more quality-conscious." : "",
     ].filter(Boolean),
@@ -68,7 +68,7 @@ export function roleBriefings(world: WorldState, c: Config, firmId: FirmId): Rol
     role: "coo",
     title: "COO briefing — operations",
     lines: [
-      `Brewhouse cost runs about $${noisy(Math.max(0.5, me.unit_cost || c.costs.c_base), cfg.noise.coo).toFixed(2)} a drink right now.`,
+      `Brewhouse cost runs about $${noisy(Math.max(0.5, me.unit_cost || c.costs.c_base), cfg.noise.coo).toFixed(2)} a unit right now.`,
       me.process > 25 ? "Process maturity is paying off — yields are well above the field's baseline." : "There's still easy yield on the table — process investment buys cost down fastest.",
     ],
   };

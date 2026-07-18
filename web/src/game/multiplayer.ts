@@ -240,13 +240,15 @@ export class StudentClient {
     const presence: Record<SegmentId, number> = {};
     for (const s of allSegs) { price[s] = 0; presence[s] = 0; }
     for (const s of active) { price[s] = Math.round(unit * 1.8 * 100) / 100; presence[s] = 1; }
-    const cash = own?.cash ?? 0;
     const cap = own?.cap ?? 0;
-    const budget = Math.max(0, cash) * 0.25;
     return {
       firm_id: this.firmId, price, presence,
+      // Maintenance capex only — every strategic investment defaults to ZERO (mirrors
+      // the solo controller; see the path-dependence audit, vault 09: the old standing
+      // 25%-of-cash package was a hidden autopilot). Investment is a DECISION; a
+      // deliberately-set value still carries forward as a standing lever.
       invest_cap: Math.round((this.config.capacity.depreciation * cap) / this.config.capacity.gain),
-      invest_process: Math.round(budget * 0.2), invest_Q: Math.round(budget * 0.3), invest_B: Math.round(budget * 0.3), invest_T_emp: Math.round(budget * 0.2),
+      invest_process: 0, invest_Q: 0, invest_B: 0, invest_T_emp: 0,
       invest_T_inv: 0, invest_T_gov: 0,
       debt_draw: 0, debt_repay: 0, equity_raise: 0, dividend: 0,
       buy_info: false, agreement_actions: [], exit_action: null, beliefs: {}, reflection: "",

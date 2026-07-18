@@ -139,8 +139,13 @@ export const defaultConfig: Config = {
   },
 
   stocks: {
-    Q: { depreciation: 0.18, gain: 0.0425, lag: 2, conversion: "sqrt" },
-    B: { depreciation: 0.18, gain: 0.0425, lag: 2, conversion: "sqrt" },
+    // Q/B lag 2→1 (turnaround tuning 2026-07-17, vault 09 audit): a good midgame
+    // strategy shows in the product NEXT round, not three rounds out. Gain stays
+    // 0.0425 — raising it to 0.055 alongside lag 1 lifted the steady-state stock a
+    // spender can hold and tripped the §16.2 dominant-strategy gate (brand_builder
+    // 63%); lag-only moves the TIMING of payoff without cheapening the lever.
+    Q: { depreciation: 0.18, gain: 0.0425, lag: 1, conversion: "sqrt" },
+    B: { depreciation: 0.18, gain: 0.0425, lag: 1, conversion: "sqrt" },
     T_emp: { depreciation: 0.1, gain: 0.05, lag: 1, conversion: "sqrt" },
     T_inv: { depreciation: 0.1, gain: 0.05, lag: 1, conversion: "sqrt" },
     T_gov: { depreciation: 0.1, gain: 0.05, lag: 1, conversion: "sqrt" },
@@ -278,7 +283,10 @@ export const defaultConfig: Config = {
     weights: { financial: 0.3, market: 0.3, intangible: 0.2, stakeholder: 0.2 },
     accumulation: "round_average",
     normalization: "zscore_within_round",
-    financial_blend: { profitability: 0.4, soundness: 0.3, cash_resilience: 0.3 },
+    // profitability 0.3 / soundness 0.4 (was 0.4/0.3): expensed capability building
+    // (Q/B invest) no longer brands a firm financially weak in the exact rounds it
+    // invests — the z-of-this-quarter-NI penalty was a secondary audit finding.
+    financial_blend: { profitability: 0.3, soundness: 0.4, cash_resilience: 0.3 },
     cash_safety_threshold: 120_000,
     healthy_coverage: 2.0,
     healthy_leverage: 1.5,
