@@ -21,6 +21,8 @@ export interface EmployeesOutcome {
 const FIRST = ["Marcus", "Priya", "Devon", "Sofia", "Liam", "Aisha", "Noah", "Mei", "Carlos", "Hana", "Owen", "Zoe", "Ibrahim", "Lena", "Theo", "Nadia", "Sam", "Yuki", "Diego", "Ava"];
 const LAST_INITIAL = ["A", "B", "C", "D", "F", "G", "H", "K", "L", "M", "N", "P", "R", "S", "T", "V", "W"];
 
+const fmNum = (n: number): string => Math.round(n).toLocaleString("en-US");
+
 /** The fair (market) salary for a given role/skill — the benchmark satisfaction is judged against. */
 const marketRate = (baseSalary: number, skill: number): number => baseSalary * (0.55 + 0.15 * skill);
 
@@ -49,6 +51,29 @@ export function resolveEmployees(world: WorldState, decisions: Map<FirmId, FirmD
   const market = new Map(generateHiringMarket(c, world.seed, round).map((m) => [m.id, m]));
   const roleById = new Map(cfg.roles.map((r) => [r.id, r]));
   const rng = new RNG(deriveSeed(world.seed, round, 422));
+
+  // ---- Talent competition: a candidate is ONE person. When more than one firm tries
+  // to sign the same candidate this round, the higher signing bonus wins them; ties
+  // keep firm order (deterministic). Only the winner pays their bonus — same contract
+  // as contested parcels in facilities.ts. ----
+  const bidsByCand = new Map<string, { firmId: FirmId; bid: number }[]>();
+  for (const f of world.firms) {
+    if (f.status !== "active") continue;
+    const d = decisions.get(f.id);
+    const listed = new Set<string>();
+    for (const cid of d?.hire_employees ?? []) {
+      if (!market.has(cid) || listed.has(cid)) continue;
+      listed.add(cid);
+      const arr = bidsByCand.get(cid) ?? [];
+      arr.push({ firmId: f.id, bid: Math.max(0, Math.round(d?.hire_bids?.[cid] ?? 0)) });
+      bidsByCand.set(cid, arr);
+    }
+  }
+  const candWinner = new Map<string, FirmId>();
+  for (const [cid, bids] of bidsByCand) {
+    if (bids.length <= 1) continue; // uncontested
+    candWinner.set(cid, bids.reduce((a, x) => (x.bid > a.bid ? x : a), bids[0]).firmId);
+  }
 
   // ---- Poaching pass: a firm can lure a rival's employee with a better offer.
   // Resolved first so a poached person contributes to their new firm this round.
@@ -99,15 +124,33 @@ export function resolveEmployees(world: WorldState, decisions: Map<FirmId, FirmD
       out.events.push(`LAYOFF: ${f.id} lets go a ${roleById.get(e.role)?.label.toLowerCase() ?? e.role}`);
     }
 
-    // ---- Hires from this round's market ----
+    // ---- Hires from this round's market (contested candidates already adjudicated) ----
+    const signed = new Set<string>(); // guards a firm listing the same candidate twice
     for (const cid of d?.hire_employees ?? []) {
       const cand = market.get(cid);
-      if (!cand || f.employees.length >= cfg.max_employees || f.employees.some((e) => e.id === cid)) continue;
+      if (!cand || f.employees.length >= cfg.max_employees || signed.has(cid)) continue;
+      const myBid = Math.max(0, Math.round(d?.hire_bids?.[cid] ?? 0));
+      const winner = candWinner.get(cid);
+      if (winner && winner !== f.id) {
+        // Honest loss report: a $0-vs-$0 tie resolves by firm order, not by "a better
+        // offer" — say so, and teach the lever (the signing bonus) either way.
+        const winBid = Math.max(0, ...(bidsByCand.get(cid) ?? []).filter((x) => x.firmId === winner).map((x) => x.bid));
+        out.events.push(winBid > myBid
+          ? `OUTBID: ${cand.name} signed with a rival — their signing bonus $${fmNum(winBid)} beat yours ($${fmNum(myBid)})`
+          : `CANDIDATE LOST: ${cand.name} took a rival's otherwise-equal offer on a tie-break — a signing bonus would have won them outright`);
+        continue;
+      }
+      signed.add(cid);
       f.employees.push({
         id: `emp_${round}_${f.employees.length}`, name: cand.name, role: cand.role, skill: cand.skill,
         salary: cand.salary, satisfaction: cfg.starting_satisfaction, tenure_rounds: 0, hired_round: round, avatar_seed: cand.avatar_seed,
       });
-      out.events.push(`HIRE: ${f.id} brings on ${cand.name}, a ${roleById.get(cand.role)?.label.toLowerCase() ?? cand.role}`);
+      if (winner === f.id && myBid > 0) {
+        opex += myBid; // one-time signing bonus (opex) — only the contest winner pays
+        out.events.push(`SIGNED: ${f.id} wins ${cand.name} in a contested hire ($${fmNum(myBid)} signing bonus)`);
+      } else {
+        out.events.push(`HIRE: ${f.id} brings on ${cand.name}, a ${roleById.get(cand.role)?.label.toLowerCase() ?? cand.role}`);
+      }
     }
 
     // ---- Raises (lift satisfaction; the higher salary becomes the opex) ----

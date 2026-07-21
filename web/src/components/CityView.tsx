@@ -665,8 +665,8 @@ export function CityView({ view, actions, setActions, onInspect, extraBuilds = [
                   <div onClick={() => setFacPop(null)} className="fixed inset-0 z-40 lg:absolute lg:z-[8]" />
                   {/* mobile: top-layer bottom sheet */}
                   <div className="fixed inset-x-0 bottom-0 z-50 max-h-[80vh] overflow-y-auto rounded-t-2xl border-t p-4 lg:hidden" style={{ borderColor: "var(--color-copperdeep)", background: "var(--color-panel)", boxShadow: "0 -14px 30px rgba(40,25,8,.42)", paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}>{body}</div>
-                  {/* desktop: anchored popover */}
-                  <div className="absolute z-[9] hidden w-[214px] rounded-xl border p-3 lg:block" style={{ left: `clamp(110px, ${p.l}%, calc(100% - 110px))`, top: `${p.t}%`, transform: "translate(-50%, calc(-100% - 16px))", borderColor: "var(--color-copperdeep)", background: "var(--color-panel)", boxShadow: "0 14px 30px rgba(40,25,8,.42)" }}>{body}</div>
+                  {/* desktop: anchored popover — flips below top-band anchors (see lease popover) */}
+                  <div className="absolute z-[9] hidden w-[214px] rounded-xl border p-3 lg:block" style={{ left: `clamp(110px, ${p.l}%, calc(100% - 110px))`, top: `${p.t}%`, transform: p.t < 45 ? "translate(-50%, 12px)" : "translate(-50%, calc(-100% - 16px))", borderColor: "var(--color-copperdeep)", background: "var(--color-panel)", boxShadow: "0 14px 30px rgba(40,25,8,.42)" }}>{body}</div>
                 </>
               );
             })()}
@@ -678,13 +678,17 @@ export function CityView({ view, actions, setActions, onInspect, extraBuilds = [
               const d = dByKey(st.district ?? ""); const z = ZONE_OF[d?.kind ?? ""] ?? { zone: "", allow: [] as string[] };
               const p = pct(Lz.cx, Lz.cy, 4, "map"); const selType = st.type; const selOk = !!selType && z.allow.includes(selType);
               const capex = selType ? typeOf(selType)?.base_cost ?? 0 : 0;
-              const queuedSpend = actions.builds.reduce((s, b) => s + (typeOf(b.type)?.base_cost ?? 0), 0);
-              const afford = view.own.cash - queuedSpend >= capex; const can = selOk && afford;
+              // Queued spend counts queued bids too, and THIS order must cover capex + its
+              // own bid — otherwise "Build" can pass while cash < capex + premium.
+              const queuedSpend = actions.builds.reduce((s, b) => s + (typeOf(b.type)?.base_cost ?? 0) + (b.bid ?? 0), 0);
+              const afford = view.own.cash - queuedSpend >= capex + (st.bid ?? 0); const can = selOk && afford;
               const body = (
                 <>
                   <div className="flex items-baseline justify-between gap-2"><div className="display text-[0.9rem] text-ink">Lease · {d?.label ?? st.district}</div><button onClick={() => setSiting(null)} className="border-none bg-none text-[0.8rem] text-inksoft">✕</button></div>
                   <div className="text-[0.68rem] italic text-inksoft">{z.zone} · choose what to build</div>
-                  <div className="mt-2 grid gap-1">
+                  {/* internal scroll: a long type list must never grow the popover past the
+                      viewport (it has nowhere to go but up, under the sticky tab nav) */}
+                  <div className="mt-2 grid max-h-44 gap-1 overflow-y-auto pr-0.5">
                     {facTypes.filter((t) => z.allow.includes(t.id)).map((t) => { const on = selType === t.id; const canAfford = view.own.cash - queuedSpend >= t.base_cost; return (
                       <button key={t.id} onClick={() => setSiting({ ...st, type: t.id })} className="flex items-center gap-2 rounded-lg border px-2 py-1.5 text-left" style={{ borderColor: on ? "var(--color-copperdeep)" : "var(--color-line2)", background: on ? "color-mix(in srgb, var(--color-copper) 10%, var(--color-panel))" : "var(--color-panel)" }}>
                         <FacilityChip type={t.id} color={cssColor(youId)} size={18} />
@@ -714,8 +718,10 @@ export function CityView({ view, actions, setActions, onInspect, extraBuilds = [
                   <div onClick={() => setSiting(null)} className="fixed inset-0 z-40 lg:absolute lg:z-[8]" />
                   {/* mobile: top-layer bottom sheet — never clipped by the map viewer */}
                   <div className="fixed inset-x-0 bottom-0 z-50 max-h-[80vh] overflow-y-auto rounded-t-2xl border-t p-4 lg:hidden" style={{ borderColor: "var(--color-copperdeep)", background: "var(--color-panel)", boxShadow: "0 -14px 30px rgba(40,25,8,.42)", paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}>{body}</div>
-                  {/* desktop: popover anchored above the parcel */}
-                  <div className="absolute z-[9] hidden w-[224px] rounded-xl border p-3 lg:block" style={{ left: `clamp(116px, ${p.l}%, calc(100% - 116px))`, top: `${p.t}%`, transform: "translate(-50%, calc(-100% - 14px))", borderColor: "var(--color-copperdeep)", background: "var(--color-panel)", boxShadow: "0 14px 30px rgba(40,25,8,.42)" }}>{body}</div>
+                  {/* desktop: popover anchored to the parcel — above it normally, FLIPPED BELOW
+                      when the parcel sits in the top band (an above-anchored popover there
+                      escapes the map card and gets mangled under the sticky tab nav) */}
+                  <div className="absolute z-[9] hidden w-[224px] rounded-xl border p-3 lg:block" style={{ left: `clamp(116px, ${p.l}%, calc(100% - 116px))`, top: `${p.t}%`, transform: p.t < 45 ? "translate(-50%, 12px)" : "translate(-50%, calc(-100% - 14px))", borderColor: "var(--color-copperdeep)", background: "var(--color-panel)", boxShadow: "0 14px 30px rgba(40,25,8,.42)" }}>{body}</div>
                 </>
               );
             })()}
@@ -834,8 +840,8 @@ export function CityView({ view, actions, setActions, onInspect, extraBuilds = [
                   const lotObj = lotCoord.get(siting.lot); const ct = crowdTone(lotObj ? crowdAtLot(lotObj) : 0);
                   const selType = siting.type; const selOk = !!selType && z.allow.includes(selType);
                   const capex = selType ? typeOf(selType)?.base_cost ?? 0 : 0;
-                  const queuedSpend = actions.builds.reduce((s, b) => s + (typeOf(b.type)?.base_cost ?? 0), 0);
-                  const afford = selOk && view.own.cash - queuedSpend >= capex; const can = selOk && afford;
+                  const queuedSpend = actions.builds.reduce((s, b) => s + (typeOf(b.type)?.base_cost ?? 0) + (b.bid ?? 0), 0);
+                  const afford = selOk && view.own.cash - queuedSpend >= capex + (siting.bid ?? 0); const can = selOk && afford;
                   return (
                     <div>
                       <div className="mb-2 flex items-center justify-between gap-2">
@@ -873,7 +879,7 @@ export function CityView({ view, actions, setActions, onInspect, extraBuilds = [
                       )}
                       <div className="mt-3 flex gap-2">
                         <button onClick={() => setSiting(null)} className="rounded-[10px] border border-line2 bg-panel2 px-3 py-2.5 font-mono text-[0.6rem] font-semibold uppercase tracking-wide text-inksoft">Cancel</button>
-                        <button onClick={build} disabled={!can} className="tt-btn tt-btn--go flex-1 py-2.5 text-[0.7rem]" style={{ opacity: can ? 1 : 0.55, cursor: can ? "pointer" : "not-allowed", filter: can ? undefined : "grayscale(0.5)" }}>{!selType ? "Pick a type" : !selOk ? "Not permitted" : !afford ? "Not enough cash" : `Build · ${fmt.money(capex)}`}</button>
+                        <button onClick={build} disabled={!can} className="tt-btn tt-btn--go flex-1 py-2.5 text-[0.7rem]" style={{ opacity: can ? 1 : 0.55, cursor: can ? "pointer" : "not-allowed", filter: can ? undefined : "grayscale(0.5)" }}>{!selType ? "Pick a type" : !selOk ? "Not permitted" : !afford ? "Not enough cash" : `Build · ${fmt.money(capex)}${siting.bid ? ` + ${fmt.money(siting.bid)} bid` : ""}`}</button>
                       </div>
                     </div>
                   );

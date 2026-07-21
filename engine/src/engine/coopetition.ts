@@ -17,10 +17,33 @@
  * trust effect; capacity-coordination and collective forms feed the antitrust
  * coordination signal (§9.3, §11.4).
  */
-import type { AgreementState, ClauseCondition, Config, FirmDecision, FirmId, PendingAgreement, SegmentId, WorldState } from "../types.js";
+import type { AgreementState, AgreementTerms, ClauseCondition, Config, FirmDecision, FirmId, PendingAgreement, SegmentId, TemplateId, WorldState } from "../types.js";
 
 /** Rounds a proposal stays open awaiting acceptance before it lapses. */
 export const PROPOSAL_TTL_ROUNDS = 2;
+
+/** Negotiable range of each template's economic dial (DW-037). The config default sits
+ *  inside these; the UI offers the same range so engine and client agree on bounds. */
+export const TERM_BOUNDS: Record<TemplateId, { min: number; max: number }> = {
+  joint_marketing: { min: 0.05, max: 0.6 }, // brand_pool_fraction
+  capacity_coordination: { min: 0.05, max: 0.4 }, // capacity_restraint
+  supply_share: { min: 0.02, max: 0.2 }, // unit_cost_reduction
+};
+
+/** Sanitize proposed terms: clamp the dial to its template range, durations to 2..24
+ *  rounds, cost split to 0..1. Returns undefined when nothing meaningful was proposed. */
+export function clampTerms(template: TemplateId, terms: AgreementTerms | undefined): AgreementTerms | undefined {
+  if (!terms) return undefined;
+  const out: AgreementTerms = {};
+  if (typeof terms.magnitude === "number" && Number.isFinite(terms.magnitude)) {
+    const b = TERM_BOUNDS[template];
+    out.magnitude = Math.min(b.max, Math.max(b.min, terms.magnitude));
+  }
+  if (terms.duration_rounds === null) out.duration_rounds = null;
+  else if (typeof terms.duration_rounds === "number" && Number.isFinite(terms.duration_rounds)) out.duration_rounds = Math.min(24, Math.max(2, Math.round(terms.duration_rounds)));
+  if (typeof terms.cost_split === "number" && Number.isFinite(terms.cost_split)) out.cost_split = Math.min(1, Math.max(0, terms.cost_split));
+  return Object.keys(out).length ? out : undefined;
+}
 
 /** Identity key for dedupe: a pact/proposal is "the same deal" if template, segment,
  *  and the full signatory set match (governance form intentionally excluded — the same
@@ -57,7 +80,8 @@ export function resolveAgreementActions(world: WorldState, decisions: Map<FirmId
   const activeKeys = new Set(world.agreements.filter((x) => x.active).map((x) => dealKey(x.template, x.segment, x.signatories)));
   const pendingKeys = new Set(pendings.map((p) => dealKey(p.template, p.segment, [p.proposer, ...p.counterparties])));
 
-  /** All counterparties in — bind the pact. The proposer pays the formation cost NOW. */
+  /** All counterparties in — bind the pact. The formation cost lands NOW, split by the
+   *  negotiated cost_split (absent ⇒ the proposer pays it all, the pre-terms behavior). */
   const activate = (p: PendingAgreement): void => {
     const agreement: AgreementState = {
       id: `a_${round}_${seq++}`,
@@ -65,6 +89,7 @@ export function resolveAgreementActions(world: WorldState, decisions: Map<FirmId
       template: p.template,
       signatories: [p.proposer, ...p.counterparties],
       segment: p.segment,
+      terms: p.terms,
       formation_round: round,
       active: true,
       dissolution_round: null,
@@ -77,8 +102,11 @@ export function resolveAgreementActions(world: WorldState, decisions: Map<FirmId
     }
     world.agreements.push(agreement);
     activeKeys.add(dealKey(agreement.template, agreement.segment, agreement.signatories));
-    addOpex(res.extraOpex, p.proposer, c.coopetition.forms[p.form].formation_cost);
-    res.events.push(`${agreement.signatories.join("+")} formed ${p.form} ${p.template}${agreement.clauses?.length ? ` with ${agreement.clauses.length} contingent clause(s)` : ""}`);
+    const cost = c.coopetition.forms[p.form].formation_cost;
+    const split = p.terms?.cost_split ?? 1;
+    addOpex(res.extraOpex, p.proposer, cost * split);
+    for (const id of p.counterparties) addOpex(res.extraOpex, id, (cost * (1 - split)) / p.counterparties.length);
+    res.events.push(`${agreement.signatories.join("+")} formed ${p.form} ${p.template}${agreement.clauses?.length ? ` with ${agreement.clauses.length} contingent clause(s)` : ""}${p.terms?.duration_rounds ? ` (${p.terms.duration_rounds}-round term)` : ""}`);
   };
 
   for (const f of world.firms) {
@@ -107,11 +135,27 @@ export function resolveAgreementActions(world: WorldState, decisions: Map<FirmId
           counterparties,
           segment: a.template === "joint_marketing" ? a.segment ?? null : null,
           clauses: a.clauses,
+          terms: clampTerms(a.template, a.terms),
           proposed_round: round,
           accepted: [],
         };
         pendings.push(proposal);
         res.events.push(`${f.id} proposes a ${a.form} ${a.template} to ${counterparties.join("+")} — awaiting their agreement`);
+      } else if (a.type === "counter_proposal" && a.proposal_id) {
+        // A counterparty answers with revised terms instead of yes/no: roles swap — they
+        // become the proposer and the original proposer must now accept. Two-party only
+        // (a multiparty counter would need everyone to re-consent to a moving target).
+        const p = pendings.find((x) => x.id === a.proposal_id);
+        if (!p || !p.counterparties.includes(f.id) || p.counterparties.length > 1) continue;
+        const original = p.proposer;
+        p.proposer = f.id;
+        p.counterparties = [original];
+        p.accepted = [];
+        p.terms = clampTerms(p.template, a.terms) ?? p.terms;
+        if (p.template === "joint_marketing" && a.segment) p.segment = a.segment;
+        p.proposed_round = round; // the counter restarts the response window
+        p.counters = (p.counters ?? 0) + 1;
+        res.events.push(`${f.id} counters ${original}'s ${p.form} ${p.template} proposal with revised terms — now in ${original}'s court`);
       } else if ((a.type === "accept_proposal" || a.type === "decline_proposal") && a.proposal_id) {
         const p = pendings.find((x) => x.id === a.proposal_id);
         if (!p || !p.counterparties.includes(f.id)) continue; // only a named counterparty answers
@@ -135,7 +179,7 @@ export function resolveAgreementActions(world: WorldState, decisions: Map<FirmId
         const ag = world.agreements.find((x) => x.id === a.agreement_id && x.active);
         if (!ag || !ag.signatories.includes(f.id)) continue;
         if (ag.renegotiation || ag.renegotiation_used) continue; // one open call, once per lifetime
-        ag.renegotiation = { caller: f.id, called_round: round, proposed_template: a.proposed_template, proposed_segment: a.proposed_segment };
+        ag.renegotiation = { caller: f.id, called_round: round, proposed_template: a.proposed_template, proposed_segment: a.proposed_segment, proposed_terms: clampTerms(a.proposed_template ?? ag.template, a.proposed_terms) };
         ag.renegotiation_used = true;
         addOpex(res.extraOpex, f.id, rcfg.call_cost);
         res.events.push(`${f.id} calls to renegotiate ${ag.form} ${ag.template} (${ag.id})`);
@@ -150,6 +194,7 @@ export function resolveAgreementActions(world: WorldState, decisions: Map<FirmId
         if (resp === "accept") {
           if (ag.renegotiation.proposed_template) ag.template = ag.renegotiation.proposed_template;
           if (ag.renegotiation.proposed_segment !== undefined) ag.segment = ag.template === "joint_marketing" ? ag.renegotiation.proposed_segment ?? ag.segment : null;
+          if (ag.renegotiation.proposed_terms) ag.terms = { ...ag.terms, ...ag.renegotiation.proposed_terms };
           // Switching TO joint_marketing needs a category to pool brand in — if none was
           // proposed and the pact never had one, default to the first active segment
           // (a null segment would silently make the pact do nothing).
@@ -179,6 +224,19 @@ export function resolveAgreementActions(world: WorldState, decisions: Map<FirmId
         }
         res.events.push(`${f.id} defected from ${ag.form} ${ag.template} (${ag.id})`);
       }
+    }
+  }
+
+  // Negotiated sunsets: a pact with a duration term winds down cleanly once it runs out
+  // (formed round r with an n-round term ⇒ effective rounds r .. r+n-1).
+  for (const ag of world.agreements) {
+    const dur = ag.terms?.duration_rounds;
+    if (!ag.active || dur == null) continue;
+    if (round - ag.formation_round >= dur) {
+      ag.active = false;
+      ag.dissolution_round = round;
+      ag.dissolution_type = "mutual";
+      res.events.push(`${ag.form} ${ag.template} (${ag.id}) reached its negotiated ${dur}-round term and wound down`);
     }
   }
 
@@ -218,9 +276,10 @@ export function computeAgreementEffects(world: WorldState, c: Config, round: num
     if (ag.template === "capacity_coordination" || ag.form === "collective") eff.coordinationUnits += 1;
     if (suspended) continue;
 
+    // Negotiated magnitude wins; absent terms fall back to the config template constant.
     if (ag.template === "joint_marketing" && ag.segment) {
       const seg = ag.segment;
-      const frac = c.coopetition.templates.joint_marketing.brand_pool_fraction;
+      const frac = ag.terms?.magnitude ?? c.coopetition.templates.joint_marketing.brand_pool_fraction;
       for (const i of live) {
         const others = live.filter((j) => j !== i).reduce((acc, j) => acc + (bById.get(j)?.B ?? 0), 0);
         const m = eff.extraBrand.get(i) ?? new Map<SegmentId, number>();
@@ -228,10 +287,10 @@ export function computeAgreementEffects(world: WorldState, c: Config, round: num
         eff.extraBrand.set(i, m);
       }
     } else if (ag.template === "supply_share") {
-      const r = c.coopetition.templates.supply_share.unit_cost_reduction;
+      const r = ag.terms?.magnitude ?? c.coopetition.templates.supply_share.unit_cost_reduction;
       for (const i of live) eff.unitCostReduction.set(i, (eff.unitCostReduction.get(i) ?? 0) + r);
     } else if (ag.template === "capacity_coordination") {
-      const restraint = c.coopetition.templates.capacity_coordination.capacity_restraint;
+      const restraint = ag.terms?.magnitude ?? c.coopetition.templates.capacity_coordination.capacity_restraint;
       for (const i of live) eff.capacityRestraint.set(i, Math.max(eff.capacityRestraint.get(i) ?? 0, restraint));
     }
   }

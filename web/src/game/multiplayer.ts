@@ -5,8 +5,18 @@
  * Diagnostics / Standings are reused unchanged. The instructor client drives
  * the passcode-gated create / lock / resolve endpoints.
  */
-import type { AllianceSummary, Config, ConfigOverride, FirmDecision, FirmId, FirmRoundResult, FirmState, LobbySummary, RoleBriefing, SegmentId } from "drinkwars-engine";
+import type { AllianceSummary, Config, ConfigOverride, FirmDecision, FirmId, FirmRoundResult, FirmState, LobbySummary, RoleBriefing, ScheduledShock, SegmentId } from "drinkwars-engine";
 import { inventoryEnabled } from "drinkwars-engine";
+
+/** The instructor gamemaster payload (GET /instructor/games/:id/timeline). */
+export interface GameTimeline {
+  round: number;
+  nRounds: number;
+  timeline: ScheduledShock[];
+  liveTriggers: string[];
+  catalog: { id: string; kind: string; target: string; magnitude_mean: number; duration: number; regional: boolean }[];
+  regions: string[];
+}
 
 /** Module-enable map sent to the create endpoint (id → { enabled }). */
 export type ModuleSelection = Record<string, { enabled: boolean }>;
@@ -75,8 +85,13 @@ export async function fetchMyGames(claim: string, base: string = TRANSPORT_URL):
 }
 
 /** What the public game-peek endpoint returns — enough to shape the Join flow
- *  (firm_mode gates the C-suite seat picker) WITHOUT joining or minting a user. */
-export interface GamePeek { firmMode: "solo" | "team"; title: string | null; nRounds: number; round: number; lifecycle: string; slotsTotal: number; slotsOpen: number }
+ *  (firm_mode gates the C-suite seat picker) WITHOUT joining or minting a user.
+ *  Team games also list the firm roster (name + seat occupancy, no identities) so a
+ *  joiner can pick WHICH firm to sit down at. */
+export interface GamePeek {
+  firmMode: "solo" | "team"; title: string | null; nRounds: number; round: number; lifecycle: string; slotsTotal: number; slotsOpen: number;
+  teams?: { teamId: string; name: string; members: number; roles: string[] }[];
+}
 
 /** Validate a join code + learn the game's shape before a student founds a team. */
 export async function peekGame(code: string, base: string = TRANSPORT_URL): Promise<GamePeek> {
@@ -232,7 +247,7 @@ export class StudentClient {
         invest_rnd: 0, buy_vertical: [], hire_roles: [], fire_roles: [],
         draw_convertible: 0, draw_rbf: 0, acquisition_bid: null,
         build_facilities: [], maintain_facilities: {}, mothball_facilities: [], reactivate_facilities: [], divest_facilities: [],
-        hire_employees: [], fire_employees: [], raise_employees: {}, poach_employees: [],
+        hire_employees: [], hire_bids: {}, fire_employees: [], raise_employees: {}, poach_employees: [],
       };
     }
 
@@ -298,6 +313,24 @@ export class InstructorClient {
   /** Full analytics payload for the dashboard (read-only; assembled server-side). */
   dashboard(gameId: string): Promise<InstructorDashboard> {
     return api(this.base, `/instructor/games/${gameId}/dashboard`, { headers: this.headers() });
+  }
+  // ---- Gamemaster (DW-037): the forward shock schedule + live triggers ----
+  /** The forward schedule: engine-rolled + instructor-planted shocks, the plantable
+   *  catalog, and any armed live triggers. */
+  timeline(gameId: string): Promise<GameTimeline> {
+    return api(this.base, `/instructor/games/${gameId}/timeline`, { headers: this.headers() });
+  }
+  /** Plant a disruption on a future (or the current) round. */
+  scheduleShock(gameId: string, spec: { type_id: string; round: number; magnitude?: number; duration?: number; region?: string }): Promise<{ scheduled: ScheduledShock; timeline: ScheduledShock[] }> {
+    return api(this.base, `/instructor/games/${gameId}/timeline`, { method: "POST", headers: this.headers(), body: JSON.stringify({ op: "schedule", spec }) });
+  }
+  /** Remove a not-yet-fired scheduled shock (engine-rolled or planted). */
+  unscheduleShock(gameId: string, shockId: string): Promise<{ timeline: ScheduledShock[] }> {
+    return api(this.base, `/instructor/games/${gameId}/timeline`, { method: "POST", headers: this.headers(), body: JSON.stringify({ op: "unschedule", shockId }) });
+  }
+  /** Arm (or disarm) a live trigger: the shock type fires when THIS round resolves. */
+  setLiveTrigger(gameId: string, typeId: string, armed: boolean): Promise<{ liveTriggers: string[] }> {
+    return api(this.base, `/instructor/games/${gameId}/timeline`, { method: "POST", headers: this.headers(), body: JSON.stringify({ op: "trigger", typeId, armed }) });
   }
   /** Research data export — the per-firm-per-round panel as a downloadable file.
    *  Uses raw fetch (not `api`) so the passcode header reaches the attachment route. */

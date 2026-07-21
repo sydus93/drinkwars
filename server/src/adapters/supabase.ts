@@ -22,6 +22,7 @@ import type {
   Lifecycle, MemberDecisionRecord, PublicRoundRecord, ReflectionRow, RoundResultRecord, StorageAdapter, TeamRecord, TelemetryRow,
   UserRecord, WorldStateRecord,
 } from "../types.js";
+import type { WorldState } from "drinkwars-engine";
 
 // epoch-ms <-> ISO timestamptz
 const toTs = (ms: number | null | undefined): string | null => (ms == null ? null : new Date(ms).toISOString());
@@ -175,6 +176,9 @@ export class SupabaseAdapter implements StorageAdapter {
     must(await this.db.from("world_states").insert({
       game_id: rec.game_id, round: rec.round, state: rec.state, seed: rec.seed, created_at: toTs(rec.created_at),
     }));
+  }
+  async updateWorldState(gameId: string, round: number, state: WorldState): Promise<void> {
+    must(await this.db.from("world_states").update({ state }).eq("game_id", gameId).eq("round", round));
   }
   async getWorldState(gameId: string, round: number): Promise<WorldStateRecord | null> {
     const r = must(await this.db.from("world_states").select("*").eq("game_id", gameId).eq("round", round).maybeSingle());

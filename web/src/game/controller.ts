@@ -41,6 +41,15 @@ export interface OwnTrend {
   B: number;
   netIncome: number;
   equity: number;
+  // Ratio-panel inputs (DW-037) — present on every newly-resolved round (engine
+  // OwnTrendView); optional so a mid-season save from an older build still renders.
+  revenue?: number;
+  gross?: number;
+  ebit?: number;
+  interest?: number;
+  debt?: number;
+  assets?: number;
+  unitsSold?: number;
 }
 export interface FieldTrend {
   round: number;
@@ -328,7 +337,7 @@ export class SinglePlayerGame {
         buy_info: false, agreement_actions: [], exit_action: null,
         // Facility + employee actions are one-shot — clear them so a build/hire doesn't re-fire every round.
         build_facilities: [], maintain_facilities: {}, mothball_facilities: [], reactivate_facilities: [], divest_facilities: [],
-        hire_employees: [], fire_employees: [], raise_employees: {}, poach_employees: [],
+        hire_employees: [], hire_bids: {}, fire_employees: [], raise_employees: {}, poach_employees: [],
         beliefs: {}, reflection: "",
       };
     }

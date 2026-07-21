@@ -29,6 +29,7 @@ export function Join({ onJoined, onBack }: { onJoined: (c: StudentClient) => voi
   const [name, setName] = useState("");
   const [claim, setClaim] = useState("");
   const [role, setRole] = useState<string>("");
+  const [teamId, setTeamId] = useState<string>(""); // team mode: WHICH firm to sit down at ("" = emptiest)
   const [color, setColor] = useState<string>(FIRM_COLORS[0].hex);
   const [emblem, setEmblem] = useState<string>(EMBLEM_IDS[0]);
   const [busy, setBusy] = useState(false);
@@ -41,6 +42,7 @@ export function Join({ onJoined, onBack }: { onJoined: (c: StudentClient) => voi
       const p = await peekGame(code.trim().toUpperCase());
       setPeek(p);
       if (p.firmMode !== "team") setRole(""); // solo firms have no seats
+      setTeamId("");
       setStep("found");
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -56,7 +58,7 @@ export function Join({ onJoined, onBack }: { onJoined: (c: StudentClient) => voi
       setPlayerColor(color);
       setPlayerEmblem(emblem);
       const c = new StudentClient();
-      await c.join(code.trim().toUpperCase(), name.trim(), { claim: claim.trim() || undefined, role: role || undefined });
+      await c.join(code.trim().toUpperCase(), name.trim(), { claim: claim.trim() || undefined, role: role || undefined, teamId: teamId || undefined });
       await c.fetchView();
       onJoined(c);
     } catch (e) {
@@ -120,16 +122,44 @@ export function Join({ onJoined, onBack }: { onJoined: (c: StudentClient) => voi
         <div className="mt-5 grid gap-4">
           <label className="grid gap-1"><span className="text-sm text-inksoft">Brewery name</span><input value={name} onChange={(e) => setName(e.target.value)} maxLength={40} placeholder="e.g. Sediment Co." autoFocus /></label>
 
+          {isTeam && (peek?.teams?.length ?? 0) > 0 && (() => {
+            const picked = peek!.teams!.find((t) => t.teamId === teamId);
+            return (
+              <div>
+                <div className="mb-2 font-mono text-[0.6rem] uppercase tracking-[0.12em] text-copperdeep">Your firm <span className="text-[0.7rem] lowercase tracking-normal text-inksoft">· join teammates on an existing firm, or take an empty one</span></div>
+                <div className="grid gap-1.5">
+                  {peek!.teams!.map((t) => {
+                    const on = teamId === t.teamId;
+                    const founded = t.members > 0;
+                    return (
+                      <button key={t.teamId} type="button" onClick={() => setTeamId(on ? "" : t.teamId)} className="flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left transition-colors" style={{ borderColor: on ? "var(--color-copper)" : "var(--color-line2)", background: on ? "color-mix(in srgb, var(--color-copper) 12%, var(--color-panel))" : "var(--color-panel)" }}>
+                        <span className="min-w-0 flex-1 truncate text-sm font-semibold" style={{ color: founded ? "var(--color-ink)" : "var(--color-inksoft)" }}>{founded ? t.name : "— open firm —"}</span>
+                        <span className="shrink-0 font-mono text-[0.58rem] uppercase tracking-wide text-inksoft">{t.members ? `${t.members} aboard` : "empty"}</span>
+                        {t.roles.length > 0 && <span className="shrink-0 font-mono text-[0.56rem] uppercase text-copperdeep">{t.roles.map((r) => r.toUpperCase()).join(" ")}</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+                {!teamId && <div className="mt-1 text-[0.66rem] text-inksoft">No pick = you're seated on the emptiest firm.</div>}
+                {picked && picked.members > 0 && <div className="mt-1 text-[0.66rem] text-inksoft">Joining <b>{picked.name}</b> — its founder already named it; your name below is just your player name.</div>}
+              </div>
+            );
+          })()}
+
           {isTeam && (
             <div>
               <div className="mb-2 font-mono text-[0.6rem] uppercase tracking-[0.12em] text-copperdeep">Your seat <span className="text-[0.7rem] lowercase tracking-normal text-inksoft">· each seat owns one desk — leave blank to run the whole firm</span></div>
               <div className="flex flex-wrap gap-1.5">
-                {SEATS.map((s) => { const on = role === s.id; return (
-                  <button key={s.id} type="button" onClick={() => setRole(on ? "" : s.id)} title={`${s.label} — ${s.desk}`} className="rounded-lg border px-2.5 py-1.5 text-left transition-colors" style={{ borderColor: on ? "var(--color-copper)" : "var(--color-line2)", background: on ? "color-mix(in srgb, var(--color-copper) 12%, var(--color-panel))" : "var(--color-panel)" }}>
-                    <span className="font-mono text-[0.66rem] font-bold" style={{ color: on ? "var(--color-copperdeep)" : "var(--color-ink)" }}>{s.label}</span>
-                    <span className="ml-1 text-[0.62rem] text-inksoft">{s.desk}</span>
-                  </button>
-                ); })}
+                {SEATS.map((s) => {
+                  const on = role === s.id;
+                  const taken = !!teamId && (peek?.teams?.find((t) => t.teamId === teamId)?.roles ?? []).includes(s.id);
+                  return (
+                    <button key={s.id} type="button" onClick={() => setRole(on ? "" : s.id)} title={taken ? `${s.label} — already taken on this firm` : `${s.label} — ${s.desk}`} className="rounded-lg border px-2.5 py-1.5 text-left transition-colors" style={{ borderColor: on ? "var(--color-copper)" : "var(--color-line2)", background: on ? "color-mix(in srgb, var(--color-copper) 12%, var(--color-panel))" : "var(--color-panel)", opacity: taken && !on ? 0.45 : 1 }}>
+                      <span className="font-mono text-[0.66rem] font-bold" style={{ color: on ? "var(--color-copperdeep)" : "var(--color-ink)" }}>{s.label}</span>
+                      <span className="ml-1 text-[0.62rem] text-inksoft">{taken ? "taken" : s.desk}</span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           )}

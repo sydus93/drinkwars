@@ -151,10 +151,19 @@ Deno.serve(async (req: Request) => {
       const game = code ? await store.getGameByCode(code) : null;
       if (!game) return json(404, { error: "no game found for that code" });
       const teams = await store.getTeams(game.id);
+      // Team mode: expose the firm roster (name + seat occupancy, no member identities)
+      // so a joiner can pick WHICH firm to sit down at.
+      const teamList = (game.firm_mode ?? "solo") === "team"
+        ? await Promise.all(teams.map(async (t: any) => ({
+            teamId: t.id, name: t.name, members: t.member_user_ids.length,
+            roles: (await Promise.all(t.member_user_ids.map((uid: string) => store.getMemberRole(t.id, uid)))).filter(Boolean),
+          })))
+        : undefined;
       return json(200, {
         firmMode: game.firm_mode ?? "solo", title: game.title ?? null, nRounds: game.n_rounds,
         round: game.current_round, lifecycle: game.lifecycle,
         slotsTotal: teams.length, slotsOpen: teams.filter((t: any) => t.member_user_ids.length === 0).length,
+        ...(teamList ? { teams: teamList } : {}),
       });
     }
 
@@ -274,6 +283,19 @@ Deno.serve(async (req: Request) => {
         if (format === "json") return attachment(200, "application/json", JSON.stringify(dash, null, 2), `drinkwars-${gameId}.json`);
         return attachment(200, "text/csv", dashboardToCsv(dash), `drinkwars-${gameId}.csv`);
       }
+      // Gamemaster: the forward shock schedule + live triggers (DW-037).
+      const tl = path.match(/^\/instructor\/games\/([^/]+)\/timeline$/);
+      if (tl) {
+        const gameId = tl[1];
+        if (method === "GET") return json(200, await orch.getTimeline(gameId));
+        if (method === "POST") {
+          if (body.op === "schedule") return json(200, { scheduled: await orch.scheduleShock(gameId, body.spec ?? {}), timeline: (await orch.getTimeline(gameId)).timeline });
+          if (body.op === "unschedule") { await orch.unscheduleShock(gameId, String(body.shockId ?? "")); return json(200, { timeline: (await orch.getTimeline(gameId)).timeline }); }
+          if (body.op === "trigger") return json(200, { liveTriggers: await orch.setLiveTrigger(gameId, String(body.typeId ?? ""), body.armed !== false) });
+          return json(400, { error: "op must be schedule | unschedule | trigger" });
+        }
+      }
+
       const m = path.match(/^\/instructor\/games\/([^/]+)\/(status|lock|resolve|advance|dashboard)$/);
       if (m) {
         const [, gameId, action] = m;

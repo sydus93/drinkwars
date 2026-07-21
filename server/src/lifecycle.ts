@@ -13,7 +13,7 @@
  * (§3.3) — `replay()` verifies that against the persisted history.
  */
 import { ADAPTIVE_LEANS, decideAdaptive, initGame, mergeMemberDecisions, resolveRound as engineResolve, ROLE_DESK } from "drinkwars-engine";
-import type { Config, FirmDecision, FirmId, RoundResult, SegmentId, WorldState } from "drinkwars-engine";
+import type { Config, FirmDecision, FirmId, RoundResult, ScheduledShock, SegmentId, WorldState } from "drinkwars-engine";
 import type {
   AgreementRow, BeliefRow, DecisionRecord, DistinctivenessRow, FirmMode, FirmRoundRow, GameRecord,
   ReflectionRow, StorageAdapter, TeamRecord, TelemetryRow,
@@ -307,6 +307,92 @@ export class GameOrchestrator {
     const submissions = teams.map((t) => ({ team_id: t.id, firm_id: t.firm_id, submitted: byTeam.get(t.id)?.submitted ?? false, locked: byTeam.get(t.id)?.locked ?? false }));
     const nonSubmitters = teams.filter((t) => activeFirms.has(t.firm_id) && !byTeam.get(t.id)?.submitted).map((t) => t.id);
     return { lifecycle: game.lifecycle, round: game.current_round, submissions, nonSubmitters };
+  }
+
+  // ───────────────────────── Gamemaster (DW-037): the instructor's forward schedule ─────────────────────────
+  // The engine already rolls a deterministic shock timeline at init and honors
+  // `live_triggers`; these methods are the missing writers. Edits land on the CURRENT
+  // round's stored world state (the exact record the next resolve consumes), so replay
+  // stays deterministic — the edit is part of the persisted history.
+
+  /** The forward schedule: every scheduled shock (engine-rolled + instructor-planted),
+   *  what can be planted (the config's shock catalog), and any live triggers armed. */
+  async getTimeline(gameId: string): Promise<{
+    round: number; nRounds: number;
+    timeline: ScheduledShock[]; liveTriggers: string[];
+    catalog: { id: string; kind: string; target: string; magnitude_mean: number; duration: number; regional: boolean }[];
+    regions: string[];
+  }> {
+    const game = await this.requireGame(gameId);
+    const ws = await this.store.getLatestWorldState(gameId);
+    if (!ws) throw new LifecycleError("no world state");
+    const geo = game.config.modules?.geography;
+    return {
+      round: game.current_round,
+      nRounds: game.n_rounds,
+      timeline: [...ws.state.shock_timeline].sort((a, b) => a.round - b.round),
+      liveTriggers: ws.state.live_triggers ?? [],
+      catalog: game.config.shocks.types.map((t) => ({ id: t.id, kind: t.kind, target: String(t.target), magnitude_mean: t.magnitude_mean, duration: t.duration, regional: !!t.regional })),
+      regions: geo?.enabled ? geo.markets.map((m) => m.id) : [],
+    };
+  }
+
+  /** Plant a disruption (or cancel one) on a FUTURE-or-current round. Instructor-planted
+   *  shocks are `locked` so nothing auto-edits them; already-fired entries are immutable. */
+  async scheduleShock(gameId: string, spec: { type_id: string; round: number; magnitude?: number; duration?: number; region?: string }): Promise<ScheduledShock> {
+    const game = await this.requireGame(gameId);
+    if (game.lifecycle === "complete") throw new LifecycleError("game is complete");
+    const t = game.config.shocks.types.find((x) => x.id === spec.type_id);
+    if (!t) throw new LifecycleError(`unknown shock type "${spec.type_id}"`);
+    const round = Math.round(spec.round);
+    if (!Number.isFinite(round) || round < game.current_round || round >= game.n_rounds) throw new LifecycleError(`round ${spec.round} is not schedulable (current ${game.current_round}, last ${game.n_rounds - 1})`);
+    const ws = await this.store.getLatestWorldState(gameId);
+    if (!ws) throw new LifecycleError("no world state");
+    const s: ScheduledShock = {
+      id: `gm_${round}_${t.id}_${ws.state.shock_timeline.length}`,
+      type_id: t.id,
+      kind: t.kind,
+      target: t.target,
+      round,
+      magnitude: Math.min(1.5, Math.max(0.02, spec.magnitude ?? t.magnitude_mean)),
+      signaling: t.signaling,
+      resilience_mitigated: t.resilience_mitigated,
+      duration: Math.min(4, Math.max(1, Math.round(spec.duration ?? t.duration))),
+      locked: true,
+      fired: false,
+      ...(spec.region ? { region: spec.region } : {}),
+    };
+    ws.state.shock_timeline.push(s);
+    await this.store.updateWorldState(gameId, ws.round, ws.state);
+    return s;
+  }
+
+  /** Remove a not-yet-fired scheduled shock (engine-rolled or instructor-planted). */
+  async unscheduleShock(gameId: string, shockId: string): Promise<void> {
+    const game = await this.requireGame(gameId);
+    const ws = await this.store.getLatestWorldState(gameId);
+    if (!ws) throw new LifecycleError("no world state");
+    const i = ws.state.shock_timeline.findIndex((s) => s.id === shockId);
+    if (i < 0) throw new LifecycleError(`no scheduled shock "${shockId}"`);
+    const s = ws.state.shock_timeline[i];
+    if (s.fired || s.round < game.current_round) throw new LifecycleError("cannot remove a shock that already fired");
+    ws.state.shock_timeline.splice(i, 1);
+    await this.store.updateWorldState(gameId, ws.round, ws.state);
+  }
+
+  /** Arm (or disarm) a live trigger: the named shock type fires when THIS round resolves. */
+  async setLiveTrigger(gameId: string, typeId: string, armed: boolean): Promise<string[]> {
+    const game = await this.requireGame(gameId);
+    if (game.lifecycle === "complete") throw new LifecycleError("game is complete");
+    if (!game.config.shocks.types.some((x) => x.id === typeId)) throw new LifecycleError(`unknown shock type "${typeId}"`);
+    const ws = await this.store.getLatestWorldState(gameId);
+    if (!ws) throw new LifecycleError("no world state");
+    const cur = new Set(ws.state.live_triggers ?? []);
+    if (armed) cur.add(typeId);
+    else cur.delete(typeId);
+    ws.state.live_triggers = [...cur];
+    await this.store.updateWorldState(gameId, ws.round, ws.state);
+    return ws.state.live_triggers;
   }
 
   /** Close the submission window (§5 Locked). Returns flagged non-submitters. */

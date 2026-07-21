@@ -1,5 +1,5 @@
 /** Minimal dependency-free SVG charts, styled to the palette. */
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { MONEY_DISPLAY } from "../labels.js";
 
 const W = 320;
@@ -68,10 +68,16 @@ export interface ScatterPoint {
   faded?: boolean; // exited / inactive
 }
 
+/** Default tooltip number format — compact, precision scaled to magnitude. */
+const compactNum = (n: number): string => (Math.abs(n) >= 100 ? Math.round(n).toLocaleString("en-US") : Math.abs(n) >= 1 ? n.toFixed(1) : n.toFixed(2));
+
 /** Dependency-free 2D scatter with labelled axes. Points are plotted on auto-scaled
  *  axes; each carries its own color/size/fade. Used for the strategy map (single-
- *  player) and the instructor strategy panel (every team plotted at once). */
-export function Scatter({ points, xLabel, yLabel }: { points: ScatterPoint[]; xLabel: string; yLabel: string }) {
+ *  player) and the instructor strategy panel (every team plotted at once).
+ *  Hovering a point (or tapping, on touch) raises an HTML tooltip with the exact
+ *  x/y values; the always-on labels fade while a tooltip is up. */
+export function Scatter({ points, xLabel, yLabel, fmtX = compactNum, fmtY = compactNum }: { points: ScatterPoint[]; xLabel: string; yLabel: string; fmtX?: (n: number) => string; fmtY?: (n: number) => string }) {
+  const [hover, setHover] = useState<number | null>(null);
   const finite = points.filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
   if (finite.length === 0) return <div className="text-xs text-inksoft">No data yet.</div>;
   const SW = 360, SH = 260, L = 44, RM = 16, TM = 14, BM = 40;
@@ -83,23 +89,54 @@ export function Scatter({ points, xLabel, yLabel }: { points: ScatterPoint[]; xL
   if (ymin === ymax) { ymin -= 1; ymax += 1; }
   const sx = (v: number) => L + ((v - xmin) / (xmax - xmin)) * (SW - L - RM);
   const sy = (v: number) => SH - BM - ((v - ymin) / (ymax - ymin)) * (SH - TM - BM);
+  const hp = hover != null && hover < finite.length ? finite[hover] : null;
+  // Tooltip anchored at the point's SVG coords as a % of the wrapper; flipped
+  // horizontally in the right half and vertically in the top quarter so it
+  // never escapes the wrapper.
+  const px = hp ? (sx(hp.x) / SW) * 100 : 0;
+  const py = hp ? (sy(hp.y) / SH) * 100 : 0;
 
   return (
-    <svg viewBox={`0 0 ${SW} ${SH}`} className="w-full">
-      <line x1={L} y1={SH - BM} x2={SW - RM} y2={SH - BM} stroke="var(--color-line2)" />
-      <line x1={L} y1={TM} x2={L} y2={SH - BM} stroke="var(--color-line2)" />
-      <text x={(L + SW - RM) / 2} y={SH - 6} fontSize="10" textAnchor="middle" fill="var(--color-inksoft)" fontFamily="var(--font-mono)">{xLabel} →</text>
-      <text transform={`rotate(-90 12 ${(TM + SH - BM) / 2})`} x={12} y={(TM + SH - BM) / 2} fontSize="10" textAnchor="middle" fill="var(--color-inksoft)" fontFamily="var(--font-mono)">↑ {yLabel}</text>
-      {finite.map((p, i) => {
-        const r = p.size ?? 4;
-        return (
-          <g key={i} opacity={p.faded ? 0.4 : 1}>
-            <circle cx={sx(p.x)} cy={sy(p.y)} r={r} fill={p.color} />
-            <text x={sx(p.x) + r + 2} y={sy(p.y) + 3} fontSize="8.5" fill={p.color} fontFamily="var(--font-mono)">{p.label}</text>
+    <div className="relative" onPointerDown={() => setHover(null)}>
+      <svg viewBox={`0 0 ${SW} ${SH}`} className="w-full">
+        {[0.25, 0.5, 0.75].map((f) => (
+          <g key={f} opacity={0.45}>
+            <line x1={L + f * (SW - L - RM)} y1={TM} x2={L + f * (SW - L - RM)} y2={SH - BM} stroke="var(--color-line2)" strokeWidth="1" />
+            <line x1={L} y1={TM + f * (SH - TM - BM)} x2={SW - RM} y2={TM + f * (SH - TM - BM)} stroke="var(--color-line2)" strokeWidth="1" />
           </g>
-        );
-      })}
-    </svg>
+        ))}
+        <line x1={L} y1={SH - BM} x2={SW - RM} y2={SH - BM} stroke="var(--color-line2)" />
+        <line x1={L} y1={TM} x2={L} y2={SH - BM} stroke="var(--color-line2)" />
+        <text x={(L + SW - RM) / 2} y={SH - 6} fontSize="10" textAnchor="middle" fill="var(--color-inksoft)" fontFamily="var(--font-mono)">{xLabel} →</text>
+        <text transform={`rotate(-90 12 ${(TM + SH - BM) / 2})`} x={12} y={(TM + SH - BM) / 2} fontSize="10" textAnchor="middle" fill="var(--color-inksoft)" fontFamily="var(--font-mono)">↑ {yLabel}</text>
+        {finite.map((p, i) => {
+          const r = p.size ?? 4;
+          return (
+            <g key={i} opacity={p.faded ? 0.4 : 1}>
+              <circle cx={sx(p.x)} cy={sy(p.y)} r={r} fill={p.color} />
+              <text x={sx(p.x) + r + 2} y={sy(p.y) + 3} fontSize="8.5" fill={p.color} fontFamily="var(--font-mono)" opacity={hover != null ? 0.55 : 1}>{p.label}</text>
+              {/* larger invisible hit target; taps pin the tooltip (cleared by the next tap elsewhere) */}
+              <circle
+                cx={sx(p.x)} cy={sy(p.y)} r={Math.max(r + 6, 10)} fill="transparent"
+                onPointerEnter={(e) => { if (e.pointerType === "mouse") setHover(i); }}
+                onPointerLeave={(e) => { if (e.pointerType === "mouse") setHover(null); }}
+                onPointerDown={(e) => { e.stopPropagation(); setHover(i); }}
+              />
+            </g>
+          );
+        })}
+      </svg>
+      {hp && (
+        <div
+          className="pointer-events-none absolute z-10 rounded-[3px] border border-line2 bg-paper px-2 py-1 shadow-sm"
+          style={{ left: `${px}%`, top: `${py}%`, transform: `translate(${px > 50 ? "calc(-100% - 8px)" : "8px"}, ${py < 25 ? "8px" : "calc(-100% - 8px)"})` }}
+        >
+          <div className="text-[0.7rem] font-semibold" style={{ color: hp.color }}>{hp.label}</div>
+          <div className="tnum whitespace-nowrap text-[0.68rem] text-inksoft">{xLabel}: <span className="text-ink">{fmtX(hp.x)}</span></div>
+          <div className="tnum whitespace-nowrap text-[0.68rem] text-inksoft">{yLabel}: <span className="text-ink">{fmtY(hp.y)}</span></div>
+        </div>
+      )}
+    </div>
   );
 }
 

@@ -354,7 +354,11 @@ export function decideAdaptive(lean: Lean, f: FirmState, world: WorldState, c: C
   for (const p of world.pending_agreements ?? []) {
     if (!p.counterparties.includes(f.id) || p.accepted.includes(f.id)) continue;
     const proposer = world.firms.find((x) => x.id === p.proposer);
-    const ok = p.template !== "capacity_coordination" || (proposer ? proposer.cap > f.cap : false);
+    const templateOk = p.template !== "capacity_coordination" || (proposer ? proposer.cap > f.cap : false);
+    // Terms check: don't sign a deal whose formation cost falls mostly on us (a
+    // cost_split below 0.4 pushes >60% of the tab onto the counterparties).
+    const termsOk = (p.terms?.cost_split ?? 1) >= 0.4;
+    const ok = templateOk && termsOk;
     agreementActions.push({ type: ok ? "accept_proposal" : "decline_proposal", proposal_id: p.id });
   }
   for (const ag of world.agreements) {

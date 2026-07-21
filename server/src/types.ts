@@ -204,6 +204,10 @@ export interface StorageAdapter {
 
   // World states (append-only)
   appendWorldState(rec: WorldStateRecord): Promise<void>;
+  /** Overwrite an EXISTING round's stored state in place. Only the instructor gamemaster
+   *  path uses this (timeline edits / live triggers on the current round's state) — the
+   *  resolve pipeline itself stays append-only. */
+  updateWorldState(gameId: string, round: number, state: WorldState): Promise<void>;
   getWorldState(gameId: string, round: number): Promise<WorldStateRecord | null>;
   getLatestWorldState(gameId: string): Promise<WorldStateRecord | null>;
 

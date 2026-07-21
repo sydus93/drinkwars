@@ -8,6 +8,7 @@ import type {
   Lifecycle, MemberDecisionRecord, PublicRoundRecord, ReflectionRow, RoundResultRecord, StorageAdapter, TeamRecord, TelemetryRow,
   UserRecord, WorldStateRecord,
 } from "../types.js";
+import type { WorldState } from "drinkwars-engine";
 
 const key = (...parts: (string | number)[]) => parts.join("::");
 const clone = <T>(x: T): T => structuredClone(x);
@@ -109,6 +110,12 @@ export class InMemoryAdapter implements StorageAdapter {
     const k = key(rec.game_id, rec.round);
     if (this.worldStates.has(k)) throw new Error(`world_state ${k} is append-only and already exists`);
     this.worldStates.set(k, clone(rec));
+  }
+  async updateWorldState(gameId: string, round: number, state: WorldState): Promise<void> {
+    const k = key(gameId, round);
+    const cur = this.worldStates.get(k);
+    if (!cur) throw new Error(`world_state ${k} does not exist to update`);
+    this.worldStates.set(k, clone({ ...cur, state }));
   }
   async getWorldState(gameId: string, round: number): Promise<WorldStateRecord | null> {
     const r = this.worldStates.get(key(gameId, round));

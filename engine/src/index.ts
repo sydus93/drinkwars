@@ -23,6 +23,7 @@ export { roleBriefings } from "./engine/briefings.js";
 export type { RoleBriefing } from "./engine/briefings.js";
 // Coopetition (MOD-A05/A06) + lobbying (MOD-A09) presentation summaries.
 export { summarizeAgreementsFor, summarizeLobbying, projectMarkets, projectFirms, projectShocks, projectHistory } from "./engine/views.js";
+export { TERM_BOUNDS, clampTerms, PROPOSAL_TTL_ROUNDS } from "./engine/coopetition.js";
 export type { AllianceSummary, AllianceClauseSummary, LobbySummary } from "./engine/views.js";
 export { generateHiringMarket } from "./engine/employees.js";
 export { mergeMemberDecisions, DESK_LEVERS, ALL_LEVERS, ROLE_DESK } from "./engine/seats.js";

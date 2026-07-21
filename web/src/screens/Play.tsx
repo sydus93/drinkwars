@@ -196,7 +196,9 @@ export function Play({
             })}
           </div>
         </div>
-        <div className="flex gap-5 sm:gap-6">
+        {/* flex-wrap + justify-end: on narrow widths the stats wrap onto a second line
+            instead of overflowing and hard-clipping the leftmost value at the edge */}
+        <div className="flex flex-wrap items-end justify-end gap-x-5 gap-y-2 sm:gap-x-6">
           <Stat label="Cash" value={fmt.money(view.own.cash)} accent={view.own.cash < 300 ? "brick" : "ink"} />
           <Stat label="Capacity" value={fmt.int(view.own.cap)} sub="drinks/rd" />
           {view.ownResult && (

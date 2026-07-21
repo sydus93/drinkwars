@@ -1,5 +1,7 @@
+import { Fragment } from "react";
 import type { GameView } from "../game/controller.js";
 import { fmt } from "../labels.js";
+import { RATIO_DEFS, RATIO_GROUPS, ratioDisplay, type RatioInput } from "../lib/ratios.js";
 import { Card, Eyebrow } from "./ui.js";
 import { LineChart, Legend, type Series } from "./charts.js";
 
@@ -7,6 +9,17 @@ const COPPER = "var(--color-copper)";
 const HOP = "var(--color-hop)";
 const INK = "var(--color-inksoft)";
 const GOLD = "var(--color-gold)";
+
+/** The engine's OwnTrendView carries the DW-037 statement figures at runtime; the
+ *  controller's narrower OwnTrend type predates them, so read them defensively
+ *  (older saved games without the fields just show "—"). */
+function ratioInputOf(own: GameView["history"][number]["own"]): RatioInput {
+  const o = own as typeof own & Partial<RatioInput>;
+  return {
+    revenue: o.revenue ?? 0, gross: o.gross ?? 0, ebit: o.ebit ?? 0, interest: o.interest ?? 0,
+    netIncome: own.netIncome, cash: own.cash, debt: o.debt ?? 0, equity: own.equity, assets: o.assets ?? 0,
+  };
+}
 
 export function Trends({ view }: { view: GameView }) {
   const h = view.history;
@@ -69,6 +82,44 @@ export function Trends({ view }: { view: GameView }) {
           </Card>
         ))}
       </div>
+
+      <Card>
+        <Eyebrow>Your financials — key ratios</Eyebrow>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-left text-[0.6rem] uppercase tracking-[0.1em] text-inksoft">
+                <th className="py-1 pr-2">Ratio</th>
+                {h.slice(-4).map((r, i, arr) => (
+                  <th key={r.own.round} className={`px-2 py-1 text-right ${i === arr.length - 1 ? "text-ink" : ""}`}>R{r.own.round + 1}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="tnum">
+              {RATIO_GROUPS.map((g) => (
+                <Fragment key={g.id}>
+                  <tr>
+                    <td colSpan={Math.min(h.length, 4) + 1} className="pb-0.5 pt-2 font-mono text-[0.58rem] uppercase tracking-[0.12em] text-copperdeep">{g.label}</td>
+                  </tr>
+                  {RATIO_DEFS.filter((def) => def.group === g.id).map((def) => (
+                    <tr key={def.key} className="border-t border-line">
+                      <td className="py-1 pr-2 text-inksoft">{def.label}</td>
+                      {h.slice(-4).map((r, i, arr) => (
+                        <td key={r.own.round} className={`px-2 py-1 text-right ${i === arr.length - 1 ? "font-semibold text-ink" : ""}`}>
+                          {ratioDisplay(def, def.compute(ratioInputOf(r.own)))}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </Fragment>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="mt-2 text-[0.7rem] text-inksoft">
+          The same ratios an analyst reads off a real income statement and balance sheet — margins from the P&amp;L, liquidity and leverage from the balance sheet. Each round is a fiscal quarter.
+        </div>
+      </Card>
     </div>
   );
 }

@@ -62,6 +62,12 @@ export interface DashPanelRow {
   reputation: number;
   waterEfficiency: number;
   rndProgress: number;
+  // Ratio-panel inputs (DW-037)
+  gross: number;
+  ebit: number;
+  interest: number;
+  ppe: number;
+  assets: number;
   // Finance health
   coverage: number;
   leverage: number;
@@ -200,6 +206,11 @@ export async function buildInstructorDashboard(store: StorageAdapter, gameId: st
         cash: fr.state.cash,
         revenue: fr.pnl.revenue,
         netIncome: fr.pnl.net_income,
+        gross: fr.pnl.gross,
+        ebit: fr.pnl.ebit,
+        interest: fr.pnl.interest,
+        ppe: fr.balance_sheet.ppe,
+        assets: fr.balance_sheet.assets,
         equity: fr.state.equity,
         debt: fr.state.debt,
         cap: fr.state.cap,

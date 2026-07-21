@@ -7,7 +7,7 @@
  * so the engine stays free of presentation strings.
  */
 import type {
-  ClauseAction, ClauseCondition, Config, FirmId, FirmRoundResult, FirmState, GovernanceForm, MarketKind, RegulationType, RoundResult, SegmentId, TemplateId, WorldState,
+  AgreementTerms, ClauseAction, ClauseCondition, Config, FirmId, FirmRoundResult, FirmState, GovernanceForm, MarketKind, RegulationType, RoundResult, SegmentId, TemplateId, WorldState,
 } from "../types.js";
 import { activeMarkets } from "./geography.js";
 import { firmValuation } from "./finance.js";
@@ -28,12 +28,15 @@ export interface AllianceSummary {
   active: boolean;
   suspendedUntil: number | null; // round the contingent/antitrust suspension lifts (null ⇒ not suspended)
   clauses: AllianceClauseSummary[];
+  // Negotiated economics (null ⇒ the config defaults apply).
+  terms: AgreementTerms | null;
   // An open renegotiation call awaiting this team's (or a partner's) response.
-  reneg: { open: boolean; callerName: string; callerIsYou: boolean; proposedTemplate: TemplateId | null; proposedSegment: SegmentId | null } | null;
+  reneg: { open: boolean; callerName: string; callerIsYou: boolean; proposedTemplate: TemplateId | null; proposedSegment: SegmentId | null; proposedTerms: AgreementTerms | null } | null;
   renegUsed: boolean; // the one renegotiation per agreement lifetime has been spent
   // Non-null ⇒ this row is a PENDING PROPOSAL, not a binding pact (mutual consent):
-  // the counterparties still have to accept. youMustRespond ⇒ show Accept / Decline.
-  proposal: { proposerName: string; proposerIsYou: boolean; youMustRespond: boolean; awaitingNames: string[]; expiresRound: number } | null;
+  // the counterparties still have to accept. youMustRespond ⇒ show Accept / Decline
+  // (or Counter with revised terms when counterable is true).
+  proposal: { proposerName: string; proposerIsYou: boolean; youMustRespond: boolean; awaitingNames: string[]; expiresRound: number; counterable: boolean; counters: number } | null;
 }
 
 /** Active agreements this firm is party to, shaped for the Alliances panel. */
@@ -52,8 +55,9 @@ export function summarizeAgreementsFor(world: WorldState, youId: FirmId, nameOf:
         active: a.active,
         suspendedUntil: a.constrained_until_round != null && world.round < a.constrained_until_round ? a.constrained_until_round : null,
         clauses: (a.clauses ?? []).map((cl) => ({ condition: cl.condition, action: cl.action, fired: cl.fired_round != null })),
+        terms: a.terms ?? null,
         reneg: reneg
-          ? { open: true, callerName: nameOf(reneg.caller), callerIsYou: reneg.caller === youId, proposedTemplate: reneg.proposed_template ?? null, proposedSegment: reneg.proposed_segment ?? null }
+          ? { open: true, callerName: nameOf(reneg.caller), callerIsYou: reneg.caller === youId, proposedTemplate: reneg.proposed_template ?? null, proposedSegment: reneg.proposed_segment ?? null, proposedTerms: reneg.proposed_terms ?? null }
           : null,
         renegUsed: !!a.renegotiation_used,
         proposal: null,
@@ -75,6 +79,7 @@ export function summarizeAgreementsFor(world: WorldState, youId: FirmId, nameOf:
         active: false,
         suspendedUntil: null,
         clauses: (p.clauses ?? []).map((cl) => ({ condition: cl.condition, action: cl.action, fired: false })),
+        terms: p.terms ?? null,
         reneg: null,
         renegUsed: false,
         proposal: {
@@ -83,6 +88,8 @@ export function summarizeAgreementsFor(world: WorldState, youId: FirmId, nameOf:
           youMustRespond: p.counterparties.includes(youId) && !p.accepted.includes(youId),
           awaitingNames: awaiting.map((id) => nameOf(id)),
           expiresRound: p.proposed_round + 2, // PROPOSAL_TTL_ROUNDS
+          counterable: p.counterparties.length === 1, // two-party proposals can be countered with revised terms
+          counters: p.counters ?? 0,
         },
       };
     });
@@ -212,7 +219,11 @@ export function projectShocks(world: WorldState, round: number): ShockSignalView
 }
 
 // ───────────────────────── per-round history (own trend + public field aggregate) ─────────────────────────
-export interface OwnTrendView { round: number; cash: number; score: number; rank: number; share: number; Q: number; B: number; netIncome: number; equity: number }
+export interface OwnTrendView {
+  round: number; cash: number; score: number; rank: number; share: number; Q: number; B: number; netIncome: number; equity: number;
+  // Ratio-panel inputs (DW-037 CFO financials — all the viewer's own private figures):
+  revenue: number; gross: number; ebit: number; interest: number; debt: number; assets: number; unitsSold: number;
+}
 export interface FieldTrendView { round: number; topScore: number; medianScore: number; totalQ: number; activeFirms: number }
 const median = (xs: number[]): number => { if (!xs.length) return 0; const s = [...xs].sort((a, b) => a - b); const m = Math.floor(s.length / 2); return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
 /** The viewer's own trajectory + the public field aggregate, per resolved round. All public
@@ -223,7 +234,10 @@ export function projectHistory(records: { round: number; result: RoundResult }[]
     const ownFr = rr.result.firm_results.find((f) => f.firm_id === viewerId);
     const scores = rr.result.firm_results.map((f) => f.scorecard_cumulative);
     return {
-      own: { round: rr.round, cash: ownFr?.balance_sheet.cash ?? 0, score: ownFr?.scorecard_cumulative ?? 0, rank: ranked.findIndex((f) => f.firm_id === viewerId) + 1, share: ownFr ? Object.values(ownFr.segments).reduce((a, s) => a + s.share, 0) : 0, Q: ownFr?.state.Q ?? 0, B: ownFr?.state.B ?? 0, netIncome: ownFr?.pnl.net_income ?? 0, equity: ownFr?.balance_sheet.equity ?? 0 },
+      own: {
+        round: rr.round, cash: ownFr?.balance_sheet.cash ?? 0, score: ownFr?.scorecard_cumulative ?? 0, rank: ranked.findIndex((f) => f.firm_id === viewerId) + 1, share: ownFr ? Object.values(ownFr.segments).reduce((a, s) => a + s.share, 0) : 0, Q: ownFr?.state.Q ?? 0, B: ownFr?.state.B ?? 0, netIncome: ownFr?.pnl.net_income ?? 0, equity: ownFr?.balance_sheet.equity ?? 0,
+        revenue: ownFr?.pnl.revenue ?? 0, gross: ownFr?.pnl.gross ?? 0, ebit: ownFr?.pnl.ebit ?? 0, interest: ownFr?.pnl.interest ?? 0, debt: ownFr?.balance_sheet.debt ?? 0, assets: ownFr?.balance_sheet.assets ?? 0, unitsSold: ownFr ? Object.values(ownFr.segments).reduce((a, s) => a + s.q_sold, 0) : 0,
+      },
       field: { round: rr.round, topScore: Math.max(...scores, 0), medianScore: median(scores), totalQ: rr.result.market.reduce((a, m) => a + m.total_q, 0), activeFirms: rr.result.firm_results.filter((f) => f.status === "active").length },
     };
   });

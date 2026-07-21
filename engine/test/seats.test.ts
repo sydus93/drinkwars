@@ -12,7 +12,7 @@ const fullDecision = (firm_id: string): FirmDecision => ({
   market_supply: { home: 10 }, invest_rnd: 3, buy_vertical: ["v1"], hire_roles: ["r1"], fire_roles: ["r2"],
   build_facilities: [{ type: "taproom" }], maintain_facilities: { f1: 5 }, mothball_facilities: ["f2"],
   reactivate_facilities: ["f3"], divest_facilities: ["f4"],
-  hire_employees: ["c1"], fire_employees: ["e1"], raise_employees: { e2: 9 }, poach_employees: [{ firm: "x", employee: "e", offer: 1 }],
+  hire_employees: ["c1"], hire_bids: { c1: 500 }, fire_employees: ["e1"], raise_employees: { e2: 9 }, poach_employees: [{ firm: "x", employee: "e", offer: 1 }],
   draw_convertible: 11, draw_rbf: 12, acquisition_bid: { target: "y", price: 100 },
   lobby_spend: 13, lobby_initiative: "init", lobby_counter: "ctr",
   invest_cap: 20, invest_process: 21, invest_Q: 22, invest_B: 23, invest_T_emp: 24, invest_T_inv: 25, invest_T_gov: 26,

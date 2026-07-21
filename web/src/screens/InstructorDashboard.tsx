@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import type { ScheduledShock } from "drinkwars-engine";
 import type { DashEngagementRow, DashPanelRow, DashTeam, InstructorDashboard as DashData } from "drinkwars-server";
-import type { InstructorClient } from "../game/multiplayer.js";
+import type { GameTimeline, InstructorClient } from "../game/multiplayer.js";
 import { Button, Card, Eyebrow, Row, Stat, Tag } from "../components/ui.js";
 import { Legend, LineChart, Scatter, type ScatterPoint, type Series } from "../components/charts.js";
 import { Events } from "../components/Events.js";
 import { parseEvents } from "../components/eventFeed.js";
-import { SEG_LABEL, fmt } from "../labels.js";
+import { MARKET_META, SEG_LABEL, SHOCK_META, fmt, humanizeId } from "../labels.js";
+import { RATIO_DEFS, RATIO_GROUPS, WCS_FACTORS, computeWcs, distressFlags, ratioDisplay } from "../lib/ratios.js";
 import { teamColor } from "../lib/teamColors.js";
 import { TuningBoard, tuningDefaults, type TuningVals } from "./TuningBoard.js";
 
@@ -43,6 +45,25 @@ const flev = (n: number) => n.toFixed(2);
 const fscore = (n: number) => n.toFixed(3);
 const ftime = (s: number | null) => (s == null ? "—" : s >= 60 ? `${Math.floor(s / 60)}m ${Math.round(s % 60)}s` : `${Math.round(s)}s`);
 const shortName = (t: DashTeam) => (t.joined ? t.name : t.name.replace(/^Open slot/i, "NPC"));
+
+// --- gamemaster (DW-037) labels -----------------------------------------------
+const KIND_LABEL: Record<string, string> = { cost_spike: "cost spike", capacity_hit: "capacity hit", demand_drop: "demand drop", demand_boost: "demand boost", cash_hit: "cash hit" };
+const shockLabel = (id: string) => SHOCK_META[id]?.label ?? humanizeId(id);
+const regionLabel = (r: string) => MARKET_META[r]?.city ?? humanizeId(r);
+
+/** DashPanelRow history → the distressFlags input slice. */
+const toDistressRows = (rows: DashPanelRow[]) => rows.map((r) => ({ round: r.round, netIncome: r.netIncome, cash: r.cash, leverage: r.leverage, creditRationed: r.creditRationed, rank: r.rank }));
+
+/** Still-active firms carrying ≥1 distress flag, worst-first. Bankrupt/exited
+ *  firms are excluded — they're past distress and would flag forever. */
+function firmsInDistress(d: Derived): { firmId: string; flags: string[] }[] {
+  const activeIds = new Set(d.latest.filter((p) => p.status === "active").map((p) => p.firmId));
+  return d.teams
+    .filter((t) => activeIds.has(t.firmId))
+    .map((t) => ({ firmId: t.firmId, flags: distressFlags(toDistressRows(d.panelByFirm.get(t.firmId) ?? [])) }))
+    .filter((x) => x.flags.length > 0)
+    .sort((a, b) => b.flags.length - a.flags.length);
+}
 
 // --- derived view over the payload -------------------------------------------
 interface Derived {
@@ -145,9 +166,27 @@ function OverviewPanel({ d }: { d: Derived }) {
   const hi = Math.max(...scores, 0.01);
   const span = hi - lo || 1;
   const events = d.data.events.find((e) => e.round === d.latestRound)?.events ?? [];
+  const distressed = firmsInDistress(d);
 
   return (
     <div className="grid gap-4">
+      {distressed.length > 0 && (
+        <Card className="border-l-4 border-l-brick">
+          <Eyebrow>Firms in trouble</Eyebrow>
+          <div className="grid gap-1.5">
+            {distressed.map((f) => (
+              <div key={f.firmId} className="flex flex-wrap items-center gap-1.5">
+                <ColorDot color={d.colorByFirm.get(f.firmId)!} />
+                <span className="text-sm font-semibold">{d.nameByFirm.get(f.firmId)}</span>
+                {f.flags.map((fl) => (
+                  <Tag key={fl} tone="brick">{fl}</Tag>
+                ))}
+              </div>
+            ))}
+          </div>
+          <div className="mt-1.5 text-[0.7rem] text-inksoft">Full ratio breakdown on the Finance &amp; health tab.</div>
+        </Card>
+      )}
       <Card>
         <Eyebrow>Class snapshot · through round {d.latestRound + 1}</Eyebrow>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
@@ -391,7 +430,7 @@ function StrategyPanel({ d }: { d: Derived }) {
           <span>Y: <Select value={yKey} onChange={setYKey} /></span>
           <span>X: <Select value={xKey} onChange={setXKey} /></span>
         </div>
-        <Scatter points={pts} xLabel={xDim.label} yLabel={yDim.label} />
+        <Scatter points={pts} xLabel={xDim.label} yLabel={yDim.label} fmtX={xDim.fmt} fmtY={yDim.fmt} />
         <div className="text-[0.7rem] text-inksoft">Spread out = distinctive positioning; clusters = a crowded contest.</div>
       </Card>
 
@@ -423,7 +462,7 @@ function StrategyPanel({ d }: { d: Derived }) {
           <Eyebrow>Does differentiation pay?</Eyebrow>
           {distPts.length >= 2 ? (
             <>
-              <Scatter points={distPts} xLabel="Distinctiveness (Mahalanobis)" yLabel="Cumulative score" />
+              <Scatter points={distPts} xLabel="Distinctiveness (Mahalanobis)" yLabel="Cumulative score" fmtX={(n) => n.toFixed(2)} fmtY={fscore} />
               <div className="text-[0.7rem] text-inksoft">Each team at the last round. Watch for the inverted-U: moderate distinctiveness often outscores both the crowd and the extreme outlier.</div>
             </>
           ) : (
@@ -533,38 +572,147 @@ function FinancePanel({ d }: { d: Derived }) {
     if (p.coverage < 2 || p.leverage > 1.5) return "watch";
     return "healthy";
   };
+  // Ratio table: latest round per firm, with a trend arrow vs 3 rounds back.
+  const ratioTrend = (p: DashPanelRow, def: (typeof RATIO_DEFS)[number]): ReactNode => {
+    const prevRow = (d.panelByFirm.get(p.firmId) ?? []).find((r) => r.round === d.latestRound - 3);
+    const cur = def.compute(p);
+    const prev = prevRow ? def.compute(prevRow) : null;
+    if (cur == null || prev == null || cur === prev) return null;
+    const good = def.better === "high" ? cur > prev : cur < prev;
+    return <span className={`ml-0.5 text-[0.6rem] ${good ? "text-hop" : "text-brick"}`}>{cur > prev ? "▲" : "▼"}</span>;
+  };
+
+  const activeRows = latest.filter((p) => p.status === "active");
+  const wcs = computeWcs(activeRows);
+  const distressed = firmsInDistress(d);
+  const distressedIds = new Set(distressed.map((f) => f.firmId));
+  const healthy = latest.filter((p) => p.status === "active" && !distressedIds.has(p.firmId));
+
   return (
-    <Card>
-      <Eyebrow>Solvency canaries · last round</Eyebrow>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-[0.6rem] uppercase tracking-[0.1em] text-inksoft">
-              <th className="py-1 pr-2">Team</th>
-              <th className="py-1 pr-2 text-right">Cash</th>
-              <th className="py-1 pr-2 text-right">Net income</th>
-              <th className="py-1 pr-2 text-right">Coverage</th>
-              <th className="py-1 pr-2 text-right">Leverage</th>
-              <th className="py-1 pr-2 text-right">Debt rate</th>
-              <th className="py-1">Status</th>
-            </tr>
-          </thead>
-          <tbody className="tnum">
-            {latest.map((p) => (
-              <tr key={p.firmId} className="border-t border-line">
-                <td className="py-1.5 pr-2"><span className="flex items-center gap-1.5"><ColorDot color={d.colorByFirm.get(p.firmId)!} /><span className="truncate font-semibold">{d.nameByFirm.get(p.firmId)}</span></span></td>
-                <td className={`py-1.5 pr-2 text-right ${p.cash < 0 ? "text-brick" : ""}`}>{fmt.money(p.cash)}</td>
-                <td className={`py-1.5 pr-2 text-right ${p.netIncome < 0 ? "text-brick" : "text-hop"}`}>{fmt.money(p.netIncome)}</td>
-                <td className={`py-1.5 pr-2 text-right ${p.coverage < 1 ? "text-brick" : ""}`}>{fcov(p.coverage)}</td>
-                <td className={`py-1.5 pr-2 text-right ${p.leverage > 1.5 ? "text-brick" : ""}`}>{flev(p.leverage)}</td>
-                <td className="py-1.5 pr-2 text-right">{(p.rDebt * 100).toFixed(1)}%</td>
-                <td className="py-1.5"><Tag tone={riskTone(p)}>{riskLabel(p)}</Tag></td>
+    <div className="grid gap-4">
+      <Card>
+        <Eyebrow>Solvency canaries · last round</Eyebrow>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-[0.6rem] uppercase tracking-[0.1em] text-inksoft">
+                <th className="py-1 pr-2">Team</th>
+                <th className="py-1 pr-2 text-right">Cash</th>
+                <th className="py-1 pr-2 text-right">Net income</th>
+                <th className="py-1 pr-2 text-right">Coverage</th>
+                <th className="py-1 pr-2 text-right">Leverage</th>
+                <th className="py-1 pr-2 text-right">Debt rate</th>
+                <th className="py-1">Status</th>
               </tr>
+            </thead>
+            <tbody className="tnum">
+              {latest.map((p) => (
+                <tr key={p.firmId} className="border-t border-line">
+                  <td className="py-1.5 pr-2"><span className="flex items-center gap-1.5"><ColorDot color={d.colorByFirm.get(p.firmId)!} /><span className="truncate font-semibold">{d.nameByFirm.get(p.firmId)}</span></span></td>
+                  <td className={`py-1.5 pr-2 text-right ${p.cash < 0 ? "text-brick" : ""}`}>{fmt.money(p.cash)}</td>
+                  <td className={`py-1.5 pr-2 text-right ${p.netIncome < 0 ? "text-brick" : "text-hop"}`}>{fmt.money(p.netIncome)}</td>
+                  <td className={`py-1.5 pr-2 text-right ${p.coverage < 1 ? "text-brick" : ""}`}>{fcov(p.coverage)}</td>
+                  <td className={`py-1.5 pr-2 text-right ${p.leverage > 1.5 ? "text-brick" : ""}`}>{flev(p.leverage)}</td>
+                  <td className="py-1.5 pr-2 text-right">{(p.rDebt * 100).toFixed(1)}%</td>
+                  <td className="py-1.5"><Tag tone={riskTone(p)}>{riskLabel(p)}</Tag></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      <Card>
+        <Eyebrow>Distress watch</Eyebrow>
+        {distressed.length === 0 ? (
+          <div className="text-sm text-inksoft">No active firm is flagging — the field is solvent.</div>
+        ) : (
+          <div className="grid gap-1.5">
+            {distressed.map((f) => (
+              <div key={f.firmId} className="flex flex-wrap items-center gap-1.5">
+                <ColorDot color={d.colorByFirm.get(f.firmId)!} />
+                <span className="text-sm font-semibold">{d.nameByFirm.get(f.firmId)}</span>
+                {f.flags.map((fl) => (
+                  <Tag key={fl} tone="brick">{fl}</Tag>
+                ))}
+              </div>
             ))}
-          </tbody>
-        </table>
-      </div>
-    </Card>
+          </div>
+        )}
+        {distressed.length > 0 && healthy.length > 0 && (
+          <div className="mt-2 text-[0.72rem] text-inksoft">Healthy: {healthy.map((p) => d.nameByFirm.get(p.firmId)).join(", ")}.</div>
+        )}
+      </Card>
+
+      <Card>
+        <Eyebrow>Financial ratios · round {d.latestRound + 1} (quarterly figures)</Eyebrow>
+        <div className="mb-2 text-[0.72rem] text-inksoft">Arrows compare against three rounds back — ▲ improving, ▼ deteriorating, in whichever direction matters for that ratio.</div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-left text-[0.6rem] uppercase tracking-[0.1em] text-inksoft">
+                <th className="py-1 pr-2">Ratio</th>
+                {latest.map((p) => (
+                  <th key={p.firmId} className="px-2 py-1 text-right"><span className="flex items-center justify-end gap-1"><ColorDot color={d.colorByFirm.get(p.firmId)!} /><span className="truncate">{d.nameByFirm.get(p.firmId)}</span></span></th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="tnum">
+              {RATIO_GROUPS.map((g) => (
+                <Fragment key={g.id}>
+                  <tr>
+                    <td colSpan={latest.length + 1} className="pb-0.5 pt-2 font-mono text-[0.58rem] uppercase tracking-[0.12em] text-copperdeep">{g.label}</td>
+                  </tr>
+                  {RATIO_DEFS.filter((def) => def.group === g.id).map((def) => (
+                    <tr key={def.key} className="border-t border-line">
+                      <td className="whitespace-nowrap py-1 pr-2 text-inksoft">{def.label}</td>
+                      {latest.map((p) => (
+                        <td key={p.firmId} className="whitespace-nowrap px-2 py-1 text-right">{ratioDisplay(def, def.compute(p))}{ratioTrend(p, def)}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </Fragment>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      {wcs.length >= 2 && (
+        <Card>
+          <Eyebrow>Weighted competitive strength · round {d.latestRound + 1}</Eyebrow>
+          <div className="mb-2 text-[0.72rem] text-inksoft">Each factor min–max rated 1–10 across active firms; cell = rating · weighted score. Importance weight × strength rating → weighted score, the Key Success Factors table, live.</div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-left text-[0.6rem] uppercase tracking-[0.1em] text-inksoft">
+                  <th className="py-1 pr-2">Factor · weight</th>
+                  {wcs.map((w) => (
+                    <th key={w.firmId} className="px-2 py-1 text-right"><span className="flex items-center justify-end gap-1"><ColorDot color={d.colorByFirm.get(w.firmId)!} /><span className="truncate">{d.nameByFirm.get(w.firmId)}</span></span></th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="tnum">
+                {WCS_FACTORS.map((f) => (
+                  <tr key={f.key} className="border-t border-line">
+                    <td className="whitespace-nowrap py-1 pr-2 text-inksoft">{f.label} · {fmt.pct(f.weight)}</td>
+                    {wcs.map((w) => (
+                      <td key={w.firmId} className="whitespace-nowrap px-2 py-1 text-right">{w.ratings[f.key].toFixed(1)} <span className="text-inksoft">· {(f.weight * w.ratings[f.key]).toFixed(2)}</span></td>
+                    ))}
+                  </tr>
+                ))}
+                <tr className="border-t border-line2 font-semibold">
+                  <td className="py-1.5 pr-2">Overall</td>
+                  {wcs.map((w, i) => (
+                    <td key={w.firmId} className="whitespace-nowrap px-2 py-1.5 text-right">{w.overall.toFixed(2)} <span className="font-normal text-inksoft">#{i + 1}</span></td>
+                  ))}
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+    </div>
   );
 }
 
@@ -725,23 +873,181 @@ function BalancePanel() {
   );
 }
 
-/** Schedule — the disruption timeline: each round's resolved shocks, with the current round marked. */
-function SchedulePanel({ d }: { d: Derived }) {
+/** One scheduled-shock chip on the forward timeline: what/how hard/how long/where,
+ *  planted vs rolled vs fired, and a remove button while it can still be pulled. */
+function ShockChip({ s, removable, busy, onRemove }: { s: ScheduledShock; removable: boolean; busy: boolean; onRemove: () => void }) {
+  return (
+    <span className="flex items-center gap-1.5 rounded-[3px] border border-line px-2 py-0.5 text-[0.7rem]">
+      <span className="font-semibold text-ink">{shockLabel(s.type_id)}</span>
+      <span className="tnum text-inksoft">
+        {KIND_LABEL[s.kind] ?? s.kind} · {fmt.pct(s.magnitude)}{s.duration > 1 ? ` · ${s.duration} rds` : ""}{s.region ? ` · ${regionLabel(s.region)}` : ""}
+      </span>
+      <Tag tone={s.locked ? "copper" : "ink"}>{s.locked ? "planted" : "rolled"}</Tag>
+      {s.fired && <Tag tone="brick">fired</Tag>}
+      {removable && !s.fired && (
+        <button onClick={onRemove} disabled={busy} className="px-0.5 text-inksoft transition-colors hover:text-brick disabled:opacity-40" title="remove from the schedule">✕</button>
+      )}
+    </span>
+  );
+}
+
+/** Schedule — the gamemaster board (DW-037): past rounds retrospective, current +
+ *  future rounds show the forward shock schedule (engine-rolled and instructor-
+ *  planted), with plant / remove / fire-now controls. */
+function SchedulePanel({ d, client, gameId }: { d: Derived; client: InstructorClient; gameId: string }) {
+  const [tl, setTl] = useState<GameTimeline | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  // Plant form. magnitude/duration null = use the catalog type's default.
+  const [formRound, setFormRound] = useState<number | null>(null);
+  const [typeId, setTypeId] = useState("");
+  const [mag, setMag] = useState<number | null>(null);
+  const [dur, setDur] = useState<number | null>(null);
+  const [region, setRegion] = useState("");
+
+  const refresh = useCallback(async () => {
+    try {
+      setTl(await client.timeline(gameId));
+      setErr(null);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  }, [client, gameId]);
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  const run = async (op: () => Promise<unknown>) => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await op();
+      await refresh(); // mutations return partial payloads; refetch keeps catalog/triggers/timeline in one state
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const eventsByRound = new Map(d.data.events.map((e) => [e.round, e.events] as const));
+  const nRounds = d.data.meta.nRounds;
+  const running = d.data.meta.lifecycle !== "complete";
+  const curRound = tl?.round ?? d.data.meta.currentRound;
+  const sel = tl?.catalog.find((c) => c.id === typeId) ?? tl?.catalog[0];
+  // Clamp so a selection made before a resolve can't point at a now-past round.
+  const plantRound = Math.min(Math.max(formRound ?? curRound + 1, curRound), nRounds - 1);
+  const plantRounds = Array.from({ length: nRounds - curRound }, (_, i) => curRound + i);
+  const selectCls = "rounded-[2px] border border-line2 bg-paper px-1 py-0.5 font-mono text-xs text-ink";
+
+  const plant = () => {
+    if (!sel) return;
+    run(() =>
+      client.scheduleShock(gameId, {
+        type_id: sel.id,
+        round: plantRound,
+        ...(mag != null ? { magnitude: mag } : {}),
+        ...(dur != null ? { duration: dur } : {}),
+        ...(sel.regional && region ? { region } : {}),
+      }),
+    );
+  };
+
   return (
     <Card>
-      <Eyebrow>Schedule · disruptions &amp; phases</Eyebrow>
-      <div className="mb-3 text-sm text-inksoft">Each round's shocks as they resolve. Severity &amp; frequency are set on the Tuning Board; the timeline fills in round by round.</div>
+      <Eyebrow>Schedule · the gamemaster board</Eyebrow>
+      <div className="mb-3 text-sm text-inksoft">
+        Past rounds show what fired; current and future rounds show the forward schedule — engine-rolled and instructor-planted. Students see a planted event only per that shock's own signaling: unannounced types stay a surprise (planting does not telegraph).
+      </div>
+      {err && <div className="mb-2 text-[0.72rem] text-brick">{err}</div>}
+      {!tl && !err && <div className="mb-2 text-[0.72rem] text-inksoft">Loading the shock timeline…</div>}
+
+      {tl && running && (
+        <div className="mb-3 rounded-md border border-line px-3 py-2">
+          <div className="mb-1.5 font-mono text-[0.6rem] uppercase tracking-[0.12em] text-inksoft">Fire now · lands when round {curRound + 1} resolves</div>
+          <div className="flex flex-wrap gap-1.5">
+            {tl.catalog.map((c) => {
+              const armed = tl.liveTriggers.includes(c.id);
+              return (
+                <button
+                  key={c.id}
+                  onClick={() => run(() => client.setLiveTrigger(gameId, c.id, !armed))}
+                  disabled={busy}
+                  className={`rounded-full border px-2.5 py-1 font-mono text-[0.65rem] transition-colors disabled:opacity-40 ${armed ? "border-brick text-brick" : "border-line2 text-inksoft hover:text-ink"}`}
+                  style={armed ? { background: "color-mix(in srgb, var(--color-brick) 10%, transparent)" } : undefined}
+                >
+                  {armed ? "armed · " : ""}{shockLabel(c.id)} <span className="opacity-70">({KIND_LABEL[c.kind] ?? c.kind})</span>
+                </button>
+              );
+            })}
+          </div>
+          {tl.liveTriggers.length > 0 && <div className="mt-1.5 text-[0.68rem] text-inksoft">Click an armed trigger to disarm it before the resolve.</div>}
+        </div>
+      )}
+
+      {tl && sel && running && (
+        <div className="mb-3 flex flex-wrap items-end gap-x-3 gap-y-2 rounded-md border border-line px-3 py-2">
+          <span className="mr-1 font-mono text-[0.6rem] uppercase tracking-[0.12em] text-inksoft">Plant a disruption</span>
+          <label className="grid gap-0.5 text-[0.58rem] uppercase tracking-wide text-inksoft">
+            Round
+            <select value={plantRound} onChange={(e) => setFormRound(Number(e.target.value))} className={selectCls}>
+              {plantRounds.map((r) => (
+                <option key={r} value={r}>R{r + 1}{r === curRound ? " (current)" : ""}</option>
+              ))}
+            </select>
+          </label>
+          <label className="grid gap-0.5 text-[0.58rem] uppercase tracking-wide text-inksoft">
+            Type
+            <select value={sel.id} onChange={(e) => { setTypeId(e.target.value); setMag(null); setDur(null); setRegion(""); }} className={selectCls}>
+              {tl.catalog.map((c) => (
+                <option key={c.id} value={c.id}>{shockLabel(c.id)} — {KIND_LABEL[c.kind] ?? c.kind}</option>
+              ))}
+            </select>
+          </label>
+          <label className="grid gap-0.5 text-[0.58rem] uppercase tracking-wide text-inksoft">
+            Magnitude
+            <input type="number" min={0.05} max={1.5} step={0.05} value={mag ?? sel.magnitude_mean} onChange={(e) => setMag(Number(e.target.value))} className={`${selectCls} w-16`} />
+          </label>
+          <label className="grid gap-0.5 text-[0.58rem] uppercase tracking-wide text-inksoft">
+            Rounds
+            <input type="number" min={1} max={6} step={1} value={dur ?? sel.duration} onChange={(e) => setDur(Number(e.target.value))} className={`${selectCls} w-12`} />
+          </label>
+          {sel.regional && tl.regions.length > 0 && (
+            <label className="grid gap-0.5 text-[0.58rem] uppercase tracking-wide text-inksoft">
+              Region
+              <select value={region} onChange={(e) => setRegion(e.target.value)} className={selectCls}>
+                <option value="">everywhere</option>
+                {tl.regions.map((r) => (
+                  <option key={r} value={r}>{regionLabel(r)}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          <Button variant="ghost" onClick={plant} disabled={busy}>Plant</Button>
+        </div>
+      )}
+
       <div className="grid gap-1.5">
-        {Array.from({ length: d.data.meta.nRounds }, (_, r) => {
+        {Array.from({ length: nRounds }, (_, r) => {
           const resolved = r <= d.latestRound;
-          const cur = r === d.data.meta.currentRound && d.data.meta.lifecycle !== "complete";
-          const shocks = resolved ? parseEvents(eventsByRound.get(r) ?? []).filter((e) => e.kind === "shock") : [];
+          const cur = r === d.data.meta.currentRound && running;
+          const past = resolved ? parseEvents(eventsByRound.get(r) ?? []).filter((e) => e.kind === "shock") : [];
+          const scheduled = !resolved && tl ? tl.timeline.filter((s) => s.round === r) : [];
           return (
             <div key={r} className="flex items-start gap-3 rounded-md border px-3 py-2" style={{ borderColor: cur ? "var(--color-copper)" : "var(--color-line)", background: resolved ? "var(--color-panel)" : "color-mix(in srgb, var(--color-panel2) 40%, transparent)" }}>
-              <span className="w-12 font-mono text-[0.62rem] font-bold uppercase text-copperdeep">R{r + 1}</span>
+              <span className="w-12 pt-0.5 font-mono text-[0.62rem] font-bold uppercase text-copperdeep">R{r + 1}</span>
               <div className="min-w-0 flex-1">
-                {!resolved ? <span className="text-[0.72rem] italic text-inksoft">{cur ? "in progress" : "upcoming"}</span> : shocks.length ? <div className="flex flex-wrap gap-1.5">{shocks.map((e, i) => <Tag key={i} tone="brick">{e.title}</Tag>)}</div> : <span className="text-[0.72rem] text-inksoft">calm — no shocks</span>}
+                {resolved ? (
+                  past.length ? <div className="flex flex-wrap gap-1.5">{past.map((e, i) => <Tag key={i} tone="brick">{e.title}</Tag>)}</div> : <span className="text-[0.72rem] text-inksoft">calm — no shocks</span>
+                ) : scheduled.length ? (
+                  <div className="flex flex-wrap gap-1.5">
+                    {scheduled.map((s) => (
+                      <ShockChip key={s.id} s={s} removable={r >= curRound} busy={busy} onRemove={() => run(() => client.unscheduleShock(gameId, s.id))} />
+                    ))}
+                  </div>
+                ) : (
+                  <span className="text-[0.72rem] italic text-inksoft">{cur ? "in progress — nothing scheduled" : "nothing scheduled"}</span>
+                )}
               </div>
             </div>
           );
@@ -839,7 +1145,7 @@ export function InstructorDashboard({ client, gameId, roundKey }: { client: Inst
         <>
           {tab === "monitor" && <MonitorPanel d={d} />}
           {tab === "balance" && <BalancePanel />}
-          {tab === "schedule" && <SchedulePanel d={d} />}
+          {tab === "schedule" && <SchedulePanel d={d} client={client} gameId={gameId} />}
           {tab === "export" && <ExportPanel exporting={exporting} onExport={exportFile} />}
           {NEEDS_ROUND.has(tab) && (d.data.meta.resolvedRounds === 0 ? (
             <Card>

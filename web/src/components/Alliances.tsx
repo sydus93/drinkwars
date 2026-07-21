@@ -1,5 +1,6 @@
 import { useState } from "react";
-import type { AgreementAction, ClauseAction, ClauseCondition, FirmDecision, GovernanceForm, SegmentId, TemplateId } from "drinkwars-engine";
+import type { AgreementAction, AgreementTerms, ClauseAction, ClauseCondition, FirmDecision, GovernanceForm, SegmentId, TemplateId } from "drinkwars-engine";
+import { TERM_BOUNDS } from "drinkwars-engine";
 import type { GameView } from "../game/controller.js";
 import { SEG_LABEL } from "../labels.js";
 import { Button, Tag } from "./ui.js";
@@ -42,6 +43,59 @@ const FORMS: GovernanceForm[] = ["relational", "formal", "collective"];
 const TEMPLATES: TemplateId[] = ["joint_marketing", "capacity_coordination", "supply_share"];
 const CONDS: ClauseCondition[] = ["water_shock", "harvest_shock", "capacity_shock", "partner_distress", "segment_emerges"];
 
+// ── Negotiable terms (DW-037) ──────────────────────────────────────────────────
+// Each template has ONE economic dial; a deal can also carry a sunset and a split
+// of the formation cost. Bounds mirror engine TERM_BOUNDS (clamped again server-side).
+const DIAL: Record<TemplateId, { label: string; std: number }> = {
+  joint_marketing: { label: "Brand pooled", std: 0.3 },
+  capacity_coordination: { label: "Capacity restrained", std: 0.2 },
+  supply_share: { label: "Unit-cost cut", std: 0.1 },
+};
+const DURATIONS: (number | null)[] = [null, 4, 6, 8, 12];
+const pctS = (v: number) => `${Math.round(v * 100)}%`;
+const splitLabel = (split: number, proposerIsYou: boolean, proposerName: string) => {
+  const who = proposerIsYou ? "You" : proposerName;
+  return split >= 0.99 ? `${who} pay${proposerIsYou ? "" : "s"} the setup` : split <= 0.01 ? `partners pay the setup` : `setup split ${pctS(split)} / ${pctS(1 - split)}`;
+};
+/** One-line reading of a deal's terms (null terms ⇒ the standard config economics). */
+const termsLine = (t: AgreementTerms | null | undefined, template: TemplateId): string => {
+  const bits = [`${DIAL[template].label.toLowerCase()} ${pctS(t?.magnitude ?? DIAL[template].std)}`];
+  bits.push(t?.duration_rounds ? `${t.duration_rounds}-round term` : "evergreen");
+  return bits.join(" · ");
+};
+
+/** The negotiable-terms editor: the template's dial, a sunset, and (when the form has a
+ *  real formation cost) who pays the setup. Used by propose, counter, and renegotiate. */
+function TermsEditor({ template, form, terms, onChange }: { template: TemplateId; form: GovernanceForm; terms: AgreementTerms; onChange: (t: AgreementTerms) => void }) {
+  const b = TERM_BOUNDS[template];
+  const mag = terms.magnitude ?? DIAL[template].std;
+  return (
+    <div className="grid gap-1.5 rounded border border-line bg-paper/40 p-2">
+      <div className="flex items-center justify-between gap-2 text-[0.68rem]">
+        <span className="text-inksoft">{DIAL[template].label}</span>
+        <span className="tnum font-semibold text-copperdeep">{pctS(mag)}{Math.abs(mag - DIAL[template].std) < 0.005 ? " · standard" : ""}</span>
+      </div>
+      <input type="range" min={b.min} max={b.max} step={0.01} value={mag} onChange={(e) => onChange({ ...terms, magnitude: +e.target.value })} />
+      <div className="flex flex-wrap items-center gap-2 text-[0.68rem]">
+        <span className="text-inksoft">Term</span>
+        <select value={terms.duration_rounds == null ? "" : String(terms.duration_rounds)} onChange={(e) => onChange({ ...terms, duration_rounds: e.target.value === "" ? null : +e.target.value })} className="text-[0.68rem]">
+          {DURATIONS.map((dur) => <option key={dur ?? "∞"} value={dur == null ? "" : dur}>{dur == null ? "evergreen" : `${dur} rounds`}</option>)}
+        </select>
+        {form !== "relational" && (
+          <>
+            <span className="text-inksoft">· setup cost</span>
+            <select value={String(terms.cost_split ?? 1)} onChange={(e) => onChange({ ...terms, cost_split: +e.target.value })} className="text-[0.68rem]">
+              <option value="1">proposer pays</option>
+              <option value="0.5">split 50/50</option>
+              <option value="0">partners pay</option>
+            </select>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /**
  * Alliances panel (MOD-A05 contingent contracts + MOD-A06 renegotiation, on top of
  * the base coopetition layer). Lets a human form a pact, attach contingent clauses,
@@ -83,6 +137,9 @@ export function Alliances({
   const [partners, setPartners] = useState<string[]>([]);
   const [segment, setSegment] = useState<SegmentId>(activeSegs[0] ?? "niche");
   const [clauses, setClauses] = useState<{ condition: ClauseCondition; action: ClauseAction }[]>([]);
+  const [terms, setTerms] = useState<AgreementTerms>({});
+  // Counter-offers: per-proposal draft terms while the counter editor is open.
+  const [counterDraft, setCounterDraft] = useState<Record<string, AgreementTerms>>({});
   const clausesAllowed = ccOn && (form === "formal" || form === "collective");
 
   const togglePartner = (id: string) => setPartners((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
@@ -91,6 +148,7 @@ export function Alliances({
       type: "form", form, template, counterparties: partners,
       segment: template === "joint_marketing" ? segment : undefined,
       clauses: clausesAllowed && clauses.length ? clauses.map((c) => ({ condition: c.condition, action: c.action })) : undefined,
+      terms: Object.keys(terms).length ? terms : undefined,
     };
     setFormAction(action);
     setShowForm(false);
@@ -123,6 +181,13 @@ export function Alliances({
                     {p.proposerIsYou
                       ? <>You proposed this to {a.partnerNames.join(", ")} — awaiting {p.awaitingNames.join(", ") || "no one"}. Lapses after round {p.expiresRound + 1} unanswered.</>
                       : <>{p.proposerName} proposes this pact with you{a.partnerNames.length > 1 ? ` (and ${a.partnerNames.filter((n) => n !== p.proposerName).join(", ")})` : ""}. Nothing binds until you agree.</>}
+                    {p.counters > 0 && <span className="text-copperdeep"> · counter #{p.counters}</span>}
+                  </div>
+                  {/* The terms ON THE TABLE — what you're actually agreeing to. */}
+                  <div className="mt-1 text-[0.68rem] text-ink">
+                    <span className="font-mono text-[0.56rem] uppercase tracking-wide text-copperdeep">Terms </span>
+                    {termsLine(a.terms, a.template)}
+                    {a.form !== "relational" && <span className="text-inksoft"> · {splitLabel(a.terms?.cost_split ?? 1, p.proposerIsYou, p.proposerName)}</span>}
                   </div>
                   {a.clauses.length > 0 && (
                     <div className="mt-1 grid gap-0.5">
@@ -132,15 +197,36 @@ export function Alliances({
                     </div>
                   )}
                   {p.youMustRespond ? (
-                    <div className="mt-1.5 flex flex-wrap gap-1.5">
-                      <Button onClick={() => setProposalAction(a.id, q?.type === "accept_proposal" ? null : { type: "accept_proposal", proposal_id: a.id })}
-                        variant={q?.type === "accept_proposal" ? "go" : "solid"} className="px-3 py-1 text-[0.7rem]">
-                        {q?.type === "accept_proposal" ? "Accepting ✓" : "Accept"}
-                      </Button>
-                      <Button onClick={() => setProposalAction(a.id, q?.type === "decline_proposal" ? null : { type: "decline_proposal", proposal_id: a.id })}
-                        variant={q?.type === "decline_proposal" ? "go" : "ghost"} className="px-3 py-1 text-[0.7rem]">
-                        {q?.type === "decline_proposal" ? "Declining ✓" : "Decline"}
-                      </Button>
+                    <div className="mt-1.5">
+                      <div className="flex flex-wrap gap-1.5">
+                        <Button onClick={() => setProposalAction(a.id, q?.type === "accept_proposal" ? null : { type: "accept_proposal", proposal_id: a.id })}
+                          variant={q?.type === "accept_proposal" ? "go" : "solid"} className="px-3 py-1 text-[0.7rem]">
+                          {q?.type === "accept_proposal" ? "Accepting ✓" : "Accept"}
+                        </Button>
+                        {/* Counter with revised terms: roles swap — the ball goes back to them. */}
+                        {p.counterable && (
+                          <Button onClick={() => { if (q?.type === "counter_proposal") { setProposalAction(a.id, null); } else if (counterDraft[a.id]) { const { [a.id]: _x, ...rest } = counterDraft; setCounterDraft(rest); } else { setCounterDraft({ ...counterDraft, [a.id]: { magnitude: a.terms?.magnitude ?? DIAL[a.template].std, duration_rounds: a.terms?.duration_rounds ?? null, cost_split: a.terms?.cost_split ?? 1 } }); } }}
+                            variant={q?.type === "counter_proposal" ? "go" : "solid"} className="px-3 py-1 text-[0.7rem]">
+                            {q?.type === "counter_proposal" ? "Countering ✓" : counterDraft[a.id] ? "Close counter" : "Counter…"}
+                          </Button>
+                        )}
+                        <Button onClick={() => setProposalAction(a.id, q?.type === "decline_proposal" ? null : { type: "decline_proposal", proposal_id: a.id })}
+                          variant={q?.type === "decline_proposal" ? "go" : "ghost"} className="px-3 py-1 text-[0.7rem]">
+                          {q?.type === "decline_proposal" ? "Declining ✓" : "Decline"}
+                        </Button>
+                      </div>
+                      {counterDraft[a.id] && q?.type !== "counter_proposal" && (
+                        <div className="mt-1.5 grid gap-1.5">
+                          <TermsEditor template={a.template} form={a.form} terms={counterDraft[a.id]} onChange={(t) => setCounterDraft({ ...counterDraft, [a.id]: t })} />
+                          <div className="flex items-center gap-2">
+                            <Button variant="go" className="px-3 py-1 text-[0.68rem]" onClick={() => { setProposalAction(a.id, { type: "counter_proposal", proposal_id: a.id, terms: counterDraft[a.id] }); const { [a.id]: _x, ...rest } = counterDraft; setCounterDraft(rest); }}>Send counter-offer</Button>
+                            <span className="text-[0.62rem] text-inksoft">countering makes YOU the proposer — "proposer pays" then means you pay the setup</span>
+                          </div>
+                        </div>
+                      )}
+                      {q?.type === "counter_proposal" && (
+                        <div className="mt-1 text-[0.68rem] text-copperdeep">Countering with: {termsLine(q.terms, a.template)}{a.form !== "relational" ? ` · ${splitLabel(q.terms?.cost_split ?? 1, true, p.proposerName)}` : ""} — they must accept your terms.</div>
+                      )}
                     </div>
                   ) : !p.proposerIsYou ? (
                     <div className="mt-1.5 text-[0.7rem] text-copperdeep">You've accepted — awaiting {p.awaitingNames.join(", ")}.</div>
@@ -159,7 +245,7 @@ export function Alliances({
                   {a.segment && <Tag tone="ink">{SEG_LABEL[a.segment] ?? a.segment}</Tag>}
                   {a.suspendedUntil != null && <Tag tone="brick">suspended → r{a.suspendedUntil + 1}</Tag>}
                 </div>
-                <div className="mt-0.5 text-[0.7rem] text-inksoft">with {a.partnerNames.join(", ") || "—"}</div>
+                <div className="mt-0.5 text-[0.7rem] text-inksoft">with {a.partnerNames.join(", ") || "—"} · <span className="text-ink">{termsLine(a.terms, a.template)}</span></div>
                 {a.clauses.length > 0 && (
                   <div className="mt-1 grid gap-0.5">
                     {a.clauses.map((cl, i) => (
@@ -175,6 +261,7 @@ export function Alliances({
                 {openRenegForMe && (
                   <div className="mt-1.5 rounded border border-copper/40 bg-copper/5 p-2">
                     <div className="text-[0.72rem] font-semibold">{a.reneg!.callerName} wants to renegotiate{a.reneg!.proposedTemplate ? ` → switch to ${TEMPLATE_LABEL[a.reneg!.proposedTemplate]}` : ""}.</div>
+                    {a.reneg!.proposedTerms && <div className="mt-0.5 text-[0.68rem] text-inksoft">New terms on the table: <span className="text-ink">{termsLine(a.reneg!.proposedTerms, a.reneg!.proposedTemplate ?? a.template)}</span></div>}
                     <div className="mt-1 flex flex-wrap gap-1.5">
                       {(["accept", "reject", "exit"] as const).map((r) => (
                         <Button key={r} onClick={() => setAgAction(a.id, { type: "renegotiate_response", agreement_id: a.id, response: r })}
@@ -196,22 +283,28 @@ export function Alliances({
                   )}
                   {renegOn && !a.reneg?.open && !a.renegUsed && (a.form === "formal" || a.form === "collective") && (
                     queued?.type === "renegotiate" ? (
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <span className="text-[0.7rem] text-copperdeep">Propose switch to</span>
-                        <select value={queued.proposed_template ?? a.template}
-                          onChange={(e) => setAgAction(a.id, { ...queued, proposed_template: e.target.value as TemplateId })}
-                          className="text-[0.7rem]">
-                          {TEMPLATES.map((t) => <option key={t} value={t}>{TEMPLATE_LABEL[t]}</option>)}
-                        </select>
-                        {/* Joint marketing pools brand in ONE category — the switch needs to name it. */}
-                        {(queued.proposed_template ?? a.template) === "joint_marketing" && (
-                          <select value={queued.proposed_segment ?? a.segment ?? activeSegs[0]}
-                            onChange={(e) => setAgAction(a.id, { ...queued, proposed_segment: e.target.value })}
+                      <div className="grid w-full gap-1.5">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="text-[0.7rem] text-copperdeep">Propose switch to</span>
+                          <select value={queued.proposed_template ?? a.template}
+                            onChange={(e) => setAgAction(a.id, { ...queued, proposed_template: e.target.value as TemplateId })}
                             className="text-[0.7rem]">
-                            {activeSegs.map((s) => <option key={s} value={s}>{SEG_LABEL[s] ?? s}</option>)}
+                            {TEMPLATES.map((t) => <option key={t} value={t}>{TEMPLATE_LABEL[t]}</option>)}
                           </select>
-                        )}
-                        <button className="text-[0.66rem] text-inksoft underline hover:text-ink" onClick={() => setAgAction(a.id, null)}>cancel</button>
+                          {/* Joint marketing pools brand in ONE category — the switch needs to name it. */}
+                          {(queued.proposed_template ?? a.template) === "joint_marketing" && (
+                            <select value={queued.proposed_segment ?? a.segment ?? activeSegs[0]}
+                              onChange={(e) => setAgAction(a.id, { ...queued, proposed_segment: e.target.value })}
+                              className="text-[0.7rem]">
+                              {activeSegs.map((s) => <option key={s} value={s}>{SEG_LABEL[s] ?? s}</option>)}
+                            </select>
+                          )}
+                          <button className="text-[0.66rem] text-inksoft underline hover:text-ink" onClick={() => setAgAction(a.id, null)}>cancel</button>
+                        </div>
+                        {/* Revised economics ride along with the call (partner sees them before answering). */}
+                        <TermsEditor template={(queued.proposed_template ?? a.template) as TemplateId} form={a.form}
+                          terms={queued.proposed_terms ?? { magnitude: a.terms?.magnitude ?? DIAL[(queued.proposed_template ?? a.template) as TemplateId].std, duration_rounds: a.terms?.duration_rounds ?? null }}
+                          onChange={(t) => setAgAction(a.id, { ...queued, proposed_terms: t })} />
                       </div>
                     ) : (
                       <Button onClick={() => setAgAction(a.id, { type: "renegotiate", agreement_id: a.id, proposed_template: a.template })}
@@ -272,6 +365,8 @@ export function Alliances({
                   </select>
                 </div>
               )}
+              <label className="text-[0.7rem] text-inksoft">The terms <span className="text-[0.62rem]">· hammer out the economics — partners can accept, decline, or counter</span></label>
+              <TermsEditor template={template} form={form} terms={terms} onChange={setTerms} />
               <label className="text-[0.7rem] text-inksoft">Partners {form === "collective" ? "(pick 2+ for a guild)" : "(pick 1+)"}</label>
               <div className="flex flex-wrap gap-1.5">
                 {rivals.map((r) => (

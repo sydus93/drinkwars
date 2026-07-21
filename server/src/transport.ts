@@ -183,10 +183,19 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     const game = code ? await store.getGameByCode(code) : null;
     if (!game) return send(res, 404, { error: "no game found for that code" });
     const teams = await store.getTeams(game.id);
+    // Team mode: expose the firm roster (name + seat occupancy, no member identities)
+    // so a joiner can pick WHICH firm to sit down at.
+    const teamList = (game.firm_mode ?? "solo") === "team"
+      ? await Promise.all(teams.map(async (t) => ({
+          teamId: t.id, name: t.name, members: t.member_user_ids.length,
+          roles: (await Promise.all(t.member_user_ids.map((u) => store.getMemberRole(t.id, u)))).filter(Boolean),
+        })))
+      : undefined;
     return send(res, 200, {
       firmMode: game.firm_mode ?? "solo", title: game.title ?? null, nRounds: game.n_rounds,
       round: game.current_round, lifecycle: game.lifecycle,
       slotsTotal: teams.length, slotsOpen: teams.filter((t) => t.member_user_ids.length === 0).length,
+      ...(teamList ? { teams: teamList } : {}),
     });
   }
 
@@ -330,6 +339,24 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
         const format = (url.searchParams.get("format") ?? "csv").toLowerCase();
         if (format === "json") return sendAttachment(res, 200, "application/json", JSON.stringify(dash, null, 2), `drinkwars-${gameId}.json`);
         return sendAttachment(res, 200, "text/csv", dashboardToCsv(dash), `drinkwars-${gameId}.csv`);
+      } catch (e) {
+        return send(res, 400, { error: msg(e) });
+      }
+    }
+
+    // Gamemaster: the forward shock schedule + live triggers (DW-037).
+    const tl = path.match(/^\/instructor\/games\/([^/]+)\/timeline$/);
+    if (tl) {
+      const gameId = tl[1];
+      try {
+        if (method === "GET") return send(res, 200, await orch.getTimeline(gameId));
+        if (method === "POST") {
+          const body = await readJson(req);
+          if (body.op === "schedule") return send(res, 200, { scheduled: await orch.scheduleShock(gameId, body.spec ?? {}), timeline: (await orch.getTimeline(gameId)).timeline });
+          if (body.op === "unschedule") { await orch.unscheduleShock(gameId, String(body.shockId ?? "")); return send(res, 200, { timeline: (await orch.getTimeline(gameId)).timeline }); }
+          if (body.op === "trigger") return send(res, 200, { liveTriggers: await orch.setLiveTrigger(gameId, String(body.typeId ?? ""), body.armed !== false) });
+          return send(res, 400, { error: "op must be schedule | unschedule | trigger" });
+        }
       } catch (e) {
         return send(res, 400, { error: msg(e) });
       }

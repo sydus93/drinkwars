@@ -802,12 +802,28 @@ export interface FirmState {
   initial_capital: number;
 }
 
+/** Negotiated economic terms of a pact (DW-037). Every field optional — absent falls
+ *  back to the config template constant / current behavior, so older saved states and
+ *  terms-less proposals resolve exactly as before. */
+export interface AgreementTerms {
+  /** The template's economic dial: joint_marketing → brand_pool_fraction,
+   *  capacity_coordination → capacity_restraint, supply_share → unit_cost_reduction.
+   *  Clamped to sane per-template bounds at proposal time. */
+  magnitude?: number;
+  /** Auto-dissolve (mutual) this many rounds after formation. Null/absent = evergreen. */
+  duration_rounds?: number | null;
+  /** Proposer's share of the formation cost (0..1). Absent = 1 (proposer pays it all);
+   *  the remainder is split evenly across the other signatories at activation. */
+  cost_split?: number;
+}
+
 export interface AgreementState {
   id: string;
   form: GovernanceForm;
   template: TemplateId;
   signatories: FirmId[];
   segment: SegmentId | null; // for joint_marketing
+  terms?: AgreementTerms; // negotiated economics (absent ⇒ config defaults)
   formation_round: number;
   active: boolean;
   dissolution_round: number | null;
@@ -817,7 +833,7 @@ export interface AgreementState {
   clauses?: ContingentClause[];
   // MOD-A06 renegotiation: an open call awaiting a counterparty response. Null/absent
   // ⇒ no open call. `renegotiation_used` enforces once-per-agreement-lifetime.
-  renegotiation?: { caller: FirmId; called_round: number; proposed_template?: TemplateId; proposed_segment?: SegmentId | null } | null;
+  renegotiation?: { caller: FirmId; called_round: number; proposed_template?: TemplateId; proposed_segment?: SegmentId | null; proposed_terms?: AgreementTerms } | null;
   renegotiation_used?: boolean;
 }
 
@@ -892,8 +908,12 @@ export interface PendingAgreement {
   counterparties: FirmId[]; // everyone who must accept (proposer implicitly consents)
   segment: SegmentId | null; // for joint_marketing
   clauses?: ContingentClause[]; // MOD-A05 clauses carried into the formed agreement
+  terms?: AgreementTerms; // proposed economics (absent ⇒ config defaults)
   proposed_round: number;
   accepted: FirmId[]; // counterparties who have said yes so far
+  /** Set when a counterparty counter-offers: roles swap (they become the proposer) and
+   *  the original proposer must now accept the revised terms. Counts ping-pong rounds. */
+  counters?: number;
 }
 
 // ----------------------------------------------------------------------------
@@ -901,20 +921,22 @@ export interface PendingAgreement {
 // ----------------------------------------------------------------------------
 
 export interface AgreementAction {
-  type: "form" | "defect" | "renegotiate" | "renegotiate_response" | "accept_proposal" | "decline_proposal";
+  type: "form" | "defect" | "renegotiate" | "renegotiate_response" | "accept_proposal" | "decline_proposal" | "counter_proposal";
   // form (creates a PENDING proposal — counterparties must accept before the pact binds):
   form?: GovernanceForm;
   template?: TemplateId;
   counterparties?: FirmId[];
   segment?: SegmentId;
   clauses?: ContingentClause[]; // MOD-A05: contingent clauses attached at formation (formal/collective only)
-  // accept_proposal / decline_proposal: a counterparty's answer to a pending proposal.
+  terms?: AgreementTerms; // form / counter_proposal: the economic terms on the table
+  // accept_proposal / decline_proposal / counter_proposal: a counterparty's answer to a pending proposal.
   proposal_id?: string;
   // defect / renegotiate / renegotiate_response:
   agreement_id?: string;
   // renegotiate (MOD-A06): the new terms the caller proposes.
   proposed_template?: TemplateId;
   proposed_segment?: SegmentId | null;
+  proposed_terms?: AgreementTerms; // renegotiate: revised economics on the table
   // renegotiate_response (MOD-A06): a counterparty's answer to an open call.
   response?: "accept" | "reject" | "exit";
 }
@@ -945,6 +967,7 @@ export interface FirmDecision {
   divest_facilities?: string[]; // facility ids to sell/demolish — frees the lot (back to the lease pool) and recovers partial book value
   // MOD-B12 employees
   hire_employees?: string[]; // candidate ids (from this round's market) to hire
+  hire_bids?: Record<string, number>; // candidate id → optional signing-bonus premium; a candidate is one person — in a contested hire the higher bonus signs them, and only the winner pays
   fire_employees?: string[]; // employee ids to let go this round
   raise_employees?: Record<string, number>; // employee id → new salary (a raise)
   poach_employees?: { firm: string; employee: string; offer: number }[]; // lure a rival's employee with an offer

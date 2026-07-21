@@ -635,3 +635,60 @@ test("disabled asymmetric starts ⇒ symmetric opening state (parity with v1)", 
   // With it on, the spread is real.
   assert.ok(on.firms[0].cap !== on.firms.at(-1)!.cap, "asymmetric firms differ");
 });
+
+test("contested hire: a candidate is one person — the higher signing bonus signs them; only the winner pays", () => {
+  const c = loadConfig(modulesOverride(["employees"]));
+  const w = initGame(c);
+  const [a, b] = [w.firms[0].id, w.firms[1].id];
+  const cand = generateHiringMarket(c, w.seed, w.round)[0];
+  const r = resolveRound(w, w.firms.map((f) => mkDecision(f.id, w,
+    f.id === a ? { hire_employees: [cand.id], hire_bids: { [cand.id]: 500 } } :
+    f.id === b ? { hire_employees: [cand.id, cand.id], hire_bids: { [cand.id]: 4000 } } : {})), c);
+  const aEmp = r.world.firms.find((f) => f.id === a)!.employees ?? [];
+  const bEmp = r.world.firms.find((f) => f.id === b)!.employees ?? [];
+  assert.ok(bEmp.some((e) => e.name === cand.name), "the higher signing bonus wins the candidate");
+  assert.equal(bEmp.filter((e) => e.name === cand.name).length, 1, "double-listing the id can't hire a clone");
+  assert.ok(!aEmp.some((e) => e.name === cand.name), "the outbid firm does NOT get a copy of the person");
+  assert.ok(r.result.events.some((e) => /OUTBID/.test(e) && e.includes(cand.name)), "honest outbid notice with both bonuses");
+  assert.ok(r.result.events.some((e) => /SIGNED/.test(e) && e.includes(cand.name)), "winner pays and it says so");
+  for (const fr of r.result.firm_results) {
+    const bs = fr.balance_sheet;
+    assert.ok(Math.abs(bs.assets - (bs.debt + bs.equity)) < 1e-3, `balance ${fr.firm_id}`);
+  }
+});
+
+test("agreement terms: counter-offer swaps roles; negotiated magnitude + cost split + duration all bind", () => {
+  const c = loadConfig();
+  let w = initGame(c);
+  const [a, b] = [w.firms[0].id, w.firms[1].id];
+  // A proposes a formal supply share with negotiated terms (0.18 cut, 2-round term, 50/50 formation cost).
+  let r = resolveRound(w, w.firms.map((f) => mkDecision(f.id, w, f.id === a ? { agreement_actions: [{ type: "form", form: "formal", template: "supply_share", counterparties: [b], terms: { magnitude: 0.18, duration_rounds: 2, cost_split: 0.5 } }] } : {})), c);
+  w = r.world;
+  const p = (w.pending_agreements ?? [])[0];
+  assert.ok(p, "proposal on the table");
+  assert.equal(p.terms?.magnitude, 0.18, "proposed magnitude carried");
+  assert.equal(p.terms?.cost_split, 0.5, "proposed cost split carried");
+  // B counters with a shallower cut — roles swap, A must now respond.
+  r = resolveRound(w, w.firms.map((f) => mkDecision(f.id, w, f.id === b ? { agreement_actions: [{ type: "counter_proposal", proposal_id: p.id, terms: { magnitude: 0.08, duration_rounds: 2, cost_split: 0.5 } }] } : {})), c);
+  w = r.world;
+  const p2 = (w.pending_agreements ?? [])[0];
+  assert.equal(p2?.proposer, b, "counter makes the responder the proposer");
+  assert.deepEqual(p2?.counterparties, [a], "the original proposer must now answer");
+  assert.equal(p2?.terms?.magnitude, 0.08, "countered magnitude is on the table");
+  // A accepts the counter → the pact binds with the countered terms.
+  r = resolveRound(w, w.firms.map((f) => mkDecision(f.id, w, f.id === a ? { agreement_actions: [{ type: "accept_proposal", proposal_id: p2.id }] } : {})), c);
+  w = r.world;
+  const ag = w.agreements.find((x) => x.active);
+  assert.ok(ag, "pact bound after the accept");
+  assert.equal(ag!.terms?.magnitude, 0.08, "agreement carries the negotiated magnitude");
+  assert.equal(ag!.terms?.duration_rounds, 2, "agreement carries the negotiated term length");
+  // Duration: a 2-round term is effective for 2 rounds, then winds down as mutual.
+  r = resolveRound(w, w.firms.map((f) => mkDecision(f.id, w, {})), c);
+  w = r.world;
+  assert.ok(w.agreements.find((x) => x.id === ag!.id)!.active, "still live inside its term");
+  r = resolveRound(w, w.firms.map((f) => mkDecision(f.id, w, {})), c);
+  w = r.world;
+  const done = w.agreements.find((x) => x.id === ag!.id)!;
+  assert.ok(!done.active, "the pact winds down when its negotiated term ends");
+  assert.equal(done.dissolution_type, "mutual", "a sunset is a clean mutual dissolution, not a defection");
+});

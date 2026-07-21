@@ -147,3 +147,50 @@ test("team view exposes own firm + standings, not rivals' pending decisions", as
   // The only decision accessor is storage-level (service/instructor); no team API returns it.
   assert.ok(!("decisions" in view));
 });
+
+test("gamemaster (DW-037): planted shocks land on the timeline, fire on schedule, and live triggers arm", async () => {
+  const { config, store, orch, gameId, teamRecords } = await setup();
+
+  // The forward schedule is readable and carries the config's catalog.
+  const t0 = await orch.getTimeline(gameId);
+  assert.equal(t0.round, 0);
+  assert.ok(t0.catalog.some((c) => c.id === "water"), "catalog lists the configured shock types");
+
+  // Plant a harvest failure on round 1 at a chosen severity; it lands locked.
+  const planted = await orch.scheduleShock(gameId, { type_id: "harvest", round: 1, magnitude: 0.4, duration: 1 });
+  assert.ok(planted.locked && !planted.fired && planted.round === 1);
+  const t1 = await orch.getTimeline(gameId);
+  assert.ok(t1.timeline.some((s) => s.id === planted.id), "planted shock is on the schedule");
+
+  // It can be removed while unfired… then re-planted for the real test.
+  await orch.unscheduleShock(gameId, planted.id);
+  assert.ok(!(await orch.getTimeline(gameId)).timeline.some((s) => s.id === planted.id));
+  const again = await orch.scheduleShock(gameId, { type_id: "harvest", round: 1, magnitude: 0.4, duration: 1 });
+
+  // Arm a live trigger for round 0 as well: the water shock fires when THIS round resolves.
+  const armed = await orch.setLiveTrigger(gameId, "water", true);
+  assert.deepEqual(armed, ["water"]);
+
+  // Round 0 resolves: the live trigger fires (and clears); round 1 resolves: the planted shock fires.
+  await submitAll(orch, gameId, teamRecords, config);
+  await orch.lockRound(gameId);
+  await orch.resolveRound(gameId);
+  const r0 = (await store.getRoundResult(gameId, 0))!;
+  assert.ok(r0.result.events.some((e) => /live-triggered/.test(e)), "live trigger fires on resolve");
+  await orch.advanceRound(gameId);
+  assert.deepEqual((await orch.getTimeline(gameId)).liveTriggers, [], "live trigger clears after firing");
+
+  await submitAll(orch, gameId, teamRecords, config);
+  await orch.lockRound(gameId);
+  await orch.resolveRound(gameId);
+  const r1 = (await store.getRoundResult(gameId, 1))!;
+  assert.ok(r1.result.events.some((e) => /SHOCK.*harvest/i.test(e)), "planted shock fires on its round");
+  const after = await orch.getTimeline(gameId);
+  assert.ok(after.timeline.find((s) => s.id === again.id)?.fired, "planted shock is marked fired");
+  await assert.rejects(() => orch.unscheduleShock(gameId, again.id), /already fired/, "fired shocks are immutable");
+
+  // Guard: can't plant into the past or beyond the season.
+  await orch.advanceRound(gameId);
+  await assert.rejects(() => orch.scheduleShock(gameId, { type_id: "harvest", round: 0 }), /not schedulable/);
+  await assert.rejects(() => orch.scheduleShock(gameId, { type_id: "harvest", round: 99 }), /not schedulable/);
+});

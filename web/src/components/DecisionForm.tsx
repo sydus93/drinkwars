@@ -264,7 +264,10 @@ export function DecisionForm({
   const eraises = d?.raise_employees ?? {};
   const roleLabel = (id: string) => empRoles.find((r) => r.id === id)?.label ?? id;
   const fairSalary = (roleId: string, skill: number) => { const r = empRoles.find((x) => x.id === roleId); return r ? r.base_salary * (0.55 + 0.15 * skill) : 0; };
-  const hireCost = empOn ? candidates.filter((cnd) => ehiring.has(cnd.id)).reduce((s, cnd) => s + cnd.salary, 0) : 0;
+  const ebids = d?.hire_bids ?? {};
+  // Hire cost = salary + any signing bonus (the bonus only actually lands if the hire
+  // is contested and you win, but budget for the full commitment).
+  const hireCost = empOn ? candidates.filter((cnd) => ehiring.has(cnd.id)).reduce((s, cnd) => s + cnd.salary + Math.max(0, ebids[cnd.id] ?? 0), 0) : 0;
   const raiseCost = empOn ? employees.reduce((s: number, e) => s + Math.max(0, (eraises[e.id] ?? e.salary) - e.salary), 0) : 0;
   // Talent raids: use the lifted list when provided (poaching happens in rival dossiers),
   // otherwise manage them locally. Either way they're injected into the decision at submit.
@@ -275,7 +278,12 @@ export function DecisionForm({
   const poaches = externalPoaches ?? (d?.poach_employees ?? []);
   const poachSpend = empOn ? poaches.reduce((s: number, x) => s + Math.max(0, x.offer), 0) : 0;
   const empSpend = hireCost + raiseCost + poachSpend;
-  const toggleHireEmp = (id: string) => { const n = new Set(ehiring); n.has(id) ? n.delete(id) : n.add(id); set({ hire_employees: [...n] }); };
+  const toggleHireEmp = (id: string) => {
+    const n = new Set(ehiring);
+    if (n.has(id)) { n.delete(id); const { [id]: _drop, ...rest } = ebids; set({ hire_employees: [...n], hire_bids: rest }); }
+    else { n.add(id); set({ hire_employees: [...n] }); }
+  };
+  const setHireBid = (id: string, v: number) => set({ hire_bids: { ...ebids, [id]: Math.max(0, v) } });
   const toggleFireEmp = (id: string) => { const n = new Set(efiring); n.has(id) ? n.delete(id) : n.add(id); set({ fire_employees: [...n] }); };
   const setRaise = (id: string, v: number) => set({ raise_employees: { ...eraises, [id]: Math.max(0, v) } });
   const empName = (firm: string, empId: string) => view.firms.find((f) => f.firm_id === firm)?.employees.find((e) => e.id === empId)?.name ?? empId;
@@ -688,16 +696,26 @@ export function DecisionForm({
                     const deal = cnd.salary <= fair * 0.95 ? "underpriced" : cnd.salary >= fair * 1.1 ? "pricey" : "fair";
                     const full = !picked && (cash < cnd.salary || employees.length + ehiring.size >= empMax);
                     return (
-                      <button key={cnd.id} type="button" onClick={() => toggleHireEmp(cnd.id)} disabled={full}
-                        className={`flex items-center gap-2 rounded-md border p-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${picked ? "border-copper bg-copper/[0.06]" : "border-line hover:border-copper"}`}>
-                        <Avatar seed={cnd.avatar_seed} name={cnd.name} size={24} />
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-1.5"><span className="truncate text-sm font-semibold text-ink">{cnd.name}</span><SkillStars n={cnd.skill} /></div>
-                          <div className="text-[0.62rem] text-inksoft">{roleLabel(cnd.role)} · <span className={deal === "underpriced" ? "text-hop" : deal === "pricey" ? "text-brick" : ""}>{deal}</span></div>
-                        </div>
-                        <span className="tnum ml-auto shrink-0 text-[0.72rem] text-copperdeep">{fmt.money(cnd.salary)}/rd</span>
-                        <span className="shrink-0 text-[0.66rem] font-semibold text-copperdeep">{picked ? "✓" : "Hire"}</span>
-                      </button>
+                      <div key={cnd.id} className={`rounded-md border transition-colors ${picked ? "border-copper bg-copper/[0.06]" : "border-line"}`}>
+                        <button type="button" onClick={() => toggleHireEmp(cnd.id)} disabled={full}
+                          className="flex w-full items-center gap-2 rounded-md p-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-40">
+                          <Avatar seed={cnd.avatar_seed} name={cnd.name} size={24} />
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5"><span className="truncate text-sm font-semibold text-ink">{cnd.name}</span><SkillStars n={cnd.skill} /></div>
+                            <div className="text-[0.62rem] text-inksoft">{roleLabel(cnd.role)} · <span className={deal === "underpriced" ? "text-hop" : deal === "pricey" ? "text-brick" : ""}>{deal}</span></div>
+                          </div>
+                          <span className="tnum ml-auto shrink-0 text-[0.72rem] text-copperdeep">{fmt.money(cnd.salary)}/rd</span>
+                          <span className="shrink-0 text-[0.66rem] font-semibold text-copperdeep">{picked ? "✓" : "Hire"}</span>
+                        </button>
+                        {/* Talent competition: a candidate is ONE person — if a rival goes for
+                            them too, the higher signing bonus wins; only the winner pays. */}
+                        {picked && (
+                          <div className="flex items-center justify-between gap-2 border-t border-line px-2 py-1.5">
+                            <span className="text-[0.58rem] leading-snug text-inksoft">Signing bonus <span className="opacity-75">· optional — wins them if a rival bids too; only the winner pays</span></span>
+                            <span className="flex shrink-0 items-center gap-1"><span className="text-[0.68rem] text-inksoft">$</span><input type="number" min="0" step="500" value={ebids[cnd.id] ?? 0} onChange={(e) => setHireBid(cnd.id, +e.target.value)} className="w-20 text-right text-[0.7rem]" /></span>
+                          </div>
+                        )}
+                      </div>
                     );
                   })}
                 </div>

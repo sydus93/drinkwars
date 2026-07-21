@@ -43,7 +43,7 @@ export const DESK_LEVERS: Record<SeatDesk, (keyof FirmDecision)[]> = {
     "invest_cap", "invest_process", "invest_Q",
   ],
   // CHRO — the organization: staffing, wages, morale/employee relations.
-  people: ["hire_roles", "fire_roles", "hire_employees", "fire_employees", "raise_employees", "poach_employees", "invest_T_emp"],
+  people: ["hire_roles", "fire_roles", "hire_employees", "hire_bids", "fire_employees", "raise_employees", "poach_employees", "invest_T_emp"],
   // CFO — capital structure, distributions, and the investor relationship.
   finance: ["draw_convertible", "draw_rbf", "debt_draw", "debt_repay", "equity_raise", "dividend", "invest_T_inv"],
   // CEO / Corporate development — deals, alliances, government affairs, exit.
