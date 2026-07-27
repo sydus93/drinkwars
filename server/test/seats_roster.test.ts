@@ -113,6 +113,83 @@ test("seats persist a role across rejoins, surface in getTeamSeats, and standing
   assert.equal(mine[0].nRounds, 5);
 });
 
+test("DW-038 seat guards: founded firms demand a distinct seat", async () => {
+  const { config, store, orch } = teamGame();
+  const code = GameOrchestrator.makeJoinCode();
+  const gameId = await orch.createGame({ config, joinCode: code, firmMode: "team", teams: [{ name: "F1" }, { name: "F2" }, { name: "F3" }] });
+  const firm = (await store.getTeams(gameId))[0];
+
+  // Founder may sit down roleless (generalist) on an EMPTY firm.
+  await orch.joinGame(code, "Founders Ale", "u-founder", { teamId: firm.id });
+
+  // Second member must take a seat — two generalists would clobber each other in the merge.
+  await assert.rejects(() => orch.joinGame(code, "Sam", "u-sam", { teamId: firm.id }), /pick a C-suite seat/);
+  // Unknown seats are rejected.
+  await assert.rejects(() => orch.joinGame(code, "Sam", "u-sam", { teamId: firm.id, role: "intern" }), /unknown seat/);
+  // A valid distinct seat is fine…
+  await orch.joinGame(code, "Sam", "u-sam", { teamId: firm.id, role: "cfo" });
+  // …but the SAME seat can't be taken twice.
+  await assert.rejects(() => orch.joinGame(code, "Pat", "u-pat", { teamId: firm.id, role: "cfo" }), /already taken/);
+  // Rejoin keeps working, and a rejoin can't steal a teammate's seat either.
+  await assert.rejects(() => orch.joinGame(code, "Founders Ale", "u-founder", { role: "cfo" }), /already taken/);
+  const re = await orch.joinGame(code, "Pat", "u-pat", { teamId: firm.id, role: "coo" });
+  assert.equal(re.teamId, firm.id);
+});
+
+test("DW-038 merge base: unmanned desks don't zero-price; standing levers carry across rounds", async () => {
+  const { config, store, orch } = teamGame();
+  const code = GameOrchestrator.makeJoinCode();
+  const gameId = await orch.createGame({ config, joinCode: code, firmMode: "team", teams: [{ name: "F1" }, { name: "F2" }, { name: "F3" }] });
+  const firm = (await store.getTeams(gameId))[0];
+  await orch.joinGame(code, "Ana", "u-ana", { teamId: firm.id, role: "cfo" });
+
+  // ONLY the CFO submits — commercial/operations are unmanned. The composed decision
+  // must ride the house base, not the zero decision (price 0 = literally free beer).
+  await orch.submitMemberDecision(gameId, firm.id, "u-ana", { debt_draw: 200 }, "cfo");
+  const ws = await store.getLatestWorldState(gameId);
+  const active = ws!.state.segments.filter((s) => s.active).map((s) => s.id);
+  const r0 = (await store.getDecision(gameId, 0, firm.id))!.decision;
+  for (const s of active) {
+    assert.ok((r0.price[s] ?? 0) > 0, `active segment ${s} must not price at zero`);
+    assert.ok((r0.presence[s] ?? 0) > 0, `active segment ${s} defaults to present`);
+  }
+  assert.ok(r0.invest_cap > 0, "maintenance-level capex so capacity doesn't rot");
+  assert.equal(r0.debt_draw, 200, "the CFO's slice still lands");
+
+  // Next round: standing levers carry from the composed round-0 decision; one-shots reset.
+  await orch.lockRound(gameId);
+  await orch.resolveRound(gameId);
+  await orch.advanceRound(gameId);
+  await orch.submitMemberDecision(gameId, firm.id, "u-ana", { dividend: 10 }, "cfo");
+  const r1 = (await store.getDecision(gameId, 1, firm.id))!.decision;
+  for (const s of active) assert.equal(r1.price[s], r0.price[s], "price carries as a standing lever");
+  assert.equal(r1.debt_draw, 0, "one-shot finance draws reset (CFO's desk, new partial rules)");
+  assert.equal(r1.dividend, 10);
+});
+
+test("DW-038 team plan: every seat's slice + the composed decision, me-flagged", async () => {
+  const { config, store, orch } = teamGame();
+  const code = GameOrchestrator.makeJoinCode();
+  const gameId = await orch.createGame({ config, joinCode: code, firmMode: "team", teams: [{ name: "F1" }, { name: "F2" }, { name: "F3" }] });
+  const firm = (await store.getTeams(gameId))[0];
+  await orch.joinGame(code, "Ana", "u-ana", { teamId: firm.id, role: "cfo" });
+  await orch.joinGame(code, "Ben", "u-ben", { teamId: firm.id, role: "cmo" });
+  await orch.submitMemberDecision(gameId, firm.id, "u-ana", { debt_draw: 300 }, "cfo");
+
+  const plan = await orch.getTeamPlan(gameId, firm.id, "u-ben");
+  assert.equal(plan.seats.length, 2);
+  const cfo = plan.seats.find((s) => s.role === "cfo")!;
+  const cmo = plan.seats.find((s) => s.role === "cmo")!;
+  assert.equal(cfo.submitted, true);
+  assert.equal((cfo.partial as { debt_draw?: number }).debt_draw, 300, "the CFO's slice is visible to the table");
+  assert.equal(cfo.me, false);
+  assert.equal(cmo.me, true, "the caller's own seat is me-flagged");
+  assert.equal(cmo.submitted, false);
+  assert.equal(cmo.partial, null);
+  assert.equal(plan.composed?.debt_draw, 300, "the composed decision is on the table");
+  assert.equal(plan.locked, false);
+});
+
 test("claim-based join links the roster user, and the game shows in 'my games'", async () => {
   const { config, store, orch } = teamGame();
   const code = GameOrchestrator.makeJoinCode();

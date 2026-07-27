@@ -55,8 +55,10 @@ export function Join({ onJoined, onBack }: { onJoined: (c: StudentClient) => voi
     setBusy(true);
     setErr(null);
     try {
-      setPlayerColor(color);
-      setPlayerEmblem(emblem);
+      // Taking a seat at a founded firm: no cosmetics to set — the firm reads in its
+      // board color on this device too, instead of a second founder's picks.
+      const founding = !(peek?.firmMode === "team" && (teamId ? (peek?.teams?.find((t) => t.teamId === teamId)?.members ?? 0) > 0 : !(peek?.teams ?? []).some((t) => t.members === 0)));
+      if (founding) { setPlayerColor(color); setPlayerEmblem(emblem); }
       const c = new StudentClient();
       await c.join(code.trim().toUpperCase(), name.trim(), { claim: claim.trim() || undefined, role: role || undefined, teamId: teamId || undefined });
       await c.fetchView();
@@ -99,16 +101,24 @@ export function Join({ onJoined, onBack }: { onJoined: (c: StudentClient) => voi
     );
   }
 
-  // ── Step 2 — found your firm ────────────────────────────────────────────────
+  // ── Step 2 — found your firm (or take a seat at an existing one) ────────────
   const isTeam = peek?.firmMode === "team";
   const complete = peek?.lifecycle === "complete";
   const display = name.trim() || "Your Brewery";
+  const pickedTeam = isTeam ? peek?.teams?.find((t) => t.teamId === teamId) : undefined;
+  const anyEmpty = (peek?.teams ?? []).some((t) => t.members === 0);
+  // Joining a firm that already has members = taking a seat, NOT founding: the firm is
+  // already named/marked, and the server requires a distinct C-suite seat (two blank
+  // "whole firm" seats would clobber each other in the desk merge).
+  const joiningFounded = isTeam && (pickedTeam ? pickedTeam.members > 0 : !anyEmpty);
+  const needFirmPick = joiningFounded && !teamId; // which founded firm? must be explicit
+  const canJoin = !busy && !!name.trim() && (!joiningFounded || (!!role && !needFirmPick));
   return (
     <div className="mx-auto flex min-h-screen max-w-lg flex-col justify-center px-6 py-12">
       <div className="rise">
         <div className="eyebrow">Join a game · {code.trim().toUpperCase()}</div>
-        <h1 className="display mt-2 text-4xl font-semibold">{isTeam ? "Found your team" : "Name your brewery"}</h1>
-        <div className="mt-1 text-sm text-inksoft">Your colour &amp; mark are how the class reads you on the board all season.</div>
+        <h1 className="display mt-2 text-4xl font-semibold">{joiningFounded ? "Take your seat" : isTeam ? "Found your team" : "Name your brewery"}</h1>
+        <div className="mt-1 text-sm text-inksoft">{joiningFounded ? "Join your teammates' firm — pick your C-suite seat; each seat owns one desk of the decision." : "Your colour & mark are how the class reads you on the board all season."}</div>
 
         {/* game context from the peek */}
         <div className="mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-line2 bg-panel px-3 py-2 text-[0.72rem] text-inksoft">
@@ -120,7 +130,7 @@ export function Join({ onJoined, onBack }: { onJoined: (c: StudentClient) => voi
         {complete && <div className="mt-2 text-[0.72rem] text-brick">This game's season is already complete — you may only be able to review it.</div>}
 
         <div className="mt-5 grid gap-4">
-          <label className="grid gap-1"><span className="text-sm text-inksoft">Brewery name</span><input value={name} onChange={(e) => setName(e.target.value)} maxLength={40} placeholder="e.g. Sediment Co." autoFocus /></label>
+          <label className="grid gap-1"><span className="text-sm text-inksoft">{joiningFounded ? "Your name" : "Brewery name"}</span><input value={name} onChange={(e) => setName(e.target.value)} maxLength={40} placeholder={joiningFounded ? "e.g. Sam" : "e.g. Sediment Co."} autoFocus /></label>
 
           {isTeam && (peek?.teams?.length ?? 0) > 0 && (() => {
             const picked = peek!.teams!.find((t) => t.teamId === teamId);
@@ -140,31 +150,33 @@ export function Join({ onJoined, onBack }: { onJoined: (c: StudentClient) => voi
                     );
                   })}
                 </div>
-                {!teamId && <div className="mt-1 text-[0.66rem] text-inksoft">No pick = you're seated on the emptiest firm.</div>}
-                {picked && picked.members > 0 && <div className="mt-1 text-[0.66rem] text-inksoft">Joining <b>{picked.name}</b> — its founder already named it; your name below is just your player name.</div>}
+                {!teamId && !joiningFounded && <div className="mt-1 text-[0.66rem] text-inksoft">No pick = you found the next empty firm.</div>}
+                {needFirmPick && <div className="mt-1 text-[0.66rem] text-brick">Every firm is already founded — pick which one you're joining.</div>}
+                {picked && picked.members > 0 && <div className="mt-1 text-[0.66rem] text-inksoft">Joining <b>{picked.name}</b> — your teammates already founded it; you just need a name and a seat.</div>}
               </div>
             );
           })()}
 
           {isTeam && (
             <div>
-              <div className="mb-2 font-mono text-[0.6rem] uppercase tracking-[0.12em] text-copperdeep">Your seat <span className="text-[0.7rem] lowercase tracking-normal text-inksoft">· each seat owns one desk — leave blank to run the whole firm</span></div>
+              <div className="mb-2 font-mono text-[0.6rem] uppercase tracking-[0.12em] text-copperdeep">Your seat <span className="text-[0.7rem] lowercase tracking-normal text-inksoft">{joiningFounded ? "· required — each seat owns one desk of the firm's decision" : "· each seat owns one desk — leave blank to run the whole firm (founders only)"}</span></div>
               <div className="flex flex-wrap gap-1.5">
                 {SEATS.map((s) => {
                   const on = role === s.id;
                   const taken = !!teamId && (peek?.teams?.find((t) => t.teamId === teamId)?.roles ?? []).includes(s.id);
                   return (
-                    <button key={s.id} type="button" onClick={() => setRole(on ? "" : s.id)} title={taken ? `${s.label} — already taken on this firm` : `${s.label} — ${s.desk}`} className="rounded-lg border px-2.5 py-1.5 text-left transition-colors" style={{ borderColor: on ? "var(--color-copper)" : "var(--color-line2)", background: on ? "color-mix(in srgb, var(--color-copper) 12%, var(--color-panel))" : "var(--color-panel)", opacity: taken && !on ? 0.45 : 1 }}>
+                    <button key={s.id} type="button" disabled={taken && !on} onClick={() => setRole(on ? "" : s.id)} title={taken ? `${s.label} — already taken on this firm` : `${s.label} — ${s.desk}`} className="rounded-lg border px-2.5 py-1.5 text-left transition-colors" style={{ borderColor: on ? "var(--color-copper)" : "var(--color-line2)", background: on ? "color-mix(in srgb, var(--color-copper) 12%, var(--color-panel))" : "var(--color-panel)", opacity: taken && !on ? 0.45 : 1, cursor: taken && !on ? "not-allowed" : "pointer" }}>
                       <span className="font-mono text-[0.66rem] font-bold" style={{ color: on ? "var(--color-copperdeep)" : "var(--color-ink)" }}>{s.label}</span>
                       <span className="ml-1 text-[0.62rem] text-inksoft">{taken ? "taken" : s.desk}</span>
                     </button>
                   );
                 })}
               </div>
+              {joiningFounded && !role && <div className="mt-1 text-[0.66rem] text-inksoft">This firm already has members — pick a seat so your desks don't collide.</div>}
             </div>
           )}
 
-          <div>
+          {!joiningFounded && <><div>
             <div className="mb-2 font-mono text-[0.6rem] uppercase tracking-[0.12em] text-copperdeep">House colour</div>
             <div className="flex flex-wrap gap-2">
               {FIRM_COLORS.map((c) => { const on = color === c.hex; return (
@@ -186,10 +198,10 @@ export function Join({ onJoined, onBack }: { onJoined: (c: StudentClient) => voi
             <span className="flex-1" />
             <FacilityChip type="brewery_large" color={color} size={28} mine />
             <FacilityChip type="taproom" color={color} size={28} mine />
-          </div>
+          </div></>}
           {err && <div className="text-sm text-brick">{err}</div>}
           <div className="flex gap-2">
-            <Button variant="go" onClick={join} disabled={busy || !name.trim()}>{busy ? "Joining…" : "Join the game →"}</Button>
+            <Button variant="go" onClick={join} disabled={!canJoin}>{busy ? "Joining…" : joiningFounded ? "Take your seat →" : "Join the game →"}</Button>
             <Button variant="ghost" onClick={() => { setStep("enter"); setErr(null); }}>← Different code</Button>
           </div>
         </div>

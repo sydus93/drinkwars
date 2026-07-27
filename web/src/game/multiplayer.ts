@@ -20,6 +20,16 @@ export interface GameTimeline {
 
 /** Module-enable map sent to the create endpoint (id → { enabled }). */
 export type ModuleSelection = Record<string, { enabled: boolean }>;
+
+/** One seat's slice of the team plan (team firms, DW-038): who, which desk, and the
+ *  levers they've put on the table this round. `me` marks this client's own seat. */
+export interface TeamPlanSeat {
+  name: string; role: string | null; desk: string | null; submitted: boolean; me: boolean;
+  updated_at: number | null; partial: Partial<FirmDecision> | null;
+}
+/** The team's live plan: every seat's submitted slice + the composed firm decision
+ *  they merge into (the record the engine will resolve). Refreshed by the 2.5s poll. */
+export interface TeamPlan { seats: TeamPlanSeat[]; composed: FirmDecision | null; locked: boolean }
 import type { InstructorDashboard } from "drinkwars-server";
 import type { GameView, Standing } from "./controller.js";
 
@@ -51,6 +61,7 @@ export interface RawView {
   names?: Record<string, string>; // firm_id → brewery name
   markets?: GameView["markets"]; // MOD-B01 per-team city view (projected server-side)
   seats?: GameView["seats"]; // team firms: this firm's C-suite seats + submit status
+  teamPlan?: TeamPlan; // team firms: each seat's slice + the composed decision (same-firm only)
   firms?: GameView["firms"]; // public per-firm snapshots (rivals redacted unless research bought)
   shocks?: GameView["shocks"]; // active + telegraphed shocks
   history?: GameView["history"]; // own trend + public field aggregate
@@ -211,6 +222,7 @@ export class StudentClient {
       fx: v.fx ?? {},
       markets: v.markets ?? [], // MOD-B01 per-team city view (projected server-side)
       seats: v.seats ?? [], // team firms: C-suite seats + submit status
+      teamPlan: v.teamPlan ?? null, // team firms: the live plan review surface
       agreements: v.agreements ?? [],
       lobbyInitiatives: v.lobbyInitiatives ?? [],
       shocks: v.shocks ?? [],
@@ -226,6 +238,15 @@ export class StudentClient {
     const unit = v.unitCostEst || 3;
     const active = v.segments.filter((s) => s.active).map((s) => s.id);
     const allSegs = v.segments.map((s) => s.id);
+
+    // Team firms: if THIS seat already submitted this round, resume that exact slice —
+    // a reload (or another device) picks the draft back up instead of resetting it.
+    // teamPlan is always the CURRENT round, so a fresh round naturally skips this.
+    const mine = v.teamPlan?.seats.find((s) => s.me && s.partial);
+    if (mine?.partial && !this.lastDecision) {
+      this.lastDecision = { ...(mine.partial as FirmDecision), firm_id: this.firmId };
+      return { ...this.lastDecision };
+    }
 
     if (this.lastDecision) {
       const price: Record<SegmentId, number> = {};

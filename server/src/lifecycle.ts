@@ -39,6 +39,15 @@ export interface ProvisionedStudent { external_id: string; name: string; claim_c
 export interface MyGame { gameId: string; title: string | null; joinCode: string | null; firmId: FirmId; teamName: string; round: number; lifecycle: GameRecord["lifecycle"]; nRounds: number; rank: number | null; score: number | null; status: string | null; complete: boolean }
 /** A seat at one firm (team mode): who holds it, which desk, and whether they've submitted. */
 export interface TeamSeat { name: string; role: string | null; desk: string | null; submitted: boolean }
+/** One seat's slice of the team plan (DW-038): who, which desk, and the levers they've
+ *  put on the table this round. Same-team eyes only; `me` marks the caller's own seat. */
+export interface TeamPlanSeat { name: string; role: string | null; desk: string | null; submitted: boolean; me: boolean; updated_at: number | null; partial: Partial<FirmDecision> | null }
+/** The team's live plan: every seat's submitted slice + the composed firm decision they
+ *  merge into (the record the engine will resolve). The shared pre-lock review surface. */
+export interface TeamPlan { seats: TeamPlanSeat[]; composed: FirmDecision | null; locked: boolean }
+
+/** The C-suite seats a team-game joiner may take. */
+const TEAM_ROLES = new Set(["ceo", "cfo", "cmo", "coo", "chro"]);
 
 export class LifecycleError extends Error {
   constructor(msg: string) {
@@ -138,7 +147,11 @@ export class GameOrchestrator {
     const mine = teams.find((t) => t.member_user_ids.includes(userId));
     if (mine) {
       // Returning player keeps their seat (recovered from storage) unless they pick a new one.
-      if (opts.role) await this.store.setMemberRole(mine.id, userId, opts.role);
+      if (opts.role) {
+        if (game.firm_mode === "team" && !TEAM_ROLES.has(opts.role)) throw new LifecycleError(`unknown seat "${opts.role}"`);
+        await this.assertSeatFree(mine, opts.role, userId);
+        await this.store.setMemberRole(mine.id, userId, opts.role);
+      }
       const role = opts.role ?? (await this.store.getMemberRole(mine.id, userId)) ?? undefined;
       return { gameId: game.id, teamId: mine.id, firmId: mine.firm_id, role, claim: await this.ensureClaimCode(userId) };
     }
@@ -156,6 +169,11 @@ export class GameOrchestrator {
       const open = teams.filter((t) => t.member_user_ids.length < MAX_SEATS_PER_FIRM);
       target = opts.teamId ? open.find((t) => t.id === opts.teamId) : [...open].sort((a, b) => a.member_user_ids.length - b.member_user_ids.length)[0];
       if (!target) throw new LifecycleError(`game "${code}" has no open seats`);
+      // Seat guards (DW-038): two generalists on one firm silently clobber each other in
+      // the desk merge, so a firm's SECOND member onward must take a distinct C-suite seat.
+      if (opts.role && !TEAM_ROLES.has(opts.role)) throw new LifecycleError(`unknown seat "${opts.role}"`);
+      if (target.member_user_ids.length > 0 && !opts.role) throw new LifecycleError(`"${target.name}" already has members — pick a C-suite seat to join it`);
+      if (opts.role) await this.assertSeatFree(target, opts.role, userId);
     } else {
       target = teams.find((t) => t.member_user_ids.length === 0);
       if (!target) throw new LifecycleError(`game "${code}" is full`);
@@ -165,6 +183,16 @@ export class GameOrchestrator {
     if (opts.role) await this.store.setMemberRole(target.id, userId, opts.role); // persist the seat (authoritative across devices)
     if (wasEmpty) await this.store.setTeamName(target.id, displayName); // the first member names the firm
     return { gameId: game.id, teamId: target.id, firmId: target.firm_id, role: opts.role, claim: await this.ensureClaimCode(userId) };
+  }
+
+  /** Rejects taking a C-suite seat another member of the firm already holds. */
+  private async assertSeatFree(team: TeamRecord, role: string, userId: string): Promise<void> {
+    for (const uid of team.member_user_ids) {
+      if (uid === userId) continue;
+      if ((await this.store.getMemberRole(team.id, uid)) === role) {
+        throw new LifecycleError(`the ${role.toUpperCase()} seat is already taken on "${team.name}"`);
+      }
+    }
   }
 
   /** The user's durable claim code, minting one if they somehow lack it (a legacy
@@ -284,8 +312,8 @@ export class GameOrchestrator {
     // Compose the team's seats → the per-team decision the engine will resolve.
     const seats = await this.store.getMemberDecisions(gameId, round, teamId);
     const ws = (await this.store.getWorldState(gameId, round)) ?? (await this.store.getLatestWorldState(gameId));
-    const segs = (ws?.state.segments ?? []).map((s) => s.id);
-    const merged = mergeMemberDecisions(zeroFirmDecision(team.firm_id, segs), seats.map((s) => ({ desk: (s.desk as never) ?? "all", partial: s.partial })));
+    const base = await this.teamMergeBase(gameId, round, teamId, team.firm_id, ws?.state ?? null, game.config);
+    const merged = mergeMemberDecisions(base, seats.map((s) => ({ desk: (s.desk as never) ?? "all", partial: s.partial })));
     const existing = await this.store.getDecision(gameId, round, teamId);
     if (existing?.locked) throw new LifecycleError("decision is locked");
     await this.store.upsertDecision({
@@ -294,6 +322,65 @@ export class GameOrchestrator {
       revision_count: existing ? existing.revision_count + 1 : 0,
       submitted_at: now, first_opened_at: existing?.first_opened_at ?? now,
     });
+  }
+
+  /**
+   * The merge base for a team firm's composed decision (DW-038). NOT the zero decision:
+   * an unmanned desk would zero-fill, and a zero price literally gives product away.
+   * Standing levers (price, presence, run-rate, market posture, investments) carry from
+   * last round's composed decision — the same round reset the solo controller applies —
+   * while one-shot transactions (builds, hires, draws, agreement actions) stay zeroed.
+   * With no prior decision, prices anchor at ~1.8× estimated unit cost with presence in
+   * every active segment, plus maintenance-level capex so capacity doesn't silently rot.
+   * A seat's submitted partial still overrides its whole desk on top of this base.
+   */
+  private async teamMergeBase(gameId: string, round: number, teamId: string, firmId: FirmId, state: WorldState | null, config: Config | null): Promise<FirmDecision> {
+    const segs = (state?.segments ?? []).map((s) => s.id);
+    const base = zeroFirmDecision(firmId, segs);
+    const firm = state?.firms.find((f) => f.id === firmId) ?? null;
+    const active = (state?.segments ?? []).filter((s) => s.active).map((s) => s.id);
+    const prior = round > 0 ? await this.store.getDecision(gameId, round - 1, teamId) : null;
+    if (prior) {
+      const d = prior.decision;
+      base.price = { ...base.price, ...d.price };
+      base.presence = { ...base.presence, ...d.presence };
+      if (d.run_rate != null) base.run_rate = d.run_rate;
+      if (d.market_presence) base.market_presence = d.market_presence;
+      if (d.market_supply) base.market_supply = d.market_supply;
+      base.invest_cap = d.invest_cap; base.invest_process = d.invest_process; base.invest_Q = d.invest_Q; base.invest_B = d.invest_B;
+      base.invest_T_emp = d.invest_T_emp; base.invest_T_inv = d.invest_T_inv; base.invest_T_gov = d.invest_T_gov;
+    } else {
+      for (const s of active) base.presence[s] = 1;
+      if (config) base.invest_cap = Math.round((config.capacity.depreciation * (firm?.cap ?? 0)) / config.capacity.gain);
+    }
+    const unit = firm && firm.unit_cost > 0 ? firm.unit_cost : (config?.costs.c_base ?? 3) * 0.85;
+    for (const s of active) if (!base.price[s]) base.price[s] = Math.round(unit * 1.8 * 100) / 100;
+    return base;
+  }
+
+  /** The team's live plan (DW-038): each seat's submitted slice + the composed firm
+   *  decision they merge into. The transport resolves the caller's own team, so this is
+   *  same-firm eyes only; `me` flags the caller's seat (draft rehydration client-side). */
+  async getTeamPlan(gameId: string, teamId: string, forUserId: string): Promise<TeamPlan> {
+    const game = await this.requireGame(gameId);
+    const team = await this.store.getTeam(teamId);
+    if (!team || team.game_id !== gameId) return { seats: [], composed: null, locked: false };
+    const round = game.current_round;
+    const mds = await this.store.getMemberDecisions(gameId, round, teamId);
+    const seats: TeamPlanSeat[] = [];
+    for (const uid of team.member_user_ids) {
+      const u = await this.store.getUser(uid);
+      const role = await this.store.getMemberRole(teamId, uid);
+      const md = mds.find((m) => m.user_id === uid);
+      seats.push({
+        name: u?.display_name ?? "Player", role,
+        desk: md?.desk ?? (role ? (ROLE_DESK[role] ?? "all") : null),
+        submitted: md?.submitted ?? false, me: uid === forUserId,
+        updated_at: md?.updated_at ?? null, partial: md?.partial ?? null,
+      });
+    }
+    const rec = await this.store.getDecision(gameId, round, teamId);
+    return { seats, composed: rec?.decision ?? null, locked: rec?.locked ?? false };
   }
 
   /** Submission status for the instructor, including non-submitters (§5 Locked). */

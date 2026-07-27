@@ -92,7 +92,7 @@ async function readJson(req: IncomingMessage): Promise<any> {
 /** Everything a joined student needs to render: their OWN full firm state +
  *  their own last-round diagnostics + the public standings/market. A rival's
  *  private state is never included (this team's slice only). */
-async function viewFor(gameId: string, teamId: string) {
+async function viewFor(gameId: string, teamId: string, userId?: string) {
   const pub = await orch.getPublicState(gameId);
   const tv = await orch.getTeamView(gameId, teamId);
   const game = await store.getGame(gameId);
@@ -124,6 +124,9 @@ async function viewFor(gameId: string, teamId: string) {
   let shocks: ReturnType<typeof projectShocks> = [];
   let hiringMarket: ReturnType<typeof generateHiringMarket> = []; // MOD-B12 candidate pool (shared/public — same for every firm)
   const seats = own && game?.firm_mode === "team" ? await orch.getTeamSeats(gameId, teamId) : []; // team firms: this firm's C-suite seats + submit status
+  // Team firms: the live plan — each seat's submitted slice + the composed decision
+  // (same-firm eyes only; the session's team is the only one ever queried).
+  const teamPlan = own && game?.firm_mode === "team" && userId ? await orch.getTeamPlan(gameId, teamId, userId) : undefined;
   const history = own ? projectHistory(allResults, own.id) : []; // own trend + public field aggregate
   if (own) {
     const ws = await store.getLatestWorldState(gameId);
@@ -149,6 +152,7 @@ async function viewFor(gameId: string, teamId: string) {
     history,
     hiringMarket,
     seats,
+    ...(teamPlan ? { teamPlan } : {}),
     names,
     round: pub.round,
     lifecycle: pub.lifecycle,
@@ -245,7 +249,7 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
   if (method === "GET" && path === "/view") {
     const s = sessions.get(url.searchParams.get("token") ?? "");
     if (!s) return send(res, 401, { error: "invalid or expired token" });
-    return send(res, 200, await viewFor(s.gameId, s.teamId));
+    return send(res, 200, await viewFor(s.gameId, s.teamId, s.userId));
   }
   if (method === "POST" && path === "/submit") {
     const { token, decision } = await readJson(req);

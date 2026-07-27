@@ -73,7 +73,7 @@ async function readToken(token: string): Promise<Session | null> {
  *  poaching, shocks, own/field history, MOD-B12 hiring pool). Kept at parity with
  *  server/src/transport.ts::viewFor so deployed multiplayer matches single-player + the
  *  local dev transport — these projections come from the shared engine views.ts helpers. */
-async function viewFor(gameId: string, teamId: string) {
+async function viewFor(gameId: string, teamId: string, userId?: string) {
   const pub = await orch.getPublicState(gameId);
   const tv = await orch.getTeamView(gameId, teamId);
   const game = await store.getGame(gameId);
@@ -100,6 +100,8 @@ async function viewFor(gameId: string, teamId: string) {
   let shocks: any[] = [];
   let hiringMarket: any[] = []; // MOD-B12 candidate pool (shared/public — same for every firm)
   const seats = own && game?.firm_mode === "team" ? await orch.getTeamSeats(gameId, teamId) : []; // team firms: C-suite seats + submit status
+  // Team firms: the live plan — each seat's submitted slice + the composed decision (same-firm eyes only).
+  const teamPlan = own && game?.firm_mode === "team" && userId ? await orch.getTeamPlan(gameId, teamId, userId) : undefined;
   const history = own ? projectHistory(allResults, own.id) : []; // own trend + public field aggregate
   if (own) {
     const ws = await store.getLatestWorldState(gameId);
@@ -121,6 +123,7 @@ async function viewFor(gameId: string, teamId: string) {
     round: pub.round, lifecycle: pub.lifecycle, nRounds: game?.n_rounds, complete: pub.lifecycle === "complete",
     segments: pub.segments, own, ownResult, unitCostEst, fx, names, agreements, lobbyInitiatives,
     markets, firms, shocks, history, hiringMarket, seats,
+    ...(teamPlan ? { teamPlan } : {}),
     briefings: briefings.map((b) => ({ ...b, lines: b.lines.map((l: string) => renameFirms(l, names)) })),
     standings: (last?.standings ?? []).map((s: any) => ({ ...s, name: names[s.firm_id] ?? s.firm_id })),
     events: (last?.events ?? []).map((e: string) => renameFirms(e, names)),
@@ -204,7 +207,7 @@ Deno.serve(async (req: Request) => {
     if (method === "GET" && path === "/view") {
       const s = await readToken(u.searchParams.get("token") ?? "");
       if (!s) return json(401, { error: "invalid or expired token" });
-      return json(200, await viewFor(s.gameId, s.teamId));
+      return json(200, await viewFor(s.gameId, s.teamId, s.userId));
     }
     if (method === "POST" && path === "/submit") {
       const s = await readToken(body.token);

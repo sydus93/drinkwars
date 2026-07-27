@@ -9,6 +9,7 @@ import { resolveConfig, decideAdaptive, ADAPTIVE_LEANS, inventoryEnabled, roleBr
 import type { RoleBriefing, AllianceSummary, LobbySummary, Candidate } from "drinkwars-engine";
 import type { Config, ConfigOverride, FirmDecision, FirmId, FirmRoundResult, FirmState, Lean, ModulesConfig, RoundResult, SegmentId, WorldState } from "drinkwars-engine";
 import { rankDistrictsForType } from "../labels.js";
+import type { TeamPlan } from "./multiplayer.js";
 
 export type Difficulty = "relaxed" | "competitive" | "cutthroat";
 
@@ -172,11 +173,14 @@ export interface GameView {
   shocks: ShockSignal[]; // active + foreseeable upcoming shocks, for the map/header
   hiringMarket: Candidate[]; // MOD-B12 this round's hireable candidates (empty when off)
   seats: TeamSeat[]; // multiplayer team firms: this firm's C-suite seats + submit status (empty solo)
+  teamPlan?: TeamPlan | null; // team firms: each seat's slice + the composed decision (null solo)
   ownTagline: string; // firm-builder tagline (cosmetic)
 }
 
 /** A seat at the player's firm (team mode): who holds it, their desk, and submit status. */
 export interface TeamSeat { name: string; role: string | null; desk: string | null; submitted: boolean }
+/** Team plan payloads (team firms only) — declared in multiplayer.ts, re-exported for views. */
+export type { TeamPlan, TeamPlanSeat } from "./multiplayer.js";
 
 const median = (xs: number[]): number => {
   if (!xs.length) return 0;
