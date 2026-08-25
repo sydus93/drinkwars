@@ -259,8 +259,10 @@ export function cockpitMetrics(desk: CockpitDesk, view: GameView): Metric[] {
     const sc = r.scorecard_norm;
     out.push({ label: "Financial", value: sc.financial.toFixed(2), tone: sc.financial >= 0 ? "good" : "risk", hint: "CFO's leg — value creation vs cost of capital." });
     out.push({ label: "Market", value: sc.market.toFixed(2), tone: sc.market >= 0 ? "good" : "risk", hint: "CMO's leg — share and demand strength." });
-    out.push({ label: "Intangible", value: sc.intangible.toFixed(2), tone: sc.intangible >= 0 ? "good" : "risk", hint: "Ops/brand leg — quality, brand, process capital." });
-    out.push({ label: "Stakeholder", value: sc.stakeholder.toFixed(2), tone: sc.stakeholder >= 0 ? "good" : "risk", hint: "People/Affairs leg — employee, investor, regulator trust." });
+    // Student-facing labels per the scoring-layer spec §8: say what the component
+    // DOES, not what it is — engine keys stay generic.
+    out.push({ label: "Preparedness", value: sc.intangible.toFixed(2), tone: sc.intangible >= 0 ? "good" : "risk", hint: "Preparedness for the future — quality, brand, process capital." });
+    out.push({ label: "Standing", value: sc.stakeholder.toFixed(2), tone: sc.stakeholder >= 0 ? "good" : "risk", hint: "Stakeholder standing — employee, investor, regulator trust." });
     out.push({ label: "Valuation", value: fmt.money(you?.valuation ?? 0), field: `field ${fmt.money(fieldMed(view, (f) => f.valuation))}`, tone: cmpTone(you?.valuation ?? 0, fieldMed(view, (f) => f.valuation), true), hint: "The single integrative number — sustained advantage capitalized." });
   }
 

@@ -128,8 +128,10 @@ export class StudentClient {
   /** Join by code. Roster students pass their `claim` code (persistent identity); team
    *  games take a `role` (C-suite seat) and optional `teamId` (which firm to join). An
    *  anonymous joiner gets a claim code auto-issued (returned as `claim`). */
-  async join(code: string, name: string, opts: { claim?: string; teamId?: string; role?: string } = {}): Promise<void> {
-    const r = await api(this.base, "/join", { method: "POST", body: JSON.stringify({ code, name, claim: opts.claim, teamId: opts.teamId, role: opts.role }) });
+  async join(code: string, name: string, opts: { claim?: string; teamId?: string; role?: string; teamName?: string } = {}): Promise<void> {
+    // `name` is the PERSON; `teamName` the brewery (team games only — a founder names it,
+    // a joiner inherits it). Solo games keep the one-field behaviour: name = brewery.
+    const r = await api(this.base, "/join", { method: "POST", body: JSON.stringify({ code, name, claim: opts.claim, teamId: opts.teamId, role: opts.role, teamName: opts.teamName }) });
     this.token = r.token;
     this.gameId = r.gameId;
     this.firmId = r.firmId;
@@ -218,6 +220,7 @@ export class StudentClient {
       names: v.names ?? {},
       inventoryEnabled: this.config ? inventoryEnabled(this.config) : false,
       modules: this.config?.modules,
+      scoring: this.config?.scoring,
       briefings: v.briefings ?? [],
       fx: v.fx ?? {},
       markets: v.markets ?? [], // MOD-B01 per-team city view (projected server-side)
@@ -315,7 +318,7 @@ export class InstructorClient {
     return api(this.base, "/instructor/games", { method: "POST", headers: this.headers(), body: JSON.stringify({ nFirms, nRounds, modules, configOverride, firmMode: opts.firmMode ?? "solo", title: opts.title }) });
   }
   /** Provision a roster (NetID + name per student) → durable claim codes to distribute. */
-  async provisionRoster(roster: { external_id: string; name: string; email?: string }[], cohort?: string): Promise<{ students: ProvisionedStudent[] }> {
+  async provisionRoster(roster: { external_id: string; name: string; email?: string }[], cohort?: string): Promise<{ students: ProvisionedStudent[]; errors?: { external_id: string; error: string }[] }> {
     return api(this.base, "/instructor/roster", { method: "POST", headers: this.headers(), body: JSON.stringify({ roster, cohort }) });
   }
   status(gameId: string): Promise<InstructorStatus> {
@@ -328,8 +331,14 @@ export class InstructorClient {
   lock(gameId: string): Promise<{ nonSubmitters: string[] }> {
     return api(this.base, `/instructor/games/${gameId}/lock`, { method: "POST", headers: this.headers() });
   }
-  resolve(gameId: string): Promise<{ round: number; lifecycle: string }> {
-    return api(this.base, `/instructor/games/${gameId}/resolve`, { method: "POST", headers: this.headers() });
+  /** `force` re-runs a resolve that died mid-way (game stuck in "resolving"); the server
+   *  makes the re-run idempotent. */
+  resolve(gameId: string, opts: { force?: boolean } = {}): Promise<{ round: number; lifecycle: string }> {
+    return api(this.base, `/instructor/games/${gameId}/resolve`, { method: "POST", headers: this.headers(), body: JSON.stringify({ force: !!opts.force }) });
+  }
+  /** Open the next round when a resolve published but the auto-advance didn't land. */
+  advance(gameId: string): Promise<{ ok: boolean }> {
+    return api(this.base, `/instructor/games/${gameId}/advance`, { method: "POST", headers: this.headers() });
   }
   /** Full analytics payload for the dashboard (read-only; assembled server-side). */
   dashboard(gameId: string): Promise<InstructorDashboard> {

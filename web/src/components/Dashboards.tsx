@@ -76,8 +76,8 @@ function Pending({ note = "Opens after your first round resolves." }: { note?: s
 
 const legend = (items: [string, string][]) => <Legend series={items.map(([label, color]) => ({ label, color, data: [] as number[] }))} />;
 
-// ── generic waterfall bridge (shared by P&L / unit-cost / cash bridges) ─────
-interface BridgeStep {
+// ── generic waterfall bridge (shared by P&L / unit-cost / cash / scorecard bridges) ─────
+export interface BridgeStep {
   label: string;
   /** Signed increment from the running level. Exactly one of delta/total per step. */
   delta?: number;
@@ -88,7 +88,7 @@ interface BridgeStep {
   title?: string;
 }
 
-function Bridge({ steps, fmtDelta, fmtTotal, vh = 168 }: { steps: BridgeStep[]; fmtDelta: (n: number) => string; fmtTotal: (n: number) => string; vh?: number }) {
+export function Bridge({ steps, fmtDelta, fmtTotal, vh = 168 }: { steps: BridgeStep[]; fmtDelta: (n: number) => string; fmtTotal: (n: number) => string; vh?: number }) {
   const clean = steps.filter((s) => Number.isFinite(s.total ?? s.delta ?? NaN));
   if (clean.length === 0) return <Pending />;
   const VW = 340, padL = 6, padT = 16;
@@ -523,7 +523,7 @@ export function CostOfCapitalCockpit({ coc }: { coc: FirmRoundResult["cost_of_ca
       <div className="mb-1 flex items-center justify-between">
         <span className="tnum text-sm text-ink">
           Debt costs <span className={`font-semibold ${rationed ? "text-brick" : "text-copperdeep"}`}>{fmt.pct1(rd)}</span>/qtr
-          <span className="text-inksoft"> — base 1.5% + spread {fmt.pct1(Math.max(0, rd - 0.015))}</span>
+          <span className="text-inksoft"> — risk-free 1.5% + spread {fmt.pct1(Math.max(0, rd - 0.015))} (base spread 1%; the ticks mark the 2.5% default all-in rate)</span>
         </span>
         {rationed && <Tag tone="brick">Credit rationed</Tag>}
       </div>

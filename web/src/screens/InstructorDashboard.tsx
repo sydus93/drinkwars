@@ -32,11 +32,12 @@ const TABS: { id: DashTab; label: string }[] = [
 const NEEDS_ROUND = new Set<DashTab>(["overview", "trajectories", "score", "market", "strategy", "coopetition", "finance", "team"]);
 
 const SCORE_KEYS = ["financial", "market", "intangible", "stakeholder"] as const;
+// Student-facing labels per the scoring-layer spec §8 — engine keys stay generic.
 const SCORE_LABEL: Record<(typeof SCORE_KEYS)[number], string> = {
   financial: "Financial",
   market: "Market",
-  intangible: "Intangible",
-  stakeholder: "Stakeholder",
+  intangible: "Preparedness",
+  stakeholder: "Standing",
 };
 
 // --- formatting helpers -------------------------------------------------------
@@ -52,7 +53,7 @@ const shockLabel = (id: string) => SHOCK_META[id]?.label ?? humanizeId(id);
 const regionLabel = (r: string) => MARKET_META[r]?.city ?? humanizeId(r);
 
 /** DashPanelRow history → the distressFlags input slice. */
-const toDistressRows = (rows: DashPanelRow[]) => rows.map((r) => ({ round: r.round, netIncome: r.netIncome, cash: r.cash, leverage: r.leverage, creditRationed: r.creditRationed, rank: r.rank }));
+const toDistressRows = (rows: DashPanelRow[]) => rows.map((r) => ({ round: r.round, netIncome: r.netIncome, cash: r.cash, leverage: r.leverage, creditRationed: r.creditRationed, rank: r.rank, belowSafety: r.belowSafety, roundsBelowSafety: r.roundsBelowSafety }));
 
 /** Still-active firms carrying ≥1 distress flag, worst-first. Bankrupt/exited
  *  firms are excluded — they're past distress and would flag forever. */
@@ -145,7 +146,7 @@ function OverviewPanel({ d }: { d: Derived }) {
   const latest = d.latest;
   const active = latest.filter((p) => p.status === "active").length;
   const bankrupt = latest.filter((p) => p.status === "bankrupt").length;
-  const exited = latest.filter((p) => p.status.startsWith("exited")).length;
+  const exited = latest.filter((p) => p.status.startsWith("exited") || p.status === "acquired").length;
   const scores = latest.map((p) => p.scoreCumulative);
   const top = scores.length ? Math.max(...scores) : 0;
   const med = scores.length ? [...scores].sort((a, b) => a - b)[Math.floor(scores.length / 2)] : 0;
@@ -197,6 +198,16 @@ function OverviewPanel({ d }: { d: Derived }) {
           <Stat label="Median score" value={fscore(med)} />
           <Stat label="Units sold (last rd)" value={fmt.int(unitsServed)} sub={`${segActive} segments live`} />
         </div>
+        {d.data.meta.setup && (
+          <div className="mt-2 text-[0.7rem] text-inksoft">
+            <span className="font-mono uppercase tracking-wide text-copperdeep">Setup ·</span> {d.data.meta.setup.firmMode === "team" ? "team firms (C-suite chairs)" : "solo firms"} · {d.data.meta.setup.nFirms} slots · {d.data.meta.setup.modules.length ? `${d.data.meta.setup.modules.length} expansion modules (${d.data.meta.setup.modules.map(humanizeId).join(", ")})` : "base game, no expansion modules"}
+            {d.data.meta.setup.frontierRound != null && <> · new category R{d.data.meta.setup.frontierRound + 1}</>}
+            {d.data.meta.setup.exportRound != null && <> · exports open R{d.data.meta.setup.exportRound + 1}</>}
+            {d.data.meta.setup.practiceRounds > 0 && <> · first {d.data.meta.setup.practiceRounds} round{d.data.meta.setup.practiceRounds === 1 ? "" : "s"} practice (unscored)</>}
+            {d.data.meta.setup.terminalWeight > 0 && <> · terminal weight {Math.round(d.data.meta.setup.terminalWeight * 100)}%</>}
+            · no-show = {d.data.meta.setup.noShowPolicy === "carry" ? "carry last plan" : "zero-fill"} · seed {d.data.meta.setup.seed}
+          </div>
+        )}
       </Card>
 
       <Card>
@@ -231,7 +242,7 @@ function OverviewPanel({ d }: { d: Derived }) {
           <Stat label="Avg time to decide" value={ftime(avgTime)} />
           <Stat label="Bought research" value={`${boughtInfo}/${joinedEng.length}`} />
         </div>
-        {nonSub.length > 0 && <div className="mt-2 text-[0.72rem] text-brick">Didn't submit: {nonSub.join(", ")} (played as zero-fill).</div>}
+        {nonSub.length > 0 && <div className="mt-2 text-[0.72rem] text-brick">Didn't submit: {nonSub.join(", ")} — carried last quarter's standing plan (prices, presence, standing investments; one-shot moves don't repeat).</div>}
         {joinedEng.length === 0 && <div className="mt-2 text-[0.72rem] text-inksoft">No human teams yet — all slots are adaptive NPCs.</div>}
       </Card>
 
@@ -278,7 +289,7 @@ function ScorePanel({ d }: { d: Derived }) {
       <Card>
         <Eyebrow>What's winning · weighted component contribution (last round)</Eyebrow>
         <div className="mb-2 text-[0.72rem] text-inksoft">
-          Weights — financial {fmt.pct(w.financial)}, market {fmt.pct(w.market)}, intangible {fmt.pct(w.intangible)}, stakeholder {fmt.pct(w.stakeholder)}. Bars are weight × within-round normalized score (right = ahead of the field, left = behind).
+          Weights — Financial {fmt.pct(w.financial)}, Market {fmt.pct(w.market)}, Preparedness {fmt.pct(w.intangible)}, Standing {fmt.pct(w.stakeholder)}. Bars are weight × within-round normalized score (right = ahead of the field, left = behind).
         </div>
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-sm">
@@ -561,7 +572,7 @@ function FinancePanel({ d }: { d: Derived }) {
   const riskTone = (p: DashPanelRow): "hop" | "copper" | "brick" => {
     if (p.status !== "active") return "brick";
     if (p.creditRationed || p.coverage < 1 || p.cash < 0) return "brick";
-    if (p.coverage < 2 || p.leverage > 1.5) return "copper";
+    if (p.belowSafety || p.coverage < 2 || p.leverage > 1.5) return "copper";
     return "hop";
   };
   const riskLabel = (p: DashPanelRow) => {
@@ -569,6 +580,9 @@ function FinancePanel({ d }: { d: Derived }) {
     if (p.creditRationed) return "credit rationed";
     if (p.coverage < 1) return "can't cover interest";
     if (p.cash < 0) return "cash negative";
+    // The engine's covenant clock: below the cash safety line counts toward forced exit
+    // (3 quarters) and acquirability (4) even when the P&L looks fine.
+    if (p.belowSafety) return `below safety line${(p.roundsBelowSafety ?? 0) > 1 ? ` · ${p.roundsBelowSafety}q` : ""}`;
     if (p.coverage < 2 || p.leverage > 1.5) return "watch";
     return "healthy";
   };
@@ -880,7 +894,7 @@ function ShockChip({ s, removable, busy, onRemove }: { s: ScheduledShock; remova
     <span className="flex items-center gap-1.5 rounded-[3px] border border-line px-2 py-0.5 text-[0.7rem]">
       <span className="font-semibold text-ink">{shockLabel(s.type_id)}</span>
       <span className="tnum text-inksoft">
-        {KIND_LABEL[s.kind] ?? s.kind} · {fmt.pct(s.magnitude)}{s.duration > 1 ? ` · ${s.duration} rds` : ""}{s.region ? ` · ${regionLabel(s.region)}` : ""}
+        {KIND_LABEL[s.kind] ?? s.kind}{s.target && s.target !== "all" ? ` (${SEG_LABEL[s.target] ?? s.target})` : ""} · {fmt.pct(s.magnitude)}{s.duration > 1 ? ` · ${s.duration} rds` : ""}{s.region ? ` · ${regionLabel(s.region)}` : ""}
       </span>
       <Tag tone={s.locked ? "copper" : "ink"}>{s.locked ? "planted" : "rolled"}</Tag>
       {s.fired && <Tag tone="brick">fired</Tag>}
@@ -894,7 +908,7 @@ function ShockChip({ s, removable, busy, onRemove }: { s: ScheduledShock; remova
 /** Schedule — the gamemaster board (DW-037): past rounds retrospective, current +
  *  future rounds show the forward shock schedule (engine-rolled and instructor-
  *  planted), with plant / remove / fire-now controls. */
-function SchedulePanel({ d, client, gameId }: { d: Derived; client: InstructorClient; gameId: string }) {
+function SchedulePanel({ d, client, gameId, roundKey }: { d: Derived; client: InstructorClient; gameId: string; roundKey: string }) {
   const [tl, setTl] = useState<GameTimeline | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -915,7 +929,7 @@ function SchedulePanel({ d, client, gameId }: { d: Derived; client: InstructorCl
   }, [client, gameId]);
   useEffect(() => {
     refresh();
-  }, [refresh]);
+  }, [refresh, roundKey]); // roundKey: re-pull the timeline after a resolve so fired/current rows are right
 
   const run = async (op: () => Promise<unknown>) => {
     setBusy(true);
@@ -1006,7 +1020,7 @@ function SchedulePanel({ d, client, gameId }: { d: Derived; client: InstructorCl
           </label>
           <label className="grid gap-0.5 text-[0.58rem] uppercase tracking-wide text-inksoft">
             Magnitude
-            <input type="number" min={0.05} max={1.5} step={0.05} value={mag ?? sel.magnitude_mean} onChange={(e) => setMag(Number(e.target.value))} className={`${selectCls} w-16`} />
+            <input type="number" min={0.05} max={sel.kind === "demand_drop" ? 0.9 : sel.kind === "cash_hit" ? 1 : 1.5} step={0.05} value={mag ?? sel.magnitude_mean} onChange={(e) => setMag(Number(e.target.value))} className={`${selectCls} w-16`} title={sel.kind === "demand_drop" || sel.kind === "demand_boost" ? "fraction of segment demand (0.2 = ±20%)" : sel.kind === "cash_hit" ? "fraction of cash on hand" : "multiplier on cost / capacity"} />
           </label>
           <label className="grid gap-0.5 text-[0.58rem] uppercase tracking-wide text-inksoft">
             Rounds
@@ -1063,7 +1077,7 @@ function ExportPanel({ exporting, onExport }: { exporting: boolean; onExport: (f
   return (
     <Card>
       <Eyebrow>Export · research data</Eyebrow>
-      <div className="mb-3 text-sm text-inksoft">The full per-firm-per-round panel for analysis — one row per firm per resolved round, plus agreements, beliefs, and telemetry.</div>
+      <div className="mb-3 text-sm text-inksoft"><strong>CSV</strong> — the tidy per-firm-per-round panel for grading and analysis (one row per firm per resolved round: financials, stocks, market position, scorecard with practice-round flag and bridge, engagement/beliefs/reflection, and the team's members with NetIDs and chairs). <strong>JSON</strong> — everything, including agreements, market evolution and the event log.</div>
       <div className="mb-3 grid gap-1">{EXPORT_TABLES.map((t) => <div key={t} className="flex items-center gap-2 text-[0.78rem] text-ink"><span className="h-1.5 w-1.5 flex-none rounded-full bg-copper" />{t}</div>)}</div>
       <div className="flex gap-2"><Button variant="go" onClick={() => onExport("csv")} disabled={exporting}>Download CSV</Button><Button variant="ghost" onClick={() => onExport("json")} disabled={exporting}>Download JSON</Button></div>
     </Card>
@@ -1145,7 +1159,7 @@ export function InstructorDashboard({ client, gameId, roundKey }: { client: Inst
         <>
           {tab === "monitor" && <MonitorPanel d={d} />}
           {tab === "balance" && <BalancePanel />}
-          {tab === "schedule" && <SchedulePanel d={d} client={client} gameId={gameId} />}
+          {tab === "schedule" && <SchedulePanel d={d} client={client} gameId={gameId} roundKey={roundKey} />}
           {tab === "export" && <ExportPanel exporting={exporting} onExport={exportFile} />}
           {NEEDS_ROUND.has(tab) && (d.data.meta.resolvedRounds === 0 ? (
             <Card>

@@ -18,11 +18,13 @@ export { initGame, initFirm } from "./engine/init.js";
 export { resolveRound } from "./engine/resolve.js";
 export { firmValuation, InvariantError } from "./engine/finance.js";
 export { resilienceMitigation, rollTimeline } from "./engine/shocks.js";
-export { activeMarkets } from "./engine/geography.js";
+export { activeMarkets, segmentDemandTotals } from "./engine/geography.js";
 export { roleBriefings } from "./engine/briefings.js";
 export type { RoleBriefing } from "./engine/briefings.js";
 // Coopetition (MOD-A05/A06) + lobbying (MOD-A09) presentation summaries.
 export { summarizeAgreementsFor, summarizeLobbying, projectMarkets, projectFirms, projectShocks, projectHistory } from "./engine/views.js";
+export { roundIsScored } from "./engine/scoring.js";
+export { sanitizeDecision } from "./engine/sanitize.js";
 export { TERM_BOUNDS, clampTerms, PROPOSAL_TTL_ROUNDS } from "./engine/coopetition.js";
 export type { AllianceSummary, AllianceClauseSummary, LobbySummary } from "./engine/views.js";
 export { generateHiringMarket } from "./engine/employees.js";

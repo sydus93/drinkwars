@@ -16,6 +16,8 @@ import type { Config, FirmDecision, FirmState, PrPlayType, SegmentId, WorldState
 import { invCfg } from "../engine/inventory.js";
 import { firmValuation } from "../engine/finance.js";
 import { generateHiringMarket } from "../engine/employees.js";
+import { activeMarkets, marketDemandScale } from "../engine/geography.js";
+import { facilityCapacity } from "../engine/facilities.js";
 
 export interface Lean {
   id: string;
@@ -68,6 +70,15 @@ export function decideAdaptive(lean: Lean, f: FirmState, world: WorldState, c: C
   const allSegs = world.segments.map((s) => s.id);
   const rivals = world.firms.filter((x) => x.status === "active" && x.id !== f.id);
   const unit = estUnit(f, c);
+  // Addressable demand per segment = the markets THIS firm serves (home + entered), each at
+  // its own multiplier and growth — the same arena sizes the engine resolves (DW-046).
+  // Before, the bot planned against the home figure alone, so in a geography game it
+  // under-forecast demand ~2–3× and systematically under-built: the population ran
+  // supply-short and a forced overbuilder was rewarded rather than punished.
+  const geo = c.modules?.geography;
+  const myMarkets = geo?.enabled ? new Set(["home", ...(f.markets_entered ?? [])]) : null;
+  const openMarkets = geo?.enabled ? activeMarkets(c, world.round).filter((m) => myMarkets!.has(m.id)) : [];
+  const dOf = (sw: { D: number }) => (geo?.enabled ? openMarkets.reduce((a, m) => a + sw.D * marketDemandScale(m, c, world.round), 0) : sw.D);
 
   // Cutthroat bots undercut harder (extra low-markup rungs) to take share head-on instead of
   // sitting comfortably above the field. Relaxed/competitive keep the standard grid.
@@ -93,7 +104,7 @@ export function decideAdaptive(lean: Lean, f: FirmState, world: WorldState, c: C
       const price = unit * mk;
       const u = sc.alpha - sc.beta_p * price + sc.beta_q * f.Q + sc.beta_b * f.B + sc.beta_fit * 0.7;
       const share = Math.exp(u) / (Math.exp(u) + rivalExpSum + outside);
-      const qest = Math.min(sw.D * share, f.cap); // if I devoted full cap here
+      const qest = Math.min(dOf(sw) * share, f.cap); // if I devoted full cap here
       const profit = qest * (price - unit);
       if (profit > best.profit) best = { seg: sw.id, price, share, profit };
     }
@@ -129,9 +140,30 @@ export function decideAdaptive(lean: Lean, f: FirmState, world: WorldState, c: C
   // best-responder doesn't want to overbrew into spoilage. Ignored when disabled.
   const expectedSold = chosen.reduce((a, p) => {
     const sw = activeSegs.find((s) => s.id === p.seg);
-    return a + (sw ? sw.D * p.share : 0);
+    return a + (sw ? dOf(sw) * p.share : 0);
   }, 0);
   const runRate = chosen.length ? Math.max(0.3, Math.min(1, (0.85 * expectedSold) / Math.max(1, f.cap))) : 0.3;
+
+  // ---- Retrench protocol (DW-041). The engine's covenant tracker (exit.ts) counts a
+  // firm below health when cash < safety or coverage < 1; the old bot kept drawing
+  // debt, building, and hiring straight through that, so one bad quarter compounded
+  // (coverage-penalty interest + idle fixed costs) into certain death. A real operator
+  // retrenches: stop expanding, stop drawing, repay, mothball idle plant, and raise
+  // equity before the covenant breach — the classroom NPCs should model that. ----
+  const distressed = f.rounds_below_health >= 1 || f.cash < 80_000;
+  const effCap = f.cap + facilityCapacity(f, c, world.round);
+  // Capacity appetite ramps smoothly with forecast utilization: 0 below 55%, full
+  // above 90%. A binary gate at 0.85 neutered the scale-leaning personalities in the
+  // base game (rank 8.0 every seed) — the ramp keeps expansion alive near the margin
+  // while still refusing to build into a sagging forecast.
+  const capRamp = Math.max(0, Math.min(1, (expectedSold / Math.max(1, effCap) - 0.55) / 0.35));
+  const capTight = expectedSold > 0.75 * effCap; // lumpy facility builds keep a hard floor
+  // Revenue forecast for sizing discretionary plays: what the chosen plan expects to
+  // bill this round (used instead of cash — cash measures savings, not scale).
+  const forecastRev = chosen.reduce((a, p) => {
+    const sw = activeSegs.find((s) => s.id === p.seg);
+    return a + (sw ? Math.min(dOf(sw) * p.share, effCap) * p.price : 0);
+  }, 0);
 
   // How quality- vs cost-oriented is my chosen allocation?
   const totalPresence = Object.values(presence).reduce((a, b) => a + b, 0) || 1;
@@ -150,8 +182,11 @@ export function decideAdaptive(lean: Lean, f: FirmState, world: WorldState, c: C
   const mods = c.modules;
   let moduleCash = 0; // up-front cash these plays commit (reserved from the budget)
   // Shared per-round module budget (~40% of cash) so plays stagger over rounds
-  // rather than stacking into one round and starving core investment.
-  let moduleBudget = 0.4 * Math.max(0, f.cash);
+  // rather than stacking into one round and starving core investment. Sized against
+  // the REVENUE forecast, not cash — sizing against cash let a $200k-revenue firm
+  // blow $190k of savings on plays in one round, then thermostat into distress
+  // (measured 2-cycle, DW-041). A distressed firm makes no new plays at all.
+  let moduleBudget = distressed ? 0 : Math.min(0.4 * Math.max(0, f.cash), 30_000 + 0.3 * forecastRev);
   const commit = (cost: number): boolean => {
     if (cost > moduleBudget) return false;
     moduleBudget -= cost;
@@ -242,7 +277,10 @@ export function decideAdaptive(lean: Lean, f: FirmState, world: WorldState, c: C
   // lean, staged to a modest target (the shared market is a menu, not a fixed pool, so
   // this never starves the human's hiring options).
   const hireEmployees: string[] = [];
-  if (mods?.employees?.enabled && f.cash > 100_000) {
+  // Hire only when the payroll the roster would carry fits the firm's scale — a
+  // $200k-revenue firm has no business carrying three $18k salaries (DW-041).
+  const payroll = (f.employees ?? []).reduce((a, e) => a + e.salary, 0);
+  if (mods?.employees?.enabled && f.cash > 100_000 && payroll < 0.12 * forecastRev) {
     const have = (f.employees ?? []).length;
     const target = Math.min(lean.debtDraw >= 64_000 ? 3 : 2, mods.employees.max_employees);
     if (have < target) {
@@ -278,7 +316,10 @@ export function decideAdaptive(lean: Lean, f: FirmState, world: WorldState, c: C
     // Pace + reach: a site by r1, a second by r3, then aggressive/scale bots keep expanding.
     const target = lean.debtDraw >= 64_000 || lean.bias.cap >= 1.6 ? 5 : 3;
     const ready = have === 0 ? world.round >= 1 : have === 1 ? world.round >= 3 : world.round >= 5 && world.round % 2 === 1;
-    if (buildType && have < target && ready && f.cash > buildType.base_cost + 120_000) {
+    // Capacity discipline (DW-041): after the first site, expand only into demand the
+    // forecast supports — a plant built while utilization sags is a stranded asset.
+    const demandOk = have === 0 || capTight;
+    if (buildType && have < target && ready && demandOk && !distressed && f.cash > buildType.base_cost + 120_000) {
       const lot = mods.geography?.enabled ? pickLot(world, c, facMarket ?? "home", preferKind) : undefined;
       // With geography on, only build if we found a real parcel (lands on the map + feels catchment).
       if (!mods.geography?.enabled || lot) {
@@ -297,7 +338,9 @@ export function decideAdaptive(lean: Lean, f: FirmState, world: WorldState, c: C
   // M&A — the aggressive lean bids on a distressed rival at a fair-value price.
   let acquisitionBid: { target: string; price: number } | null = null;
   if (mods?.ma?.enabled && lean.debtDraw >= 64_000 && (f.acquisitions_made ?? 0) < mods.ma.max_acquisitions) {
-    const prey = rivals.filter((r) => r.rounds_below_health >= mods.ma!.min_distress_rounds).sort((a, b) => a.cash - b.cash)[0];
+    const prey = rivals
+      .filter((r) => r.rounds_below_health >= mods.ma!.min_distress_rounds && r.cash < c.scoring.cash_safety_threshold)
+      .sort((a, b) => a.cash - b.cash)[0];
     if (prey) {
       const price = Math.max(20_000, (mods.ma.min_price_fraction + 0.1) * Math.max(0, firmValuation(prey, c)));
       if (f.cash > price + 120_000) acquisitionBid = { target: prey.id, price };
@@ -323,21 +366,78 @@ export function decideAdaptive(lean: Lean, f: FirmState, world: WorldState, c: C
     Q: base * lean.bias.Q * qualityWeight,
     B: base * lean.bias.B * qualityWeight,
     process: base * lean.bias.process * (0.4 + costWeight) + resilienceBoost,
-    cap: base * lean.bias.cap * costWeight + maintenanceCapex(f, c),
+    // Generic capacity gets the same discipline as facilities: expansion scales with
+    // how hard the forecast presses on installed capacity; maintenance always funded.
+    cap: base * lean.bias.cap * costWeight * capRamp + maintenanceCapex(f, c),
     T_emp: base * lean.bias.T_emp * 0.5 + resilienceBoost * 0.5,
     T_inv: base * lean.bias.T_inv * 0.4,
     T_gov: base * lean.bias.T_gov * 0.4,
   };
 
+  // ---- Retrench actions (DW-041): deleverage, shed idle plant and payroll, and as
+  // a last resort raise equity — the moves the covenant runway exists to allow. ----
+  let debtRepay = 0;
+  let equityRaise = 0;
+  let bufferDraw = 0;
+  const mothball: string[] = [];
+  const reactivate: string[] = [];
+  const fireEmployees: string[] = [];
+  const equity = f.paid_in_capital + f.retained_earnings;
+  // Treasury: rebuild the cash buffer BEFORE the covenant tracker (and the M&A prey
+  // filter, both keyed on cash < safety) start counting rounds — lean cash with sound
+  // coverage is refinanceable, and sitting on an empty tank made viable firms
+  // permanent acquisition prey (30 of 47 removals were takeovers, DW-041).
+  if (f.cash < 150_000) {
+    if (f.debt / Math.max(equity, 1e-6) < 1.0) bufferDraw = 120_000;
+    else equityRaise = 120_000; // dilution beats being counted distressed
+  }
+  if (distressed) {
+    if (f.debt > 0 && f.cash > 160_000) debtRepay = Math.min(f.debt, 0.25 * (f.cash - 160_000));
+    if (f.cash < 60_000) equityRaise = Math.max(equityRaise, 150_000); // dilution beats a covenant breach
+    // Mothball the worst-condition active facility while capacity far outruns demand
+    // (keep at least one site online). No fixed cost, no capacity, reversible.
+    const active = (f.facilities ?? []).filter((x) => x.active && world.round >= x.online_round);
+    if (active.length > 1 && expectedSold < 0.6 * effCap) {
+      mothball.push([...active].sort((a, b) => a.condition - b.condition)[0].id);
+    }
+    // Payroll discipline: one hire per round goes when the roster outruns the firm
+    // (weakest skill first) — salaries are the stickiest opex line in the stack.
+    const emps = f.employees ?? [];
+    if (emps.length > 1) fireEmployees.push([...emps].sort((a, b) => a.skill - b.skill)[0].id);
+  } else {
+    // Even healthy, shed the weakest hire when payroll has outrun the revenue base.
+    const emps = f.employees ?? [];
+    if (emps.length > 1 && payroll > 0.18 * forecastRev) {
+      fireEmployees.push([...emps].sort((a, b) => a.skill - b.skill)[0].id);
+    }
+    // Recovered: bring mothballed plant back once the forecast presses on capacity.
+    const dormant = (f.facilities ?? []).filter((x) => !x.active);
+    if (dormant.length && capTight) reactivate.push(dormant[0].id);
+  }
+
   // Solvency guard. With inventory enabled, brewing is paid in cash up front
   // (recovered as COGS only when sold), so reserve that production bill before
   // committing the rest of the cash to discretionary investment.
   const total = Object.values(spend).reduce((a, b) => a + b, 0);
-  const equity = f.paid_in_capital + f.retained_earnings;
-  const drawRoom = f.debt / Math.max(equity, 1e-6) < c.finance.max_leverage * 0.7;
-  const draw = drawRoom ? lean.debtDraw : 0;
-  const prodReserve = (invCfg(c).enabled ? runRate * Math.max(0, f.cap) * unit : 0);
-  const budget = Math.max(0, Math.max(0, f.cash) * lean.cashGuard - prodReserve - moduleCash) + draw + drawRbf;
+  // Draw ceiling 0.5×max (leverage 1.5): the old 0.7× let the levered leans ride at
+  // 2.1× where one soft quarter trips the coverage-penalty spread and the interest
+  // bill compounds into the covenant (the measured DW-041 death spiral).
+  const drawRoom = !distressed && f.debt / Math.max(equity, 1e-6) < c.finance.max_leverage * 0.5;
+  const draw = drawRoom ? lean.debtDraw : 0; // bufferDraw stays OUT of the invest budget — it refills the tank
+  // Working-capital reserve for the brew bill (inventory mode pays production up front and
+  // recovers it as COGS when sold). The FULL bill is reserved deliberately. Known cost
+  // (DW-046 audit): leans whose guard × cash never clears the bill invest nothing and decay
+  // into cash-rich zombies (Q 1 / B 1 / cap 17k on $500k by r10). Every cheaper reserve
+  // tried — 35% of the bill, bill net of forecast revenue, bill paid from unguarded cash
+  // first, a 6%-of-cash maintenance floor — was measured to cut full-preset survival from
+  // 75% to 50–62% and push HHI past 0.3: the spending room feeds the winner-take-all
+  // spiral. Fixing zombies means re-balancing the leans, not the reserve — post-semester.
+  const prodReserve = invCfg(c).enabled ? runRate * Math.max(0, f.cap) * unit : 0;
+  const guard = distressed ? lean.cashGuard * 0.5 : lean.cashGuard; // half rations under distress
+  // NOTE (DW-042): reserves subtract from the guarded budget, not from cash before
+  // guarding — tried the latter, and the extra spending room it opened dropped the
+  // adaptive field's survival 22 points. The over-reservation IS the safety margin.
+  const budget = Math.max(0, Math.max(0, f.cash) * guard - prodReserve - moduleCash - debtRepay) + draw + drawRbf; // treasury raises refill the tank, not the invest budget
   if (total > budget && total > 0) {
     const scale = budget / total;
     spend = Object.fromEntries(Object.entries(spend).map(([k, v]) => [k, v * scale])) as typeof spend;
@@ -380,9 +480,9 @@ export function decideAdaptive(lean: Lean, f: FirmState, world: WorldState, c: C
     invest_T_emp: spend.T_emp,
     invest_T_inv: spend.T_inv,
     invest_T_gov: spend.T_gov,
-    debt_draw: draw,
-    debt_repay: 0,
-    equity_raise: 0,
+    debt_draw: draw + bufferDraw,
+    debt_repay: debtRepay,
+    equity_raise: equityRaise,
     dividend: 0,
     buy_info: shockSeason,
     agreement_actions: agreementActions,
@@ -396,7 +496,10 @@ export function decideAdaptive(lean: Lean, f: FirmState, world: WorldState, c: C
     buy_vertical: buyVertical,
     hire_roles: hireRoles,
     hire_employees: hireEmployees,
+    fire_employees: fireEmployees,
     build_facilities: buildFacilities,
+    mothball_facilities: mothball,
+    reactivate_facilities: reactivate,
     draw_rbf: drawRbf,
     acquisition_bid: acquisitionBid,
     lobby_spend: lobbySpend,
@@ -415,5 +518,7 @@ export const ADAPTIVE_LEANS: Lean[] = [
   { id: "ad_stakeholder", bias: { Q: 0.8, B: 0.8, process: 1.2, cap: 0.8, T_emp: 2.0, T_inv: 1.6, T_gov: 1.6 }, cashGuard: 0.4, debtDraw: 0 },
   { id: "ad_aggressive", bias: { Q: 1.2, B: 1.2, process: 1.2, cap: 2.0, T_emp: 0.6, T_inv: 0.6, T_gov: 0.4 }, cashGuard: 0.6, debtDraw: 64_000 },
   { id: "ad_lean_ops", bias: { Q: 0.6, B: 0.6, process: 1.8, cap: 1.0, T_emp: 1.4, T_inv: 0.6, T_gov: 0.6 }, cashGuard: 0.35, debtDraw: 0 },
-  { id: "ad_conservative", bias: { Q: 0.8, B: 0.8, process: 0.8, cap: 0.7, T_emp: 0.8, T_inv: 0.8, T_gov: 0.8 }, cashGuard: 0.25, debtDraw: 0 },
+  // cashGuard 0.25→0.32 (DW-041): at 0.25 this lean chronically under-invested in
+  // module games and finished below the fixed-cost floor — cautious, not comatose.
+  { id: "ad_conservative", bias: { Q: 0.8, B: 0.8, process: 0.8, cap: 0.7, T_emp: 0.8, T_inv: 0.8, T_gov: 0.8 }, cashGuard: 0.32, debtDraw: 0 },
 ];

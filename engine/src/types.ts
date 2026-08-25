@@ -573,6 +573,10 @@ export interface FacilitiesConfig {
   types: FacilityTypeConfig[];
   districts?: DistrictConfig[]; // siting options (optional)
   catchment?: CatchmentConfig; // Phase 2 spatial cannibalization (optional; absent ⇒ off)
+  // District brand draw saturates as B grows: boost × halfsat/(halfsat+B) — same guard
+  // as EmployeesConfig.stock_halfsat, for the same DW-041 reason (a downtown portfolio
+  // otherwise pumps B linearly forever). Absent ⇒ no saturation (legacy behavior).
+  brand_halfsat?: number;
 }
 /** One owned facility (FirmState.facilities) — named, condition-tracked. */
 export interface Facility {
@@ -612,6 +616,12 @@ export interface EmployeesConfig {
   starting_satisfaction: number; // satisfaction a new hire starts at (0..1)
   tenure_bump: number; // satisfaction lift at tenure milestones (rounds 3/6/10)
   poach_base: number; // base per-round chance a dissatisfied hire is poached
+  // Employee gains saturate as the stock they feed grows: gain × halfsat/(halfsat+stock).
+  // The base game's invest channels are sqrt-concave; without this, a staffed-up firm's
+  // LINEAR per-round inflow compounds past anything investment can reach (Q>120 at end
+  // vs ~40 in the base game) and the logit demand turns that into winner-take-all
+  // (DW-041 all-modules collapse). Absent ⇒ no saturation (legacy behavior).
+  stock_halfsat?: number;
 }
 /** A hireable candidate in the round's market (pre-hire; deterministic per round). */
 export interface Candidate {
@@ -681,6 +691,26 @@ export interface ModulesConfig {
   marketConduct: MarketConductConfig; // MOD-A10 — stakeholder/regulatory backlash (see engine/conduct.ts)
 }
 
+export type ScorecardComponent = "financial" | "market" | "intangible" | "stakeholder";
+
+/** Scoring-layer §4 — a named discipline penalty: a scalar in (0, 1] multiplying ONE
+ *  raw sub-metric of ONE component, applied BEFORE within-round normalization (raw
+ *  space), so the penalty competes on the same scale as the underlying performance.
+ *  The registry ships empty and disabled; a future mechanic (e.g. the inventory
+ *  decision) slots in as config, not as an engine change. */
+export interface ScoringPenalty {
+  id: string;
+  component: ScorecardComponent;
+  /** Which raw series the multiplier applies to. The three financial sub-metrics are
+   *  addressable individually; the other components are single-series. */
+  submetric: "profitability" | "soundness" | "cash_resilience" | "market" | "intangible" | "stakeholder";
+  form: "linear_ratio"; // p = 1 − clamp(numerator/denominator, 0, max_bite)
+  numerator: string; // key into the per-firm metric bag the engine already emits
+  denominator: string;
+  max_bite: number; // in (0, 1]; the multiplier floors at 1 − max_bite
+  enabled: boolean;
+}
+
 export interface ScoringConfig {
   weights: { financial: number; market: number; intangible: number; stakeholder: number };
   accumulation: "round_average" | "auc";
@@ -689,6 +719,21 @@ export interface ScoringConfig {
   cash_safety_threshold: number;
   healthy_coverage: number;
   healthy_leverage: number;
+  // ── Scoring-layer additions (06_scoring_layer_spec). All optional; absent or at
+  // defaults, engine output is identical to the pre-layer implementation (gate §8.1).
+  /** §2 accumulation window: excluded rounds still resolve and publish — they simply
+   *  don't enter the running scorecard average. drop_first and tail_only are mutually
+   *  exclusive (the loader throws if both are set). */
+  accumulation_window?: { drop_first?: number; tail_only?: number | null };
+  /** §3 terminal-round weight λ ∈ [0, 0.5]: Score = (1−λ)·sustained + λ·final-round.
+   *  0 (default) = pure sustained. λ > 0 reopens the liquidation exploit by
+   *  construction — the loader warns above 0.25 and the harness gate must hold. */
+  terminal_weight?: number;
+  /** §4 discipline penalties. Ships empty. */
+  penalties?: ScoringPenalty[];
+  /** §5 absolute benchmark bands per raw sub-metric — DISPLAY ONLY, never scored.
+   *  Mutating them must leave every score, rank and export unchanged (gate §8.6). */
+  benchmark_bands?: Record<string, { weak: number; sound: number; strong: number }>;
 }
 
 export interface Config {
@@ -1083,6 +1128,14 @@ export interface FirmRoundResult {
   scorecard_raw: { financial: number; market: number; intangible: number; stakeholder: number };
   scorecard_norm: { financial: number; market: number; intangible: number; stakeholder: number };
   scorecard_cumulative: number;
+  /** Scoring-layer §9. scored=false ⇒ the round resolved and published but was
+   *  excluded from the accumulation window (§2). The bridge decomposes this round's
+   *  change in headline score into exactly-attributable per-component bars (plus the
+   *  terminal-blend bar on the final round); bars sum to the delta with zero
+   *  residual. penalty_multipliers records each enabled penalty's realized scalar. */
+  scored?: boolean;
+  scorecard_bridge?: { financial: number; market: number; intangible: number; stakeholder: number; terminal: number };
+  penalty_multipliers?: Record<string, number>;
   distinctiveness: { mahalanobis: number; nearest_neighbor: number } | null;
   valuation: number;
   info_purchased: boolean;

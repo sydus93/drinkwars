@@ -15,6 +15,10 @@ const SHOCK_LABEL: Record<string, string> = {
   water: "Water shortage",
   harvest: "Harvest failure",
   co2: "CO₂ & packaging squeeze",
+  demand_slump: "Recession",
+  craft_wave: "Festival season",
+  health_shift: "Health & wellness shift",
+  na_moment: "Non-alcoholic goes mainstream",
 };
 const SHOCK_KIND: Record<string, string> = {
   cost_spike: "input costs spike",
@@ -233,7 +237,7 @@ const RULES: Rule[] = [
     kind: "shock",
     title: (m) => SHOCK_LABEL[m[1].toLowerCase()] ?? "Market disruption",
     body: (_r, m) => {
-      const label = SHOCK_LABEL[m[1].toLowerCase()] ?? "A supply shock";
+      const label = SHOCK_LABEL[m[1].toLowerCase()] ?? "A market shock";
       const where = m[4] ? ` in ${m[4]}` : "";
       if (!m[2]) return `${label} just hit${where ? where : " the market"}.`;
       return `${label}${where}: ${SHOCK_KIND[m[2]] ?? "the market is disrupted"} ${severity(+m[3])} this round${where ? " for producers there" : ""}.`;

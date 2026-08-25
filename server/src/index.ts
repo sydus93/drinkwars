@@ -9,3 +9,4 @@ export { GameOrchestrator, LifecycleError, type CreateGameInput } from "./lifecy
 export { InMemoryAdapter } from "./adapters/memory.js";
 export { randomBreweryNames, renameFirms } from "./names.js";
 export { SupabaseAdapter, createSupabaseAdapter } from "./adapters/supabase.js";
+export { withRequestCache } from "./request-cache.js";

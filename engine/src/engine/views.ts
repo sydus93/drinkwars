@@ -9,7 +9,7 @@
 import type {
   AgreementTerms, ClauseAction, ClauseCondition, Config, FirmId, FirmRoundResult, FirmState, GovernanceForm, MarketKind, RegulationType, RoundResult, SegmentId, TemplateId, WorldState,
 } from "../types.js";
-import { activeMarkets } from "./geography.js";
+import { activeMarkets, marketDemandScale } from "./geography.js";
 import { firmValuation } from "./finance.js";
 
 export interface AllianceClauseSummary {
@@ -165,7 +165,7 @@ export function projectMarkets(
           if (fr.firm_id === firmId) yourShare = bs.share;
           if (bs.share > leaderShare) { leaderShare = bs.share; leader = fr.firm_id; }
         }
-        return { id: s.id, size: Math.round(s.D * m.demand_mult), leader, leaderShare, yourShare };
+        return { id: s.id, size: Math.round(s.D * marketDemandScale(m, c, world.round)), leader, leaderShare, yourShare };
       });
     let totalQ = 0, yourQ = 0;
     for (const fr of lastFirmResults) {
@@ -223,6 +223,16 @@ export interface OwnTrendView {
   round: number; cash: number; score: number; rank: number; share: number; Q: number; B: number; netIncome: number; equity: number;
   // Ratio-panel inputs (DW-037 CFO financials — all the viewer's own private figures):
   revenue: number; gross: number; ebit: number; interest: number; debt: number; assets: number; unitsSold: number;
+  // Scorecard panel inputs (DW-045 — own figures only). norm = within-round z per
+  // component (the viewer's position vs the pack); raw = pre-normalization values
+  // (direction of raw vs direction of norm is the "field moved, not you" guard);
+  // bridge = this round's headline delta decomposed (bars sum exactly); scored =
+  // whether the round entered the accumulation window.
+  scoreNorm: { financial: number; market: number; intangible: number; stakeholder: number } | null;
+  scoreRaw: { financial: number; market: number; intangible: number; stakeholder: number } | null;
+  scoreBridge: { financial: number; market: number; intangible: number; stakeholder: number; terminal: number } | null;
+  scored: boolean;
+  coverage: number; T_emp: number; T_inv: number; T_gov: number;
 }
 export interface FieldTrendView { round: number; topScore: number; medianScore: number; totalQ: number; activeFirms: number }
 const median = (xs: number[]): number => { if (!xs.length) return 0; const s = [...xs].sort((a, b) => a - b); const m = Math.floor(s.length / 2); return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
@@ -237,6 +247,9 @@ export function projectHistory(records: { round: number; result: RoundResult }[]
       own: {
         round: rr.round, cash: ownFr?.balance_sheet.cash ?? 0, score: ownFr?.scorecard_cumulative ?? 0, rank: ranked.findIndex((f) => f.firm_id === viewerId) + 1, share: ownFr ? Object.values(ownFr.segments).reduce((a, s) => a + s.share, 0) : 0, Q: ownFr?.state.Q ?? 0, B: ownFr?.state.B ?? 0, netIncome: ownFr?.pnl.net_income ?? 0, equity: ownFr?.balance_sheet.equity ?? 0,
         revenue: ownFr?.pnl.revenue ?? 0, gross: ownFr?.pnl.gross ?? 0, ebit: ownFr?.pnl.ebit ?? 0, interest: ownFr?.pnl.interest ?? 0, debt: ownFr?.balance_sheet.debt ?? 0, assets: ownFr?.balance_sheet.assets ?? 0, unitsSold: ownFr ? Object.values(ownFr.segments).reduce((a, s) => a + s.q_sold, 0) : 0,
+        scoreNorm: ownFr?.scorecard_norm ?? null, scoreRaw: ownFr?.scorecard_raw ?? null,
+        scoreBridge: ownFr?.scorecard_bridge ?? null, scored: ownFr?.scored ?? true,
+        coverage: ownFr?.cost_of_capital.coverage ?? 0, T_emp: ownFr?.state.T_emp ?? 0, T_inv: ownFr?.state.T_inv ?? 0, T_gov: ownFr?.state.T_gov ?? 0,
       },
       field: { round: rr.round, topScore: Math.max(...scores, 0), medianScore: median(scores), totalQ: rr.result.market.reduce((a, m) => a + m.total_q, 0), activeFirms: rr.result.firm_results.filter((f) => f.status === "active").length },
     };

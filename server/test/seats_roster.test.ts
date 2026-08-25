@@ -206,3 +206,100 @@ test("claim-based join links the roster user, and the game shows in 'my games'",
   assert.equal(mine[0].title, "Fall 26 · Game 2");
   assert.equal(mine[0].nRounds, 5);
 });
+
+test("DW-039: every team seat is a named chair — the founder takes the CEO's", async () => {
+  const { config, store, orch } = teamGame();
+  const code = GameOrchestrator.makeJoinCode();
+  const gameId = await orch.createGame({ config, joinCode: code, firmMode: "team", teams: [{ name: "F1" }, { name: "F2" }, { name: "F3" }] });
+  const firm = (await store.getTeams(gameId))[0];
+
+  // A founder who picks nothing is seated as CEO — not left as an unnamed generalist.
+  const founder = await orch.joinGame(code, "Ana", "u-founder", { teamId: firm.id, teamName: "Sediment Co." });
+  assert.equal(founder.role, "ceo", "founder is seated at the CEO's chair");
+  assert.equal(await store.getMemberRole(firm.id, "u-founder"), "ceo");
+
+  // ...so the chair is now occupied. Nobody else can hold a second whole-firm desk.
+  await assert.rejects(
+    () => orch.joinGame(code, "Ben", "u-ben", { teamId: firm.id, role: "ceo" }),
+    /CEO seat is already taken/,
+    "a second CEO would clobber the founder's desks in the merge",
+  );
+  await assert.rejects(
+    () => orch.joinGame(code, "Ben", "u-ben", { teamId: firm.id }),
+    /pick a C-suite seat/,
+    "and a seatless join is still refused",
+  );
+
+  // The brewery name and the founder's name are separate records.
+  assert.equal((await store.getTeam(firm.id))!.name, "Sediment Co.", "firm keeps the brewery name");
+  assert.equal((await store.getUser("u-founder"))!.display_name, "Ana", "the person keeps their own name");
+
+  // Fill the remaining four chairs, then the sixth student has nowhere to sit.
+  for (const [uid, role] of [["u-b", "cfo"], ["u-c", "cmo"], ["u-d", "coo"], ["u-e", "chro"]] as const) {
+    await orch.joinGame(code, uid, uid, { teamId: firm.id, role });
+  }
+  await assert.rejects(
+    () => orch.joinGame(code, "Sixth", "u-f", { teamId: firm.id, role: "cfo" }),
+    /full — all 5 C-suite seats are taken/,
+  );
+
+  // A generalist founder still covers every desk alone: one seat, whole firm.
+  const solo = (await store.getTeams(gameId))[1];
+  const lone = await orch.joinGame(code, "Kit", "u-kit", { teamId: solo.id, teamName: "Lone Pine" });
+  assert.equal(lone.role, "ceo");
+  await orch.submitMemberDecision(gameId, solo.id, "u-kit", { price: { mass: 7 }, debt_draw: 100, invest_Q: 25 });
+  const composed = (await store.getDecision(gameId, 0, solo.id))!.decision;
+  assert.equal((composed.price as Record<string, number>).mass, 7, "CEO writes the commercial desk");
+  assert.equal(composed.debt_draw, 100, "…and finance");
+  assert.equal(composed.invest_Q, 25, "…and operations");
+});
+
+test("DW-039: no-show keeps trading on the standing plan, one-shots don't repeat", async () => {
+  const { config, store, orch } = teamGame();
+  const code = GameOrchestrator.makeJoinCode();
+  const gameId = await orch.createGame({ config, joinCode: code, firmMode: "team", teams: [{ name: "F1" }, { name: "F2" }, { name: "F3" }] });
+  const teams = await store.getTeams(gameId);
+  const ghost = teams[0];
+  await orch.joinGame(code, "Ana", "u-ghost", { teamId: ghost.id, teamName: "Ghost Brewing" });
+  await orch.joinGame(code, "Ben", "u-ben", { teamId: teams[1].id, teamName: "Steady Co." });
+
+  // Round 0: a real plan, including a one-shot debt draw.
+  await orch.submitMemberDecision(gameId, ghost.id, "u-ghost", { price: { mass: 7.25, niche: 8.5 }, presence: { mass: 1, niche: 1 }, invest_B: 15_000, debt_draw: 50_000 });
+  await orch.submitMemberDecision(gameId, teams[1].id, "u-ben", { price: { mass: 7.25, niche: 8.5 }, presence: { mass: 1, niche: 1 } });
+  await orch.lockRound(gameId);
+  await orch.resolveRound(gameId);
+  await orch.advanceRound(gameId);
+
+  // Round 1: the ghost team submits nothing at all.
+  const nonSubmitters = await orch.lockRound(gameId);
+  assert.ok(nonSubmitters.includes(ghost.id), "still flagged as a non-submitter");
+  await orch.resolveRound(gameId);
+
+  const filled = (await store.getDecision(gameId, 1, ghost.id))!;
+  assert.equal(filled.submitted, false, "the non-submission signal is preserved for grading/research");
+  assert.equal((filled.decision.price as Record<string, number>).mass, 7.25, "last quarter's price stands");
+  assert.equal((filled.decision.presence as Record<string, number>).mass, 1, "the firm stays in its markets");
+  assert.equal(filled.decision.invest_B, 15_000, "standing brand spend carries");
+  assert.equal(filled.decision.debt_draw, 0, "but the one-shot draw does NOT fire again");
+
+  // And it actually sold beer, rather than going dark for the quarter.
+  const rr = (await store.getRoundResult(gameId, 1))!;
+  const fr = rr.result.firm_results.find((f) => f.firm_id === ghost.firm_id)!;
+  assert.ok(fr.pnl.revenue > 0, `a no-show firm keeps trading (revenue ${fr.pnl.revenue})`);
+});
+
+test("DW-039: noShowPolicy 'zero' still withdraws the firm, for instructors who want the penalty", async () => {
+  const config = loadConfig({ game: { n_firms: 3, n_rounds: 5 } } as never);
+  const store = new InMemoryAdapter();
+  const orch = new GameOrchestrator(store, () => 1000, { noShowPolicy: "zero" });
+  const code = GameOrchestrator.makeJoinCode();
+  const gameId = await orch.createGame({ config, joinCode: code, firmMode: "team", teams: [{ name: "F1" }, { name: "F2" }, { name: "F3" }] });
+  const teams = await store.getTeams(gameId);
+  await orch.joinGame(code, "Ana", "u-a", { teamId: teams[0].id });
+  await orch.joinGame(code, "Ben", "u-b", { teamId: teams[1].id });
+  await orch.submitMemberDecision(gameId, teams[1].id, "u-b", { price: { mass: 7 }, presence: { mass: 1 } });
+  await orch.lockRound(gameId);
+  await orch.resolveRound(gameId);
+  const zeroed = (await store.getDecision(gameId, 0, teams[0].id))!;
+  assert.equal((zeroed.decision.presence as Record<string, number>).mass, 0, "zero policy withdraws the firm");
+});

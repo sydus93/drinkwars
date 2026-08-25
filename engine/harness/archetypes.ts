@@ -67,7 +67,11 @@ function mkDecision(f: FirmState, world: WorldState, c: Config, p: Profile): Fir
   for (const s of targets) {
     presence[s] = focusActive.length ? (p.focus[s] ?? 0) : 1;
     const mk = typeof p.markup === "number" ? p.markup : p.markup[s] ?? 1.5;
-    price[s] = unit * mk;
+    // Premium prices are EARNED (DW-042): a persona asking a >1.9× markup charges it
+    // only as its quality stock justifies it — $11 pours with a round-0 product was
+    // an every-seed round-2 bankruptcy. Deterministic ramp, identity unchanged.
+    const eff = mk > 1.9 ? Math.min(mk, 1.55 + 0.02 * Math.max(0, f.Q)) : mk;
+    price[s] = unit * eff;
   }
 
   // Discretionary spend with a solvency guard so archetypes don't insta-bankrupt.
@@ -87,8 +91,12 @@ function mkDecision(f: FirmState, world: WorldState, c: Config, p: Profile): Fir
   // into one round and bleeding out.
   const mods = c.modules;
   const mp = p.modules ?? {};
+  // Runway throttle (DW-042): a persona never repositions (that's its job in the §16
+  // detectors), but no player of any skill holds a full investment budget while the
+  // cash gauge drains — spending tapers as cash falls, full posture above ~$400k.
+  const runway = Math.min(1, Math.max(0.15, (Math.max(0, f.cash) - 60_000) / 340_000));
   let moduleCash = 0;
-  let moduleBudget = 0.35 * Math.max(0, f.cash);
+  let moduleBudget = 0.35 * Math.max(0, f.cash) * runway;
   const commit = (cost: number): boolean => {
     if (cost > moduleBudget) return false;
     moduleBudget -= cost;
@@ -150,9 +158,22 @@ function mkDecision(f: FirmState, world: WorldState, c: Config, p: Profile): Fir
 
   const total = Object.values(spend).reduce((a, b) => a + b, 0);
   // Reserve the up-front brewing bill (inventory mode) before discretionary spend.
-  const runRate = p.run_rate ?? 0.9;
+  // Brew to a crude demand estimate (DW-042): an even split of the segments this
+  // persona targets, with 30% headroom. A fixed run-rate was calibrated for the old
+  // supply-short economy where everything sold; with flat demand, brewing 0.75×cap
+  // into a segment that buys 5% of it was a three-round cash death (production is
+  // paid up front, unsold stock spoils). Personas keep prices and segments fixed —
+  // this is production planning, not repositioning.
+  const activeFirms = Math.max(1, world.firms.filter((x) => x.status === "active").length);
+  const targetD = activeSegs.reduce((a, s) => a + ((presence[s] ?? 0) > 0 ? (world.segments.find((x) => x.id === s)?.D ?? 0) : 0), 0);
+  const demandCap = (1.3 * targetD) / activeFirms;
+  const runRate = Math.max(0.3, Math.min(p.run_rate ?? 0.9, demandCap / Math.max(1, f.cap)));
   const prodReserve = (invCfg(c).enabled ? runRate * Math.max(0, f.cap) * unit : 0);
-  const budget = Math.max(0, Math.max(0, f.cash) * (p.cash_guard ?? 0.35) - prodReserve - moduleCash) + (p.debt_draw ?? 0);
+  // Production is a committed cost — reserve it off TOTAL cash first, then invest a
+  // guarded fraction of what remains (DW-042). Reserving it inside the guard envelope
+  // meant a normal brew bill zeroed the invest budget and the persona's stocks
+  // decayed to uncompetitive within three rounds.
+  const budget = Math.max(0, (Math.max(0, f.cash) - prodReserve - moduleCash) * (p.cash_guard ?? 0.35) * runway) + (p.debt_draw ?? 0) * runway;
   if (total > budget && total > 0) {
     const scale = budget / total;
     spend = Object.fromEntries(Object.entries(spend).map(([k, v]) => [k, v * scale])) as typeof spend;
@@ -191,13 +212,17 @@ function mkDecision(f: FirmState, world: WorldState, c: Config, p: Profile): Fir
 
 const PROFILES: Record<ArchetypeId, Profile> = {
   balanced: { focus: { mass: 1, niche: 1, frontier: 1 }, markup: { mass: 1.8, niche: 2.1, frontier: 2.0 }, invest: { Q: 12_000, B: 12_000, process: 10_000, T_emp: 6_000, T_inv: 4_000, T_gov: 4_000 }, modules: { goods: { regional_marketing: 4_000 }, hire: "head_brewer" } },
-  cost_leader: { focus: { mass: 1 }, markup: 1.5, invest: { cap: 16_000, process: 28_000, T_emp: 8_000 }, cash_guard: 0.5, run_rate: 1.0, modules: { vertical: "upstream", region: "heartland", hire: "ops_manager" } },
-  differentiator: { focus: { niche: 1, frontier: 1 }, markup: 2.2, invest: { Q: 28_000, B: 16_000, T_emp: 4_000 }, run_rate: 0.8, modules: { rnd: 20_000, pr: "collab", region: "coastal", hire: "head_brewer" } },
+  cost_leader: { focus: { mass: 1 }, markup: 1.5, invest: { cap: 16_000, process: 28_000, T_emp: 8_000, Q: 4_000 }, cash_guard: 0.5, run_rate: 1.0, modules: { vertical: "upstream", region: "heartland", hire: "ops_manager" } }, // token QC line (DW-042): a real cost leader still passes inspection; zero-Q was a mid-game death in drifted module games
+  // Premium markups trimmed 2.2/2.4→2.0/2.05 (DW-042): under the old supply-short
+  // economy, rationing spill fed even an overpriced specialist; with flat demand and
+  // walking customers a 2.4× flat markup was insolvent by round 2 in every seed.
+  // These stay the premium-price personas — just at prices a real snob could pay.
+  differentiator: { focus: { niche: 1, frontier: 1 }, markup: 2.0, invest: { Q: 28_000, B: 16_000, T_emp: 4_000 }, run_rate: 0.8, modules: { rnd: 20_000, pr: "collab", region: "coastal", hire: "head_brewer" } },
   brand_builder: { focus: { mass: 1, niche: 1, frontier: 1 }, markup: 1.9, invest: { B: 32_000, Q: 8_000, T_emp: 4_000 }, modules: { pr: "viral", hire: "sales_director" } },
   stakeholder: { focus: { mass: 1, niche: 1 }, markup: 1.8, invest: { T_emp: 16_000, T_inv: 12_000, T_gov: 12_000, process: 12_000 }, modules: { water: 12_000, goods: { regional_marketing: 4_000, water_commons: 6_000 }, vertical: "downstream", lobby: { initiative: "craft_promotion", spend: 12_000 } } },
   aggressive: { focus: { mass: 1, niche: 1 }, markup: 1.6, invest: { cap: 36_000, Q: 10_000, B: 10_000 }, debt_draw: 60_000, cash_guard: 0.6, run_rate: 1.0, modules: { region: "export_asia", vertical: "upstream" } },
   conservative: { focus: { mass: 1 }, markup: 1.9, invest: { Q: 6_000, B: 6_000 }, debt_repay: 12_000, cash_guard: 0.2, run_rate: 0.75, modules: { water: 12_000 } },
-  niche_specialist: { focus: { niche: 1, frontier: 1 }, markup: 2.4, invest: { Q: 36_000, B: 16_000 }, run_rate: 0.75, modules: { rnd: 24_000, region: "coastal" } },
+  niche_specialist: { focus: { niche: 1, frontier: 1 }, markup: 2.05, invest: { Q: 36_000, B: 16_000 }, run_rate: 0.75, modules: { rnd: 24_000, region: "coastal" } },
   cartel_member: { focus: { mass: 1, niche: 1 }, markup: 2.0, invest: { Q: 16_000, B: 16_000, T_gov: 24_000 }, modules: { goods: { regional_marketing: 8_000 }, vertical: "downstream", lobby: { initiative: "quality_standards", spend: 16_000 }, pact: { form: "formal", template: "capacity_coordination", clause: { condition: "harvest_shock", action: "suspend" } } } },
   defector: { focus: { mass: 1, niche: 1 }, markup: 1.7, invest: { Q: 20_000, B: 20_000 }, modules: { pr: "festival" } },
 };

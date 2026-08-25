@@ -101,7 +101,9 @@ export function resolveEmployees(world: WorldState, decisions: Map<FirmId, FirmD
       }
       target.employees.splice(idx, 1);
       target.T_emp = Math.max(0, target.T_emp - 1);
-      poacher.employees.push({ ...e, salary: offer, satisfaction: 0.6, tenure_rounds: 0, hired_round: round });
+      // Employee ids are only unique WITHIN a firm (`emp_<round>_<n>`), so a poached person
+      // is re-keyed on arrival — otherwise a later raise/fire by id could hit the wrong person.
+      poacher.employees.push({ ...e, id: `${e.id}_via_${p.firm}_${round}`, salary: offer, satisfaction: 0.6, tenure_rounds: 0, hired_round: round });
       out.opexByFirm.set(poacher.id, (out.opexByFirm.get(poacher.id) ?? 0) + offer); // signing premium
       out.events.push(`POACHED: ${poacher.id} lures ${e.name} away from ${p.firm}`);
     }
@@ -171,8 +173,12 @@ export function resolveEmployees(world: WorldState, decisions: Map<FirmId, FirmD
       const role = roleById.get(e.role);
       if (!role) continue;
       opex += e.salary;
-      // Contribution: skill, scaled by how engaged they are.
-      f[role.primary_stock as EmployeeStock] += e.skill * role.gain_per_skill * e.satisfaction;
+      // Contribution: skill, scaled by how engaged they are — saturating in the stock
+      // it feeds (stock_halfsat), so a staffed-up firm can't compound linearly past
+      // the sqrt-concave invest channels (DW-041).
+      const cur = f[role.primary_stock as EmployeeStock];
+      const sat = cfg.stock_halfsat != null ? cfg.stock_halfsat / (cfg.stock_halfsat + Math.max(0, cur)) : 1;
+      f[role.primary_stock as EmployeeStock] = cur + e.skill * role.gain_per_skill * e.satisfaction * sat;
       // Satisfaction drift: pay vs market, tenure milestones, firm distress.
       let ds = e.salary >= marketRate(role.base_salary, e.skill) ? 0.03 : -0.06;
       e.tenure_rounds += 1;

@@ -14,6 +14,7 @@
     "supabase:smoke": "tsx src/supabase-smoke.ts",
     "supabase:join": "tsx src/supabase-join-smoke.ts",
     "dashboard:smoke": "tsx src/dashboard-smoke.ts",
+    "classroom:smoke": "tsx src/classroom-smoke.ts",
     "test": "tsx --test test/*.test.ts",
     "typecheck": "tsc --noEmit",
     "build:edge": "esbuild src/edge-core.ts --bundle --format=esm --platform=neutral --external:@supabase/supabase-js --outfile=supabase/functions/drinkwars/drinkwars-core.js",

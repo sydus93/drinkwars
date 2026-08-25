@@ -60,6 +60,11 @@ export const SHOCK_META: Record<string, { label: string; icon: string; note: str
   water: { label: "Water shortage", icon: "💧", note: "drives up input costs" },
   harvest: { label: "Harvest failure", icon: "🌾", note: "drives up input costs" },
   co2: { label: "CO₂ & packaging squeeze", icon: "📦", note: "constrains capacity" },
+  // DW-044 gamemaster demand events (never roll on their own — planted by the instructor).
+  demand_slump: { label: "Recession", icon: "📉", note: "demand softens across the board" },
+  craft_wave: { label: "Festival season", icon: "🎉", note: "demand surges across the board" },
+  health_shift: { label: "Health & wellness shift", icon: "🥤", note: "drinkers turn away from legacy beer" },
+  na_moment: { label: "Non-alcoholic goes mainstream", icon: "✨", note: "demand for the new category jumps" },
 };
 
 export const STOCK_LABEL = {

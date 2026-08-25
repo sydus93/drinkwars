@@ -13,6 +13,14 @@ import type { WorldState } from "drinkwars-engine";
 const key = (...parts: (string | number)[]) => parts.join("::");
 const clone = <T>(x: T): T => structuredClone(x);
 
+/** Append-or-replace by natural key — mirrors the Supabase adapter's upsert-on-PK so a
+ *  retried resolve is idempotent in both stores. */
+function replaceByKey<T>(arr: T[], rows: T[], keyOf: (r: T) => string): void {
+  const incoming = new Map(rows.map((r) => [keyOf(r), clone(r)]));
+  for (let i = 0; i < arr.length; i++) { const k = keyOf(arr[i]); if (incoming.has(k)) { arr[i] = incoming.get(k)!; incoming.delete(k); } }
+  arr.push(...incoming.values());
+}
+
 export class InMemoryAdapter implements StorageAdapter {
   private games = new Map<string, GameRecord>();
   private users = new Map<string, UserRecord>();

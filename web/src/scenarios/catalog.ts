@@ -134,7 +134,7 @@ export const SCENARIOS: Scenario[] = [
     horizon: 4,
     override: {
       game: { n_rounds: 4 },
-      // Start rich in intangibles (10→26) but crank Q/B depreciation 0.18→0.40 so
+      // Start rich in intangibles (10→26) but crank Q/B depreciation (0.18/0.21→0.40) so
       // the melt is the story. Investment gains stay at baseline: fighting the
       // decay is possible, just expensive. Everything else neutralized.
       init: { starting_Q: 26, starting_B: 26 },
@@ -204,11 +204,12 @@ export const SCENARIOS: Scenario[] = [
     horizon: 4,
     override: {
       game: { n_rounds: 4 },
-      // High starting leverage (debt 80k→320k against ~140k opening equity ⇒
-      // D/E ≈ 2.3 vs. the 3.0 cap) + a harsher spread curve and coverage trigger,
+      // High starting leverage: debt 80k→390k against cash 300k + plant book (64k units × $4)
+      // ⇒ opening equity ≈ 166k, D/E ≈ 2.35 vs. the 3.0 cap — one bad quarter from the
+      // credit cliff — + a harsher spread curve and coverage trigger,
       // + a TELEGRAPHED deterministic cost spike in round 2 (signaled_noisy: the
       // lesson is balance-sheet structure, not surprise).
-      init: { starting_cash: 300_000, starting_debt: 320_000 },
+      init: { starting_cash: 300_000, starting_debt: 390_000 },
       finance: { spread_leverage_k: 0.12, coverage_threshold: 2.0, coverage_penalty_spread: 0.18 },
       shocks: {
         types: [scheduledShock({ id: "harvest", kind: "cost_spike", round: 2, magnitude: 0.5, duration: 2, signaling: "signaled_noisy", mitigated: false })],
@@ -320,12 +321,12 @@ export const SCENARIOS: Scenario[] = [
     horizon: 4,
     override: {
       game: { n_rounds: 4 },
-      // A bleeding start: thin cash, heavy debt, oversized plant, structurally
-      // underwater costs (c_base 5.0→6.2 against ~$7 pours + doubled overhead)
-      // in a SHRINKING market. Exit economics cranked: generous recovery if you
-      // fold cleanly and early (0.85), but it decays 40%/distressed round, and
-      // bankruptcy pays almost nothing (0.05).
-      init: { starting_cash: 140_000, starting_debt: 300_000, starting_cap: 48_000 },
+      // A bleeding start: thin cash, heavy debt, an OVERSIZED plant (96k units against a
+      // 64k default, into a shrinking market), structurally underwater costs (c_base
+      // 5.0→6.2 against ~$7 pours + doubled overhead). Exit economics cranked: generous
+      // recovery if you fold cleanly and early (0.85), but it decays 40%/distressed round,
+      // and bankruptcy pays almost nothing (0.05).
+      init: { starting_cash: 140_000, starting_debt: 300_000, starting_cap: 96_000 },
       costs: { c_base: 6.2 },
       finance: { fixed_overhead: 48_000 },
       exit: { base_recovery: 0.85, liquidation_decay: 0.4, bankruptcy_recovery: 0.05 },

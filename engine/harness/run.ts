@@ -6,8 +6,9 @@
  */
 import type { Config, FirmDecision, ModuleId, RoundResult, SegmentId, WorldState } from "../src/types.js";
 import { initGame, resolveRound, InvariantError } from "../src/index.js";
+import { facilityCapacity } from "../src/engine/facilities.js";
 import { loadConfig } from "../src/config/load.js";
-import { MODULE_REGISTRY } from "../src/config/modules.js";
+import { MODULE_REGISTRY, presetById } from "../src/config/modules.js";
 import { type ArchetypeId, BASELINE_ASSIGNMENT, makeProvider } from "./archetypes.js";
 import { ADAPTIVE_LEANS, decideAdaptive } from "./adaptive.js";
 
@@ -23,6 +24,11 @@ export interface FirmRoundMetric {
   equity: number;
   ni: number;
   status: string;
+  /** Installed capacity going into the round: the generic stock PLUS whatever the firm's
+   *  online facilities contribute (resolve.ts uses the same sum). FirmRoundResult only
+   *  reports `state.cap`, which is the generic stock alone and understates a facilities
+   *  game badly — the calibration harness needs the real denominator for utilization. */
+  effectiveCap: number;
 }
 
 export interface RunMetrics {
@@ -43,12 +49,15 @@ export interface RunMetrics {
 
 export function configWithSeed(seed: number, override: Parameters<typeof loadConfig>[0] = {}): Config {
   const base = typeof override === "object" ? override : {};
-  // DW_MODULES=all (every implemented module) or a comma list of module ids —
-  // lets the whole harness sweep an expansion configuration without code changes.
+  // DW_MODULES=all (every implemented module), a preset id (e.g. "full" — what the
+  // instructor picker actually ships, which since DW-042 excludes asymmetricStarts),
+  // or a comma list of module ids — lets the whole harness sweep an expansion
+  // configuration without code changes.
   let modules: Record<string, { enabled: boolean }> | undefined;
   const env = process.env.DW_MODULES;
   if (env) {
-    const ids = env === "all" ? MODULE_REGISTRY.filter((m) => m.implemented).map((m) => m.id) : (env.split(",") as ModuleId[]);
+    const preset = presetById(env);
+    const ids = env === "all" ? MODULE_REGISTRY.filter((m) => m.implemented).map((m) => m.id) : preset ? preset.modules : (env.split(",") as ModuleId[]);
     modules = {};
     for (const id of ids) modules[id] = { enabled: true };
   }
@@ -72,6 +81,9 @@ export function runOne(config: Config, labels: string[], provider: Provider): Ru
 
   for (let r = 0; r < config.game.n_rounds; r++) {
     const decisions = provider(world, config);
+    // Snapshot installed capacity BEFORE the resolve consumes it (generic stock + online
+    // facilities), so utilization has an honest denominator in a facilities game.
+    const capBefore = new Map(world.firms.map((f) => [f.id, f.cap + facilityCapacity(f, config, r)]));
     let result: RoundResult;
     try {
       const out = resolveRound(world, decisions, config);
@@ -130,6 +142,7 @@ export function runOne(config: Config, labels: string[], provider: Provider): Ru
         equity: f.balance_sheet.equity,
         ni: f.pnl.net_income,
         status: f.status,
+        effectiveCap: capBefore.get(f.firm_id) ?? f.state.cap,
       });
     }
   }
@@ -169,6 +182,33 @@ export function runBaseline(seed: number): RunMetrics {
   return runOne(config, BASELINE_ASSIGNMENT, makeProvider(BASELINE_ASSIGNMENT));
 }
 
+/** Mixed classroom sweep (DW-042): four best-response agents and four scripted
+ *  archetypes in the SAME game. A real section is a mixed-ability field — some teams
+ *  play near-optimally, some run one fixed idea all semester — and industry moments
+ *  (exit rates, utilization, margins) depend on that mix. An all-best-response field
+ *  produces zero exits (skill, not safety); an all-scripted field overstates them. */
+export function runMixed(seed: number): RunMetrics {
+  const config = configWithSeed(seed);
+  const archIds: ArchetypeId[] = ["balanced", "brand_builder", "cost_leader", "niche_specialist"];
+  const leanIdx = [1, 0, 5, 4]; // ad_quality, ad_generalist, ad_aggressive, ad_stakeholder
+  const labels = Array.from({ length: 8 }, (_, i) => (i % 2 === 0 ? ADAPTIVE_LEANS[leanIdx[i >> 1]].id : archIds[i >> 1]));
+  const archProvider = makeProvider(Array.from({ length: 8 }, (_, i) => archIds[(i >> 1) % archIds.length]));
+  const provider: Provider = (world, c) => {
+    const scripted = new Map(archProvider(world, c).map((d) => [d.firm_id, d]));
+    const out: FirmDecision[] = [];
+    world.firms.forEach((f, i) => {
+      if (f.status !== "active") return;
+      if (i % 2 === 0) out.push(decideAdaptive(ADAPTIVE_LEANS[leanIdx[i >> 1]], f, world, c));
+      else {
+        const d = scripted.get(f.id);
+        if (d) out.push(d);
+      }
+    });
+    return out;
+  };
+  return runOne(config, labels, provider);
+}
+
 /** Adaptive sweep: 8 distinct best-response agents (adaptive.ts). The honest test
  *  of whether a fixed-archetype "dominant strategy" survives when agents can
  *  reposition — crowding should erode the rents of any over-served segment. */
@@ -180,6 +220,34 @@ export function runAdaptive(seed: number): RunMetrics {
     world.firms.forEach((f, i) => {
       if (f.status !== "active") return;
       out.push(decideAdaptive(ADAPTIVE_LEANS[i % ADAPTIVE_LEANS.length], f, world, c));
+    });
+    return out;
+  };
+  return runOne(config, labels, provider);
+}
+
+/** Overbuilder probe (DW-042): the same adaptive field, but one firm is forced to
+ *  build capacity hard through the early game regardless of its forecast. Run it
+ *  against `runAdaptive(seed)` on the same seed and compare that firm's late-game
+ *  utilization and cumulative net income with its disciplined twin — the direct
+ *  test that the stranded-capacity trap is REACHABLE (a population average can't
+ *  show that, because rational agents refuse to walk into it). */
+export function runOverbuilder(seed: number, firmIdx = 5): RunMetrics {
+  const config = configWithSeed(seed);
+  const labels = ADAPTIVE_LEANS.map((l, i) => (i === firmIdx ? `${l.id}+overbuild` : l.id));
+  const provider: Provider = (world, c) => {
+    const out: FirmDecision[] = [];
+    world.firms.forEach((f, i) => {
+      if (f.status !== "active") return;
+      const d = decideAdaptive(ADAPTIVE_LEANS[i % ADAPTIVE_LEANS.length], f, world, c);
+      // Build INTO the maturing market (rounds 5–9), after the early land-grab: the
+      // real stranded-capacity error was expanding late in the boom, and building at
+      // round 1 into genuine scarcity is simply correct (measured: it pays).
+      // Overbuild = +40% of the firm's OWN installed capacity per round for five rounds (≈2.5×
+      // by r9), so the probe scales with the firm rather than adding a fixed $64k that a
+      // capacity-short winner in a richer preset would simply sell through (DW-046).
+      if (i === firmIdx && world.round >= 5 && world.round <= 9) d.invest_cap += (0.4 * (f.cap + facilityCapacity(f, c, world.round))) / c.capacity.gain;
+      out.push(d);
     });
     return out;
   };

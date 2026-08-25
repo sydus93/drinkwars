@@ -45,6 +45,10 @@ export function rollTimeline(c: Config, seed: number): ScheduledShock[] {
   let seq = 0;
   const geoMarkets = c.modules?.geography?.enabled ? c.modules.geography.markets ?? [] : [];
   for (const t of c.shocks.types) {
+    // Gamemaster-only types (prob 0) are pure Schedule-tab ammunition: skip them
+    // BEFORE consuming any RNG draws, so adding one to the catalog can never
+    // reshuffle the rolled fate of the real shock types (DW-044).
+    if (!(t.prob_per_round > 0)) continue;
     for (let r = t.earliest_round; r <= t.latest_round; r++) {
       if (rng.bool(t.prob_per_round)) {
         // A regional shock strikes one randomly-chosen market (drought hits a region's water).
@@ -106,12 +110,23 @@ export function computeShockEffects(world: WorldState, c: Config, coordinationUn
     if (!t) continue;
     active.push({ kind: t.kind, target: t.target, magnitude: t.magnitude_mean, resilience: t.resilience_mitigated, label: `${typeId}(live)` });
     events.push(`SHOCK live-triggered: ${typeId}`);
+    // A live-fired multi-round type persists as a fired timeline entry so its remaining
+    // rounds resolve like a planted one (DW-046 — before, "Fire now" on a 3-round event
+    // lasted one round) and it shows on the Schedule tab.
+    if (t.duration > 1) {
+      world.shock_timeline.push({
+        id: `live_${round}_${typeId}_${world.shock_timeline.length}`, type_id: t.id, kind: t.kind, target: t.target, round,
+        magnitude: t.magnitude_mean, signaling: t.signaling, resilience_mitigated: t.resilience_mitigated, duration: t.duration, locked: true, fired: true,
+      });
+    }
   }
 
   // Apply effects.
   for (const s of active) {
     if (s.kind === "demand_drop" || s.kind === "demand_boost") {
-      const factor = s.kind === "demand_drop" ? 1 - s.magnitude : 1 + s.magnitude;
+      // A drop can never take more than 90% of a segment (a rolled or planted magnitude ≥ 1
+      // would zero or invert demand — unreal, and it NaNs shares).
+      const factor = s.kind === "demand_drop" ? 1 - Math.min(0.9, s.magnitude) : 1 + s.magnitude;
       for (const seg of world.segments) {
         if (s.target === "all" || s.target === seg.id) segMult.set(seg.id, (segMult.get(seg.id) ?? 1) * factor);
       }
@@ -129,7 +144,7 @@ export function computeShockEffects(world: WorldState, c: Config, coordinationUn
       const m = s.magnitude * (1 - mit) * exposure;
       if (s.kind === "cost_spike") eff.cost_multiplier *= 1 + m;
       else if (s.kind === "capacity_hit") eff.capacity_multiplier *= Math.max(0, 1 - m);
-      else if (s.kind === "cash_hit") eff.cash_hit += m * Math.max(0, f.cash);
+      else if (s.kind === "cash_hit") eff.cash_hit += Math.min(1, m) * Math.max(0, f.cash);
     }
   }
 

@@ -110,7 +110,7 @@ export function resolveArena(activeFirms: FirmState[], decisions: Map<FirmId, Fi
       list.push({
         firmId: f.id,
         utility: u,
-        expU: Math.exp(u),
+        expU: 0, // filled in pass 2 relative to the segment's best utility (log-sum-exp)
         allocFrac: frac,
         price,
         capAlloc: arena.supplyOf(f.id) * frac,
@@ -137,7 +137,16 @@ export function resolveArena(activeFirms: FirmState[], decisions: Map<FirmId, Fi
       if (b !== undefined && b > neighborBest) neighborBest = b;
     }
     const u0eff = sc.U0 + c.demand.cross_segment_substitution * neighborBest;
-    const denom = list.reduce((acc, x) => acc + x.expU, 0) + Math.exp(u0eff);
+    // Log-sum-exp stabilization (DW-046): shares are invariant to a common shift of
+    // every utility, so exponentiate relative to the segment's best option. Without
+    // this, one firm with an absurd stock (a garbage-input Q of 17,000, say) makes
+    // exp(u) overflow to Infinity and every share in the segment NaN — including
+    // the innocent firms'. With it the dominant option's share tends to 1 and the
+    // rest to 0, which is the correct limit.
+    const shift = Math.max(bestU.get(seg.id) ?? -Infinity, u0eff);
+    for (const x of list) x.expU = Math.exp(x.utility - shift);
+    const expU0 = Math.exp(u0eff - shift);
+    const denom = list.reduce((acc, x) => acc + x.expU, 0) + expU0;
     const Deff = seg.D * mod.segmentDemandMultiplier(seg.id);
 
     // Desired quantities and capacity split.
@@ -165,7 +174,7 @@ export function resolveArena(activeFirms: FirmState[], decisions: Map<FirmId, Fi
     // by expU only among unconstrained firms would hand 100% to a single
     // surviving firm no matter how unattractive — the redistribution bug.)
     const redistributable = (1 - c.demand.unmet_demand_lost_fraction) * totalUnmet;
-    const redistribDenom = unconstrainedExpUSum + Math.exp(u0eff);
+    const redistribDenom = unconstrainedExpUSum + expU0;
     if (redistributable > 0 && redistribDenom > 0) {
       for (const u of unconstrained) {
         const extra = redistributable * (u.cell.expU / redistribDenom);

@@ -30,6 +30,11 @@ export function resolveMa(world: WorldState, decisions: Map<FirmId, FirmDecision
     if ((f.acquisitions_made ?? 0) >= cfg.max_acquisitions) continue; // roll-up cap
     const target = world.firms.find((t) => t.id === bid.target);
     if (!target || target.status !== "active" || target.rounds_below_health < cfg.min_distress_rounds) continue;
+    // A distressed-price sale needs actual distress: a target with a healthy cash
+    // buffer refuses the discount (its board can simply keep operating). Without
+    // this, firms with a profitless streak but a full tank were bought out from
+    // under their runway (32 of ~39 removals in the DW-041 all-modules sweep).
+    if (target.cash >= c.scoring.cash_safety_threshold) continue;
     const floor = cfg.min_price_fraction * Math.max(0, firmValuation(target, c));
     if (bid.price < floor || f.cash < bid.price) continue;
     const cur = bids.get(bid.target);
@@ -55,6 +60,16 @@ export function resolveMa(world: WorldState, decisions: Map<FirmId, FirmDecision
     // Balance the acquirer's books: ΔAssets − ΔLiabilities → retained earnings.
     a.retained_earnings += t.cash - price + ppeGain - t.debt;
 
+    // Physical plant changes hands with the PP&E it sits in (integration wear applies to
+    // its condition); the target's people leave. Before DW-046 an acquired firm's plants
+    // stayed on its frozen books, holding their parcels forever.
+    if (t.facilities?.length) {
+      a.facilities ??= [];
+      // Facility ids are unique within a firm only (`fac_<round>_<n>`) — re-key on transfer.
+      for (const fac of t.facilities) a.facilities.push({ ...fac, id: `${fac.id}_ex_${t.id}`, condition: fac.condition * disc });
+      t.facilities = [];
+    }
+    if (t.employees?.length) t.employees = [];
     // The target leaves the game with nothing on the books.
     t.status = "acquired";
     t.cash = 0; t.cap = 0; t.debt = 0; t.ppe_book = 0; t.inventory_units = 0; t.inventory_value = 0;

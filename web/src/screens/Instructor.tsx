@@ -15,6 +15,7 @@ export function Instructor({ onExit }: { onExit: () => void }) {
   const [modules, setModules] = useState<ModuleSelection>({});
   const [modCount, setModCount] = useState(0);
   const [tuneVals, setTuneVals] = useState<TuningVals>(() => tuningDefaults());
+  const [practiceRounds, setPracticeRounds] = useState(0);
   const [showTune, setShowTune] = useState(false);
   const tuned = JSON.stringify(tuneVals) !== JSON.stringify(tuningDefaults());
   const [game, setGame] = useState<{ gameId: string; joinCode: string } | null>(null);
@@ -27,6 +28,7 @@ export function Instructor({ onExit }: { onExit: () => void }) {
   const [rosterText, setRosterText] = useState("");
   const [cohort, setCohort] = useState("");
   const [provisioned, setProvisioned] = useState<{ external_id: string; name: string; claim_code: string; existing: boolean }[] | null>(null);
+  const [provErrors, setProvErrors] = useState<{ external_id: string; error: string }[]>([]);
   const [provBusy, setProvBusy] = useState(false);
 
   useEffect(() => {
@@ -61,7 +63,11 @@ export function Instructor({ onExit }: { onExit: () => void }) {
     setErr(null);
     try {
       const c = new InstructorClient(pass);
-      const g = await c.createGame(nFirms, nRounds, modules, tuned ? tuningToOverride(tuneVals) : undefined, { firmMode, title: title.trim() || undefined });
+      // Practice rounds ride along as the scoring accumulation window (drop_first): the round
+      // header and the students' scorecard announce them; the rounds still resolve and publish.
+      const tuning = tuned ? tuningToOverride(tuneVals) : {};
+      const override = practiceRounds > 0 ? { ...tuning, scoring: { ...(tuning as { scoring?: object }).scoring, accumulation_window: { drop_first: practiceRounds, tail_only: null } } } : tuning;
+      const g = await c.createGame(nFirms, nRounds, modules, Object.keys(override).length ? (override as typeof tuning) : undefined, { firmMode, title: title.trim() || undefined });
       setClient(c);
       setGame(g);
       persist(g.gameId, g.joinCode);
@@ -77,14 +83,18 @@ export function Instructor({ onExit }: { onExit: () => void }) {
     setProvBusy(true);
     setErr(null);
     try {
+      // One student per line, "NetID, Name" (tab or comma). NetIDs are case-insensitive and
+      // duplicates collapse to the first line — a re-paste is safe and idempotent.
+      const seen = new Set<string>();
       const roster = rosterText.split("\n").map((l) => l.trim()).filter(Boolean).map((l) => {
         const parts = l.split(/[,\t]/).map((p) => p.trim());
         return { external_id: parts[0], name: parts.slice(1).join(" ").trim() || parts[0] };
-      }).filter((r) => r.external_id);
+      }).filter((r) => { const k = r.external_id.toLowerCase(); if (!k || seen.has(k)) return false; seen.add(k); return true; });
       if (!roster.length) { setErr("Add at least one NetID, Name line"); return; }
       const c = new InstructorClient(pass);
       const r = await c.provisionRoster(roster, cohort.trim() || undefined);
       setProvisioned(r.students);
+      setProvErrors(r.errors ?? []);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -153,6 +163,10 @@ export function Instructor({ onExit }: { onExit: () => void }) {
                 <input type="number" min={1} max={30} value={nRounds} onChange={(e) => setNRounds(Math.max(1, Math.min(30, +e.target.value)))} />
               </label>
             </div>
+            <label className="grid gap-1">
+              <span className="text-sm text-inksoft">Practice rounds <span className="text-[0.7rem]">· played and published, but not scored — the round header and each team's scorecard say so</span></span>
+              <input type="number" min={0} max={Math.max(0, nRounds - 1)} value={practiceRounds} onChange={(e) => setPracticeRounds(Math.max(0, Math.min(Math.max(0, nRounds - 1), Math.round(+e.target.value || 0))))} className="w-24" />
+            </label>
             <div className="grid grid-cols-2 gap-3">
               <label className="grid gap-1">
                 <span className="text-sm text-inksoft">Game title <span className="text-[0.7rem]">· optional</span></span>
@@ -162,7 +176,7 @@ export function Instructor({ onExit }: { onExit: () => void }) {
                 <span className="text-sm text-inksoft">Firm type</span>
                 <div className="flex gap-1.5">
                   {(["solo", "team"] as const).map((m) => { const on = firmMode === m; return (
-                    <button key={m} type="button" onClick={() => setFirmMode(m)} title={m === "team" ? "Several students share a firm as CEO/CFO/CMO/COO" : "One student per firm"} className="flex-1 rounded-md border px-2 py-2 font-mono text-[0.6rem] font-bold uppercase tracking-wide transition-colors" style={{ borderColor: on ? "var(--color-copper)" : "var(--color-line2)", background: on ? "color-mix(in srgb, var(--color-copper) 12%, var(--color-panel))" : "var(--color-panel)", color: on ? "var(--color-copperdeep)" : "var(--color-inksoft)" }}>{m === "solo" ? "Solo" : "Team · C-suite"}</button>
+                    <button key={m} type="button" onClick={() => setFirmMode(m)} title={m === "team" ? "Several students share a firm as CEO/CFO/CMO/COO/CHRO" : "One student per firm"} className="flex-1 rounded-md border px-2 py-2 font-mono text-[0.6rem] font-bold uppercase tracking-wide transition-colors" style={{ borderColor: on ? "var(--color-copper)" : "var(--color-line2)", background: on ? "color-mix(in srgb, var(--color-copper) 12%, var(--color-panel))" : "var(--color-panel)", color: on ? "var(--color-copperdeep)" : "var(--color-inksoft)" }}>{m === "solo" ? "Solo" : "Team · C-suite"}</button>
                   ); })}
                 </div>
               </div>
@@ -177,9 +191,15 @@ export function Instructor({ onExit }: { onExit: () => void }) {
                 <input value={cohort} onChange={(e) => setCohort(e.target.value)} maxLength={32} placeholder="Cohort (e.g. F26-CAP)" className="flex-1 text-sm" />
                 <Button onClick={provision} disabled={provBusy || !pass || !rosterText.trim()}>{provBusy ? "Provisioning…" : "Provision"}</Button>
               </div>
+              {provErrors.length > 0 && (
+                <div className="mt-2 rounded border border-brick/50 bg-brick/10 px-2 py-1.5 text-[0.72rem] text-ink">
+                  {provErrors.length} row{provErrors.length === 1 ? "" : "s"} could not be provisioned — the rest went through. Fix and re-paste just these:
+                  {provErrors.map((e) => <div key={e.external_id} className="font-mono text-[0.68rem]">{e.external_id}: {e.error}</div>)}
+                </div>
+              )}
               {provisioned && (
                 <div className="mt-3">
-                  <div className="mb-1 font-mono text-[0.58rem] uppercase tracking-wide text-inksoft">Distribute these claim codes — each student enters theirs on Join:</div>
+                  <div className="mb-1 font-mono text-[0.58rem] uppercase tracking-wide text-inksoft">Distribute these claim codes — each student enters theirs on Join ({provisioned.filter((s) => s.existing).length} already had accounts; their codes are unchanged):</div>
                   <div className="max-h-40 overflow-y-auto rounded border border-line bg-panel">
                     {provisioned.map((s) => (
                       <div key={s.external_id} className="flex items-center justify-between border-b border-line px-2 py-1 text-[0.72rem] last:border-0">
@@ -216,7 +236,7 @@ export function Instructor({ onExit }: { onExit: () => void }) {
     );
   }
 
-  const LIFECYCLE_LABEL: Record<string, string> = { open: "Lobby open", locked: "Round in progress", complete: "Season complete" };
+  const LIFECYCLE_LABEL: Record<string, string> = { open: "Submissions open", locked: "Locked — ready to resolve", resolving: "Resolving…", published: "Resolved — opening next round", complete: "Season complete" };
   const lcRaw = status?.lifecycle ?? "open";
   const lc = LIFECYCLE_LABEL[lcRaw] ?? lcRaw;
   const joined = status?.teams.filter((t) => t.joined).length ?? 0;
@@ -272,9 +292,14 @@ export function Instructor({ onExit }: { onExit: () => void }) {
           <div className="mt-4 flex flex-wrap items-center gap-2">
             <Button onClick={() => act(() => client!.lock(game.gameId))} disabled={busy || lcRaw !== "open"}>Lock round</Button>
             <Button onClick={() => act(() => client!.resolve(game.gameId))} disabled={busy || lcRaw !== "locked"}>Resolve round</Button>
+            {lcRaw === "resolving" && <Button variant="ghost" onClick={() => act(() => client!.resolve(game.gameId, { force: true }))} disabled={busy}>Retry resolve</Button>}
+            {lcRaw === "published" && <Button variant="ghost" onClick={() => act(() => client!.advance(game.gameId))} disabled={busy}>Open next round</Button>}
             {lcRaw === "complete" && <span className="text-sm text-inksoft">Season complete.</span>}
           </div>
-          <div className="mt-2 text-[0.72rem] text-inksoft">Lock closes submissions (open slots play as adaptive NPCs); Resolve runs the engine and opens the next round.</div>
+          <div className="mt-2 text-[0.72rem] text-inksoft">
+            Lock closes submissions (open slots play as adaptive NPCs; a claimed team that missed the deadline carries last quarter's standing plan); Resolve runs the engine and opens the next round.
+            {lcRaw === "resolving" && <span className="text-brick"> If this stays on “Resolving…” for more than a few seconds the call was interrupted — Retry resolve re-runs the same round safely.</span>}
+          </div>
         </>
       ) : (
         client && <InstructorDashboard client={client} gameId={game.gameId} roundKey={roundKey} />

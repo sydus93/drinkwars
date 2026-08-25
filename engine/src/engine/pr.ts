@@ -52,10 +52,16 @@ export function resolvePrEvents(world: WorldState, decisions: Map<FirmId, FirmDe
       events.push(`PR PLAY: ${f.id} ran ${label} — brand buzz surges`);
     }
 
-    // 3. Reactive negative PR — a controversy whose bite T_emp blunts.
-    if (cfg.negative_pr_enabled && rng.bool(cfg.negative_pr_probability)) {
+    // 3. Reactive negative PR — a controversy whose bite T_emp blunts. It fires only
+    // while the firm is riding a PR spike (DW-042): the module's lesson is that
+    // COURTING the spotlight is high-risk, not that any quiet brewery can have its
+    // brand erased by a 6%-per-round lottery — unconditional, it was ~8 brand-wipes
+    // per game against a starting B of 10, and could ruin a firm in round 0 (the
+    // exact first-round-lottery §16.5 bans for shocks). Damage is also capped at
+    // 60% of (spike + brand): a controversy dents a small brand, it can't erase it.
+    if (cfg.negative_pr_enabled && f.pr_spike > 0.5 && rng.bool(cfg.negative_pr_probability)) {
       const mit = cfg.negative_pr_t_emp_mitigation * (f.T_emp / (f.T_emp + h));
-      const damage = cfg.negative_pr_brand_damage * (1 - mit);
+      const damage = Math.min(cfg.negative_pr_brand_damage * (1 - mit), 0.6 * (f.pr_spike + f.B));
       // Absorb against the transient spike first, then the durable brand stock.
       const fromSpike = Math.min(f.pr_spike, damage);
       f.pr_spike -= fromSpike;

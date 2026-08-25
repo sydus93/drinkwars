@@ -12,14 +12,17 @@
  * pure function of (state, decisions, config, seed), so any round is replayable
  * (§3.3) — `replay()` verifies that against the persisted history.
  */
-import { ADAPTIVE_LEANS, decideAdaptive, initGame, mergeMemberDecisions, resolveRound as engineResolve, ROLE_DESK } from "drinkwars-engine";
+import { ADAPTIVE_LEANS, decideAdaptive, initGame, mergeMemberDecisions, resolveRound as engineResolve, ROLE_DESK, segmentDemandTotals } from "drinkwars-engine";
 import type { Config, FirmDecision, FirmId, RoundResult, ScheduledShock, SegmentId, WorldState } from "drinkwars-engine";
 import type {
   AgreementRow, BeliefRow, DecisionRecord, DistinctivenessRow, FirmMode, FirmRoundRow, GameRecord,
   ReflectionRow, StorageAdapter, TeamRecord, TelemetryRow,
 } from "./types.js";
 
-const MAX_SEATS_PER_FIRM = 6; // team mode: C-suite + a couple extra
+// Team mode: one player per C-suite chair. The cap IS the number of seats — every
+// member holds a distinct desk, so a sixth player has nowhere to sit that wouldn't
+// silently overwrite a teammate (DW-039).
+const MAX_SEATS_PER_FIRM = 5;
 
 export interface CreateGameInput {
   config: Config;
@@ -75,7 +78,7 @@ export class GameOrchestrator {
   constructor(
     private store: StorageAdapter,
     private clock: () => number = () => Date.now(),
-    private opts: { botFillEmptySlots?: boolean } = {},
+    private opts: { botFillEmptySlots?: boolean; noShowPolicy?: "carry" | "zero" } = {},
   ) {}
 
   /** Fresh id — a UUID, valid for both the in-memory store and Postgres uuid columns.
@@ -140,7 +143,7 @@ export class GameOrchestrator {
    * student from reading the join code or another team. `userId` is the caller's
    * resolved identity (a roster user via claim_code, or an ephemeral anon user).
    */
-  async joinGame(code: string, displayName: string, userId: string, opts: { teamId?: string; role?: string } = {}): Promise<{ gameId: string; teamId: string; firmId: FirmId; role?: string; claim?: string }> {
+  async joinGame(code: string, displayName: string, userId: string, opts: { teamId?: string; role?: string; teamName?: string } = {}): Promise<{ gameId: string; teamId: string; firmId: FirmId; role?: string; claim?: string }> {
     const game = await this.store.getGameByCode(code);
     if (!game) throw new LifecycleError(`no game found for join code "${code}"`);
     const teams = await this.store.getTeams(game.id);
@@ -164,25 +167,40 @@ export class GameOrchestrator {
       await this.store.createUser({ id: userId, role: "student", email: null, consent: false, deid_code: `deid_${userId.slice(0, 8)}`, display_name: displayName || null, claim_code: GameOrchestrator.makeClaimCode() });
     }
     let target: TeamRecord | undefined;
+    let seat: string | undefined = opts.role;
     if (game.firm_mode === "team") {
       // Join a specific firm, else the emptiest firm with an open seat.
       const open = teams.filter((t) => t.member_user_ids.length < MAX_SEATS_PER_FIRM);
-      target = opts.teamId ? open.find((t) => t.id === opts.teamId) : [...open].sort((a, b) => a.member_user_ids.length - b.member_user_ids.length)[0];
+      if (opts.teamId) {
+        const named = teams.find((t) => t.id === opts.teamId);
+        target = open.find((t) => t.id === opts.teamId);
+        if (named && !target) throw new LifecycleError(`"${named.name}" is full — all ${MAX_SEATS_PER_FIRM} C-suite seats are taken`);
+      } else {
+        target = [...open].sort((a, b) => a.member_user_ids.length - b.member_user_ids.length)[0];
+      }
       if (!target) throw new LifecycleError(`game "${code}" has no open seats`);
-      // Seat guards (DW-038): two generalists on one firm silently clobber each other in
-      // the desk merge, so a firm's SECOND member onward must take a distinct C-suite seat.
-      if (opts.role && !TEAM_ROLES.has(opts.role)) throw new LifecycleError(`unknown seat "${opts.role}"`);
-      if (target.member_user_ids.length > 0 && !opts.role) throw new LifecycleError(`"${target.name}" already has members — pick a C-suite seat to join it`);
-      if (opts.role) await this.assertSeatFree(target, opts.role, userId);
+      // Seat guards (DW-038/DW-039): the desk merge lets generalist seats ("all") fill
+      // every desk, so TWO of them on one firm silently overwrite each other. Every seat
+      // at a team firm is therefore a distinct named chair — the founder defaults to CEO
+      // (same whole-firm desk coverage a lone player had), everyone after picks a free one.
+      if (seat && !TEAM_ROLES.has(seat)) throw new LifecycleError(`unknown seat "${seat}"`);
+      if (!seat) {
+        if (target.member_user_ids.length > 0) throw new LifecycleError(`"${target.name}" already has members — pick a C-suite seat to join it`);
+        seat = "ceo";
+      }
+      await this.assertSeatFree(target, seat, userId);
     } else {
       target = teams.find((t) => t.member_user_ids.length === 0);
       if (!target) throw new LifecycleError(`game "${code}" is full`);
     }
     const wasEmpty = target.member_user_ids.length === 0;
     await this.store.addTeamMember(target.id, userId);
-    if (opts.role) await this.store.setMemberRole(target.id, userId, opts.role); // persist the seat (authoritative across devices)
-    if (wasEmpty) await this.store.setTeamName(target.id, displayName); // the first member names the firm
-    return { gameId: game.id, teamId: target.id, firmId: target.firm_id, role: opts.role, claim: await this.ensureClaimCode(userId) };
+    if (seat) await this.store.setMemberRole(target.id, userId, seat); // persist the seat (authoritative across devices)
+    // The founder names the firm. In team mode the brewery name is its own field, so a
+    // teammate reads "Sam" in the seat list and "Sediment Co." on the board — not one name
+    // doing both jobs (DW-039).
+    if (wasEmpty) await this.store.setTeamName(target.id, opts.teamName?.trim() || displayName);
+    return { gameId: game.id, teamId: target.id, firmId: target.firm_id, role: seat, claim: await this.ensureClaimCode(userId) };
   }
 
   /** Rejects taking a C-suite seat another member of the firm already holds. */
@@ -312,7 +330,7 @@ export class GameOrchestrator {
     // Compose the team's seats → the per-team decision the engine will resolve.
     const seats = await this.store.getMemberDecisions(gameId, round, teamId);
     const ws = (await this.store.getWorldState(gameId, round)) ?? (await this.store.getLatestWorldState(gameId));
-    const base = await this.teamMergeBase(gameId, round, teamId, team.firm_id, ws?.state ?? null, game.config);
+    const base = await this.standingDecision(gameId, round, teamId, team.firm_id, ws?.state ?? null, game.config);
     const merged = mergeMemberDecisions(base, seats.map((s) => ({ desk: (s.desk as never) ?? "all", partial: s.partial })));
     const existing = await this.store.getDecision(gameId, round, teamId);
     if (existing?.locked) throw new LifecycleError("decision is locked");
@@ -324,17 +342,39 @@ export class GameOrchestrator {
     });
   }
 
+  private async recomposeTeamDecisions(gameId: string, game: GameRecord): Promise<void> {
+    const round = game.current_round;
+    const ws = (await this.store.getWorldState(gameId, round)) ?? (await this.store.getLatestWorldState(gameId));
+    for (const team of await this.store.getTeams(gameId)) {
+      const seats = await this.store.getMemberDecisions(gameId, round, team.id);
+      if (!seats.length) continue;
+      const existing = await this.store.getDecision(gameId, round, team.id);
+      if (existing?.locked) continue;
+      const base = await this.standingDecision(gameId, round, team.id, team.firm_id, ws?.state ?? null, game.config);
+      const merged = mergeMemberDecisions(base, seats.map((s) => ({ desk: (s.desk as never) ?? "all", partial: s.partial })));
+      await this.store.upsertDecision({
+        game_id: gameId, round, team_id: team.id, firm_id: team.firm_id, decision: merged,
+        submitted: seats.some((s) => s.submitted), locked: false,
+        revision_count: existing?.revision_count ?? 0,
+        submitted_at: existing?.submitted_at ?? this.clock(), first_opened_at: existing?.first_opened_at ?? this.clock(),
+      });
+    }
+  }
+
   /**
-   * The merge base for a team firm's composed decision (DW-038). NOT the zero decision:
-   * an unmanned desk would zero-fill, and a zero price literally gives product away.
-   * Standing levers (price, presence, run-rate, market posture, investments) carry from
-   * last round's composed decision — the same round reset the solo controller applies —
-   * while one-shot transactions (builds, hires, draws, agreement actions) stay zeroed.
-   * With no prior decision, prices anchor at ~1.8× estimated unit cost with presence in
-   * every active segment, plus maintenance-level capex so capacity doesn't silently rot.
-   * A seat's submitted partial still overrides its whole desk on top of this base.
+   * The firm's STANDING decision — how it trades absent a fresh instruction (DW-038/039).
+   * NOT the zero decision: a zero price literally gives the product away and zero presence
+   * withdraws the firm from every market it was serving. Standing levers (price, presence,
+   * run-rate, market posture, investments) carry from last round's decision — the same
+   * round reset the solo controller applies — while one-shot transactions (builds, hires,
+   * draws, agreement actions) stay zeroed. With no prior decision, prices anchor at ~1.8×
+   * estimated unit cost with presence in every active segment, plus maintenance-level capex
+   * so capacity doesn't silently rot.
+   *
+   * Two callers: the merge base a team's seats overlay their desks onto, and the fill-in
+   * for a claimed firm that missed the submission deadline.
    */
-  private async teamMergeBase(gameId: string, round: number, teamId: string, firmId: FirmId, state: WorldState | null, config: Config | null): Promise<FirmDecision> {
+  private async standingDecision(gameId: string, round: number, teamId: string, firmId: FirmId, state: WorldState | null, config: Config | null): Promise<FirmDecision> {
     const segs = (state?.segments ?? []).map((s) => s.id);
     const base = zeroFirmDecision(firmId, segs);
     const firm = state?.firms.find((f) => f.id === firmId) ?? null;
@@ -441,10 +481,12 @@ export class GameOrchestrator {
       kind: t.kind,
       target: t.target,
       round,
-      magnitude: Math.min(1.5, Math.max(0.02, spec.magnitude ?? t.magnitude_mean)),
+      // Magnitude bounds by kind (DW-046): a demand drop is a fraction of the segment (≤ 0.9),
+      // a cash hit a fraction of cash (≤ 1); cost/capacity multipliers may run to 1.5.
+      magnitude: Math.min(t.kind === "demand_drop" ? 0.9 : t.kind === "cash_hit" ? 1 : 1.5, Math.max(0.02, spec.magnitude ?? t.magnitude_mean)),
       signaling: t.signaling,
       resilience_mitigated: t.resilience_mitigated,
-      duration: Math.min(4, Math.max(1, Math.round(spec.duration ?? t.duration))),
+      duration: Math.min(6, Math.max(1, Math.round(spec.duration ?? t.duration))),
       locked: true,
       fired: false,
       ...(spec.region ? { region: spec.region } : {}),
@@ -486,6 +528,11 @@ export class GameOrchestrator {
   async lockRound(gameId: string): Promise<string[]> {
     const game = await this.requireGame(gameId);
     if (game.lifecycle !== "open") throw new LifecycleError(`cannot lock: round is "${game.lifecycle}"`);
+    // Team firms: re-compose every team's plan from its seats' slices right before the lock
+    // (DW-046). Two teammates submitting at the same instant could each compose from a
+    // read that missed the other's slice, and whichever wrote last won — the lock-time
+    // recompose makes the persisted plan authoritative regardless of submit order.
+    if (game.firm_mode === "team") await this.recomposeTeamDecisions(gameId, game);
     const { nonSubmitters } = await this.getStatus(gameId);
     await this.store.lockDecisions(gameId, game.current_round);
     await this.store.setGameLifecycle(gameId, "locked", game.current_round);
@@ -497,11 +544,25 @@ export class GameOrchestrator {
    * set, append the new world state + results, write the research tables, advance
    * the clock. Effectively final once written (append-only).
    */
-  async resolveRound(gameId: string): Promise<{ round: number; lifecycle: GameRecord["lifecycle"] }> {
+  async resolveRound(gameId: string, opts: { force?: boolean } = {}): Promise<{ round: number; lifecycle: GameRecord["lifecycle"] }> {
     const game = await this.requireGame(gameId);
-    if (game.lifecycle !== "locked") throw new LifecycleError(`cannot resolve: round is "${game.lifecycle}", not locked`);
+    // `force` re-runs a resolve that died mid-way (a crash/timeout after the "resolving"
+    // mark): every write below is idempotent on its natural key and the engine is
+    // deterministic, so re-running produces the identical round. Without force a second
+    // click while a resolve is in flight is still rejected.
+    if (game.lifecycle !== "locked" && !(opts.force && game.lifecycle === "resolving")) throw new LifecycleError(`cannot resolve: round is "${game.lifecycle}", not locked`);
     await this.store.setGameLifecycle(gameId, "resolving", game.current_round);
+    try {
+      return await this.resolveRoundInner(gameId, game);
+    } catch (e) {
+      // Put the round back where the instructor can act on it (DW-046). Before this the
+      // game stayed "resolving" forever with both Lock and Resolve disabled.
+      try { await this.store.setGameLifecycle(gameId, "locked", game.current_round); } catch { /* keep the original error */ }
+      throw e;
+    }
+  }
 
+  private async resolveRoundInner(gameId: string, game: GameRecord): Promise<{ round: number; lifecycle: GameRecord["lifecycle"] }> {
     const round = game.current_round;
     const wsRec = await this.store.getWorldState(gameId, round);
     if (!wsRec) throw new LifecycleError(`missing world_state for round ${round}`);
@@ -511,20 +572,32 @@ export class GameOrchestrator {
     const teams = await this.store.getTeams(gameId);
     const teamByFirm = new Map(teams.map((t) => [t.firm_id, t]));
 
-    // Zero-fill non-submitting active firms so the research panel has a row for them.
+    // Fill in for non-submitting active firms so the research panel has a row for them.
     const submitted = await this.store.getDecisions(gameId, round);
     const submittedFirms = new Set(submitted.filter((d) => d.submitted).map((d) => d.firm_id));
     for (const f of world.firms) {
       if (f.status !== "active" || submittedFirms.has(f.id)) continue;
       const team = teamByFirm.get(f.id);
       if (!team) continue;
-      // An unclaimed slot plays as an adaptive NPC (when enabled), so a game with
-      // fewer humans than firms stays lively; a claimed team that ghosted is
-      // zero-filled + flagged so the non-submission research signal stays honest.
+      // An unclaimed slot plays as an adaptive NPC (when enabled), so a game with fewer
+      // humans than firms stays lively. A CLAIMED team that missed the deadline keeps
+      // trading on last quarter's standing plan (DW-039) — a brewery doesn't stop selling
+      // beer because nobody filed paperwork, and zero-filling it (price 0 / presence 0)
+      // cost a classroom team a whole quarter's revenue for one missed form. One-shot
+      // moves (builds, hires, draws) do NOT repeat. `submitted: false` is still recorded,
+      // so the non-submission signal for grading + research stays exact either way.
       let decision: FirmDecision;
       if (this.opts.botFillEmptySlots && team.member_user_ids.length === 0) {
-        const idx = world.firms.findIndex((x) => x.id === f.id);
-        decision = decideAdaptive(ADAPTIVE_LEANS[idx % ADAPTIVE_LEANS.length], f, world, config);
+        // NPC personality by NPC ORDINAL, not firm index (DW-046): unclaimed slots are the
+        // last ones, and indexing leans by firm slot handed a 5-team class the three most
+        // fragile personalities (aggressive / lean_ops / conservative — the ones that
+        // decay into zombies in the full preset). The first NPCs now get the robust
+        // leans (generalist, quality, cost, brand), so the field a class faces is competent.
+        const myIdx = world.firms.findIndex((x) => x.id === f.id);
+        const npcOrdinal = teams.filter((t) => t.member_user_ids.length === 0 && world.firms.findIndex((x) => x.id === t.firm_id) < myIdx).length;
+        decision = decideAdaptive(ADAPTIVE_LEANS[npcOrdinal % ADAPTIVE_LEANS.length], f, world, config);
+      } else if ((this.opts.noShowPolicy ?? "carry") === "carry") {
+        decision = await this.standingDecision(gameId, round, team.id, f.id, world, config);
       } else {
         decision = zeroFirmDecision(f.id, segmentIds);
       }
@@ -674,7 +747,9 @@ export class GameOrchestrator {
   async getPublicState(gameId: string): Promise<{ round: number; lifecycle: GameRecord["lifecycle"]; segments: { id: SegmentId; D: number; active: boolean }[] }> {
     const game = await this.requireGame(gameId);
     const ws = await this.store.getLatestWorldState(gameId);
-    return { round: game.current_round, lifecycle: game.lifecycle, segments: (ws?.state.segments ?? []).map((s) => ({ id: s.id, D: s.D, active: s.active })) };
+    // D = total addressable demand across every open market (matches RoundResult.market.D).
+    const totals = ws ? segmentDemandTotals(ws.state, game.config) : new Map<SegmentId, number>();
+    return { round: game.current_round, lifecycle: game.lifecycle, segments: (ws?.state.segments ?? []).map((s) => ({ id: s.id, D: totals.get(s.id) ?? s.D, active: s.active })) };
   }
 
   /** A team's view: its own firm state + published results. Pending decisions of

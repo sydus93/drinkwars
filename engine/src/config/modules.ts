@@ -68,17 +68,27 @@ export const defaultModules: ModulesConfig = {
   asymmetricStarts: {
     enabled: false,
     incumbent_count: 2, // first N firms start as incumbents; the rest as entrants
-    incumbent: { cap: 1.8, B: 1.8, Q: 1.5, cash: 0.9, unit_cost: 0.85 },
-    entrant: { cap: 0.7, B: 0.6, Q: 0.8, cash: 1.2, unit_cost: 1.08 },
+    // DW-041: asymmetry softened. At the old multipliers an entrant's round-0 P&L was
+    // structurally underwater (0.7× capacity carrying full fixed overhead + module
+    // opex ⇒ −$30k to −$130k NI at r0, measured) and six of eight firms started in a
+    // bleed-out. The incumbent-vs-disruptor lesson needs entrants that are BEHIND,
+    // not entrants that are insolvent on arrival.
+    incumbent: { cap: 1.5, B: 1.5, Q: 1.3, cash: 0.9, unit_cost: 0.92 },
+    entrant: { cap: 0.85, B: 0.75, Q: 0.9, cash: 1.25, unit_cost: 1.03 },
   },
   consumerDrift: {
     enabled: false,
     // Mass turns quality-sensitive and a touch less price-driven; niche keeps
     // climbing on quality. Bounds are absolute coefficient values.
+    // DW-041: ceilings trimmed (mass βq 0.16→0.10, niche 0.26→0.20, mass βp floor
+    // 0.28→0.30) — drift used to raise quality sensitivity exactly as the module
+    // stack maxed out Q dispersion, and the product of the two polarized late-game
+    // demand into a duopoly. The drift lesson (read the taste shift, reposition)
+    // survives at the gentler slope; the winner-take-all endgame does not.
     tracks: [
-      { segment: "mass", variable: "beta_q", delta_per_round: 0.006, ceiling: 0.16 },
-      { segment: "mass", variable: "beta_p", delta_per_round: -0.004, floor: 0.28 },
-      { segment: "niche", variable: "beta_q", delta_per_round: 0.004, ceiling: 0.26 },
+      { segment: "mass", variable: "beta_q", delta_per_round: 0.004, ceiling: 0.1 },
+      { segment: "mass", variable: "beta_p", delta_per_round: -0.004, floor: 0.3 },
+      { segment: "niche", variable: "beta_q", delta_per_round: 0.003, ceiling: 0.2 },
     ],
   },
   lobbying: {
@@ -104,12 +114,20 @@ export const defaultModules: ModulesConfig = {
     enabled: false,
     // Capacity is SPLIT across markets, not multiplied — entering a region trades
     // home presence for reach. Regions reshape tastes; brand carries at a discount.
+    // demand_mult (DW-046) = the slice of the CALIBRATED demand pool a region opens up for
+    // entrants — the craft-curious share net of the local incumbents this sim doesn't model —
+    // NOT its population ratio. Before DW-046 the mults tracked population (1.3/0.75/0.9/1.2),
+    // so a fully-expanded industry addressed ~4× the demand its capacity was calibrated
+    // against: every firm sold every drink it brewed at ~100% utilization and a forced
+    // over-builder out-earned its disciplined twin by ~$1M (measured, 8 seeds). Domestic
+    // expansion is now worth ~+60% of home, exports ~+50% more once they open — enough to
+    // make "go regional/global" a real strategy, small enough that capacity can be stranded.
     markets: [
       { id: "home", label: "Home region", kind: "home", population: 180_000, demand_mult: 1.0, beta_p_mult: 1.0, beta_q_mult: 1.0, beta_b_mult: 1.0, brand_transfer: 1.0, entry_cost: 0, distribution_cost_per_unit: 0, tariff_rate: 0, fx_volatility: 0, lots: SITE_LOTS, geo: [-105.3, 39.7], demand_growth: 0 },
-      { id: "heartland", label: "Heartland", kind: "domestic", population: 235_000, demand_mult: 1.3, beta_p_mult: 1.3, beta_q_mult: 0.7, beta_b_mult: 0.8, brand_transfer: 0.7, entry_cost: 80_000, distribution_cost_per_unit: 0.4, tariff_rate: 0, fx_volatility: 0, lots: SITE_LOTS, geo: [-92.5, 41.6], demand_growth: 0.03 },
-      { id: "coastal", label: "Coastal cities", kind: "domestic", population: 135_000, demand_mult: 0.75, beta_p_mult: 0.7, beta_q_mult: 1.3, beta_b_mult: 1.15, brand_transfer: 0.7, entry_cost: 120_000, distribution_cost_per_unit: 0.5, tariff_rate: 0, fx_volatility: 0, lots: SITE_LOTS, geo: [-74.0, 40.6], demand_growth: -0.02 },
-      { id: "export_eu", label: "European export", kind: "export", population: 160_000, demand_mult: 0.9, beta_p_mult: 0.8, beta_q_mult: 1.2, beta_b_mult: 1.1, brand_transfer: 0.4, entry_cost: 160_000, distribution_cost_per_unit: 0.6, tariff_rate: 0.12, fx_volatility: 0.05, lots: SITE_LOTS, geo: [-0.1, 51.5], demand_growth: 0.04 },
-      { id: "export_asia", label: "Asia-Pacific export", kind: "export", population: 215_000, demand_mult: 1.2, beta_p_mult: 1.1, beta_q_mult: 1.0, beta_b_mult: 1.2, brand_transfer: 0.4, entry_cost: 180_000, distribution_cost_per_unit: 0.7, tariff_rate: 0.08, fx_volatility: 0.08, lots: SITE_LOTS, geo: [121.5, 31.2], demand_growth: 0.06 },
+      { id: "heartland", label: "Heartland", kind: "domestic", population: 235_000, demand_mult: 0.35, beta_p_mult: 1.3, beta_q_mult: 0.7, beta_b_mult: 0.8, brand_transfer: 0.7, entry_cost: 80_000, distribution_cost_per_unit: 0.4, tariff_rate: 0, fx_volatility: 0, lots: SITE_LOTS, geo: [-92.5, 41.6], demand_growth: 0.03 },
+      { id: "coastal", label: "Coastal cities", kind: "domestic", population: 135_000, demand_mult: 0.25, beta_p_mult: 0.7, beta_q_mult: 1.3, beta_b_mult: 1.15, brand_transfer: 0.7, entry_cost: 120_000, distribution_cost_per_unit: 0.5, tariff_rate: 0, fx_volatility: 0, lots: SITE_LOTS, geo: [-74.0, 40.6], demand_growth: -0.02 },
+      { id: "export_eu", label: "European export", kind: "export", population: 160_000, demand_mult: 0.2, beta_p_mult: 0.8, beta_q_mult: 1.2, beta_b_mult: 1.1, brand_transfer: 0.4, entry_cost: 160_000, distribution_cost_per_unit: 0.6, tariff_rate: 0.12, fx_volatility: 0.05, lots: SITE_LOTS, geo: [-0.1, 51.5], demand_growth: 0.04 },
+      { id: "export_asia", label: "Asia-Pacific export", kind: "export", population: 215_000, demand_mult: 0.3, beta_p_mult: 1.1, beta_q_mult: 1.0, beta_b_mult: 1.2, brand_transfer: 0.4, entry_cost: 180_000, distribution_cost_per_unit: 0.7, tariff_rate: 0.08, fx_volatility: 0.08, lots: SITE_LOTS, geo: [121.5, 31.2], demand_growth: 0.06 },
     ],
     // Phase 3: per-unit, per-geo-distance shipping when you sell far from where you produce.
     // Domestic lanes are cheap (~0.05/u); home→Asia is steep (~0.9/u) — a reason to PRODUCE there.
@@ -139,8 +157,11 @@ export const defaultModules: ModulesConfig = {
   },
   // Conquest guards (tuned on the all-modules sweep): a target must be deeply
   // distressed, the floor price is near fair value, and one firm can't roll up
-  // the whole industry.
-  ma: { enabled: false, integration_discount: 0.6, min_price_fraction: 0.75, min_distress_rounds: 2, max_acquisitions: 2 },
+  // the whole industry. min_distress_rounds 2→4 (DW-041): at 2, acquirers hoovered
+  // up firms in a transient dip (32 acquisitions vs 13 bankruptcies across 16 runs)
+  // — M&A should be the rescue of a firm already on the covenant runway (runway = 3
+  // rounds), not the punishment for two bad quarters.
+  ma: { enabled: false, integration_discount: 0.6, min_price_fraction: 0.75, min_distress_rounds: 4, max_acquisitions: 2 },
   financialInstruments: {
     enabled: false,
     convertible: { rate: 0.02, term: 4, max_equity_fraction: 1.0 }, // 8% APR note
@@ -170,13 +191,17 @@ export const defaultModules: ModulesConfig = {
     // fixed_cost = $/qtr lease + utilities (industrial ~$10-12/sqft/yr, downtown
     // retail $20-30 — district rent_mult layers on top); maintenance_effect =
     // condition per $ maintained per round (full upkeep ≈ 4%/yr of capex).
+    // fixed_cost trimmed ~15–20% (DW-042): with demand growth flattened to the
+    // post-boom rates, the old leases put the whole module economy under water
+    // (industry-wide NI negative from round 6). Softer market, softer rents; build
+    // costs (the strategic commitment) are unchanged.
     types: [
-      { id: "brewery_large", label: "Production brewery", production_capacity: 128_000, retail_draw: 0, base_cost: 750_000, fixed_cost: 22_000, build_rounds: 2, condition_decay: 0.05, maintenance_effect: 0.00000625 },
-      { id: "canning_line", label: "Canning line", production_capacity: 64_000, retail_draw: 0, base_cost: 150_000, fixed_cost: 8_000, build_rounds: 1, condition_decay: 0.06, maintenance_effect: 0.00001 },
-      { id: "brewery_small", label: "Nano brewery", production_capacity: 48_000, retail_draw: 4_000, base_cost: 200_000, fixed_cost: 9_000, build_rounds: 1, condition_decay: 0.06, maintenance_effect: 0.00001 },
-      { id: "brewpub", label: "Brewpub", production_capacity: 36_000, retail_draw: 10_400, base_cost: 350_000, fixed_cost: 15_000, build_rounds: 1, condition_decay: 0.06, maintenance_effect: 0.00001125 },
-      { id: "taproom", label: "Taproom", production_capacity: 11_200, retail_draw: 16_000, base_cost: 220_000, fixed_cost: 12_000, build_rounds: 1, condition_decay: 0.07, maintenance_effect: 0.0000125 },
-      { id: "bottle_shop", label: "Bottle shop", production_capacity: 0, retail_draw: 12_000, base_cost: 90_000, fixed_cost: 6_000, build_rounds: 0, condition_decay: 0.06, maintenance_effect: 0.0000125 },
+      { id: "brewery_large", label: "Production brewery", production_capacity: 128_000, retail_draw: 0, base_cost: 750_000, fixed_cost: 18_000, build_rounds: 2, condition_decay: 0.05, maintenance_effect: 0.00000625 },
+      { id: "canning_line", label: "Canning line", production_capacity: 64_000, retail_draw: 0, base_cost: 150_000, fixed_cost: 7_000, build_rounds: 1, condition_decay: 0.06, maintenance_effect: 0.00001 },
+      { id: "brewery_small", label: "Nano brewery", production_capacity: 48_000, retail_draw: 4_000, base_cost: 200_000, fixed_cost: 7_500, build_rounds: 1, condition_decay: 0.06, maintenance_effect: 0.00001 },
+      { id: "brewpub", label: "Brewpub", production_capacity: 36_000, retail_draw: 10_400, base_cost: 350_000, fixed_cost: 12_500, build_rounds: 1, condition_decay: 0.06, maintenance_effect: 0.00001125 },
+      { id: "taproom", label: "Taproom", production_capacity: 11_200, retail_draw: 16_000, base_cost: 220_000, fixed_cost: 10_000, build_rounds: 1, condition_decay: 0.07, maintenance_effect: 0.0000125 },
+      { id: "bottle_shop", label: "Bottle shop", production_capacity: 0, retail_draw: 12_000, base_cost: 90_000, fixed_cost: 5_000, build_rounds: 0, condition_decay: 0.06, maintenance_effect: 0.0000125 },
     ],
     // Each district is a real siting tradeoff (rent × capacity × brand draw), not flavor.
     // Downtown: pricey + cramped, but huge brand visibility (a taproom play). Riverside:
@@ -192,6 +217,8 @@ export const defaultModules: ModulesConfig = {
     // Phase 2 spatial cannibalization. Noticeable by default (beta_loc 1.0): a blue-ocean lot
     // vs. a fully crowded one swings appeal by ~e^2. Tune with play data. See engine/geography.ts.
     catchment: { grid: 16, radius: 5, lambda: 0.6, self_weight: 0.5, beta_loc: 1.0 },
+    // DW-041: district brand draw saturates in B (same guard as employees.stock_halfsat).
+    brand_halfsat: 30,
   },
   // MOD-B12 — named human capital. OFF by default (additive: no employees ⇒ identical
   // to the pre-module game). Each hire adds a salary (opex) and a skill×satisfaction
@@ -205,17 +232,24 @@ export const defaultModules: ModulesConfig = {
     // benchmark-calibrated: head brewer ~$21k/qtr loaded, taproom manager ~$19k, etc.
     // gain_per_skill scaled with salaries (×2.5) so the hire-vs-invest tradeoff keeps
     // its shape: top talent (skill 4-5) beats direct stock investment, journeymen don't.
+    // base_salary trimmed ~15% (DW-042): same post-boom rationale as facility rents —
+    // at flattened demand the old payroll put every staffed firm's NI under water.
+    // Relative pay across roles (and the hire-vs-invest tradeoff shape) unchanged.
     roles: [
-      { id: "head_brewer", label: "Head Brewer", primary_stock: "Q", gain_per_skill: 2.25, base_salary: 20_000 },
-      { id: "brand_manager", label: "Brand Manager", primary_stock: "B", gain_per_skill: 2.0, base_salary: 18_000 },
-      { id: "operations_manager", label: "Operations Manager", primary_stock: "process", gain_per_skill: 1.75, base_salary: 17_000 },
-      { id: "taproom_manager", label: "Taproom Manager", primary_stock: "T_emp", gain_per_skill: 1.75, base_salary: 14_000 },
-      { id: "finance_lead", label: "Finance Lead", primary_stock: "T_inv", gain_per_skill: 1.5, base_salary: 18_000 },
-      { id: "sales_director", label: "Sales Director", primary_stock: "T_gov", gain_per_skill: 1.5, base_salary: 19_000 },
+      { id: "head_brewer", label: "Head Brewer", primary_stock: "Q", gain_per_skill: 2.25, base_salary: 17_000 },
+      { id: "brand_manager", label: "Brand Manager", primary_stock: "B", gain_per_skill: 2.0, base_salary: 15_500 },
+      { id: "operations_manager", label: "Operations Manager", primary_stock: "process", gain_per_skill: 1.75, base_salary: 14_500 },
+      { id: "taproom_manager", label: "Taproom Manager", primary_stock: "T_emp", gain_per_skill: 1.75, base_salary: 12_000 },
+      { id: "finance_lead", label: "Finance Lead", primary_stock: "T_inv", gain_per_skill: 1.5, base_salary: 15_500 },
+      { id: "sales_director", label: "Sales Director", primary_stock: "T_gov", gain_per_skill: 1.5, base_salary: 16_000 },
     ],
     starting_satisfaction: 0.7,
     tenure_bump: 0.1,
     poach_base: 0.05,
+    // DW-041: saturate gains in the stock they feed (halfsat ≈ the base game's own
+    // steady-state ceiling) — top talent still beats direct investment early, but a
+    // full roster can no longer compound Q past ~2× the base-game ceiling.
+    stock_halfsat: 35,
   },
   // MOD-A10 — market conduct & stakeholder backlash. OFF by default (all-off parity). Noticeable
   // when on: a firm holding >40% share at a markup over 2.2× cost is fined + loses brand, worse
@@ -416,7 +450,13 @@ export const PRESETS: Preset[] = [
   { id: "marketing", name: "Market dynamics", description: "PR events, asymmetric starts, consumer drift, R&D races.", audience: "Marketing strategy", modules: ["prEvents", "asymmetricStarts", "consumerDrift", "rndRace"] },
   { id: "global", name: "International strategy", description: "Sustainability, asymmetric starts, geographic + international expansion.", audience: "International business", modules: ["sustainability", "asymmetricStarts", "geography", "international"] },
   { id: "industrial-org", name: "Industry dynamics", description: "Public goods, drift, lobbying, R&D, vertical integration, M&A, reputation.", audience: "Industrial organization / strategy research", modules: ["publicGoods", "asymmetricStarts", "consumerDrift", "lobbying", "rndRace", "verticalIntegration", "ma", "reputation"] },
-  { id: "full", name: "Everything (Pro)", description: "Every Tier A + Tier B module enabled — advanced multi-week tournament.", audience: "Advanced capstone", modules: MODULE_REGISTRY.map((m) => m.id) },
+  // "Everything" means every strategic LEVER — asymmetricStarts is excluded (DW-042)
+  // because it sets initial conditions, not capabilities: in a class competition every
+  // team founds its brewery the same semester, and seeding two teams as incumbents
+  // (1.5× brand/capacity) made the entrant chairs structurally unwinnable in the
+  // hardest config. Instructors who want incumbent-vs-disruptor turn it on explicitly
+  // (it's in the org/marketing/global/industrial-org presets).
+  { id: "full", name: "Everything (Pro)", description: "Every Tier A + Tier B module enabled, symmetric starts — advanced multi-week tournament.", audience: "Advanced capstone", modules: MODULE_REGISTRY.filter((m) => m.id !== "asymmetricStarts").map((m) => m.id) },
 ];
 
 export const presetById = (id: string): Preset | undefined => PRESETS.find((p) => p.id === id);

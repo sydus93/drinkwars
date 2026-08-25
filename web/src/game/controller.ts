@@ -5,7 +5,7 @@
  * adaptive best-response bots from the engine. This is app-spec §9 step 0.
  */
 import { GameOrchestrator, InMemoryAdapter, randomBreweryNames, renameFirms } from "drinkwars-server";
-import { resolveConfig, decideAdaptive, ADAPTIVE_LEANS, inventoryEnabled, roleBriefings, summarizeAgreementsFor, summarizeLobbying, generateHiringMarket, projectMarkets, projectFirms, projectShocks, projectHistory } from "drinkwars-engine";
+import { resolveConfig, decideAdaptive, ADAPTIVE_LEANS, inventoryEnabled, roleBriefings, summarizeAgreementsFor, summarizeLobbying, generateHiringMarket, projectMarkets, projectFirms, projectShocks, projectHistory, segmentDemandTotals } from "drinkwars-engine";
 import type { RoleBriefing, AllianceSummary, LobbySummary, Candidate } from "drinkwars-engine";
 import type { Config, ConfigOverride, FirmDecision, FirmId, FirmRoundResult, FirmState, Lean, ModulesConfig, RoundResult, SegmentId, WorldState } from "drinkwars-engine";
 import { rankDistrictsForType } from "../labels.js";
@@ -51,6 +51,15 @@ export interface OwnTrend {
   debt?: number;
   assets?: number;
   unitsSold?: number;
+  // Scorecard-panel inputs (DW-045) — own figures only; optional for older saves.
+  scoreNorm?: { financial: number; market: number; intangible: number; stakeholder: number } | null;
+  scoreRaw?: { financial: number; market: number; intangible: number; stakeholder: number } | null;
+  scoreBridge?: { financial: number; market: number; intangible: number; stakeholder: number; terminal: number } | null;
+  scored?: boolean;
+  coverage?: number;
+  T_emp?: number;
+  T_inv?: number;
+  T_gov?: number;
 }
 export interface FieldTrend {
   round: number;
@@ -165,6 +174,7 @@ export interface GameView {
   names: Record<string, string>; // firm_id → display name (events/briefings arrive pre-renamed)
   inventoryEnabled: boolean; // production/inventory mode on for this game?
   modules?: ModulesConfig; // resolved expansion-module config (gates the module decision controls)
+  scoring?: Config["scoring"]; // scorecard config (weights, benchmark bands, accumulation window) — DW-045 panel inputs
   briefings: RoleBriefing[]; // MOD-B05 role intel (empty when off)
   fx: Record<string, number>; // MOD-B02 export exchange rates (empty when off)
   markets: MarketView[]; // MOD-B01 per-market ("city") view for the City View (empty when geography off)
@@ -280,7 +290,7 @@ export class SinglePlayerGame {
       lifecycle: game.lifecycle,
       complete: game.lifecycle === "complete",
       difficulty: this.difficulty,
-      segments: world.segments.map((s) => ({ id: s.id, active: s.active, D: s.D })),
+      segments: (() => { const t = segmentDemandTotals(world, this.config); return world.segments.map((s) => ({ id: s.id, active: s.active, D: t.get(s.id) ?? s.D })); })(),
       own,
       ownActive: own.status === "active",
       unitCostEst: own.unit_cost > 0 ? own.unit_cost : this.config.costs.c_base * 0.85,
@@ -294,6 +304,7 @@ export class SinglePlayerGame {
       names,
       inventoryEnabled: inventoryEnabled(this.config),
       modules: this.config.modules,
+      scoring: this.config.scoring,
       briefings,
       fx: world.fx_rates ?? {},
       markets,

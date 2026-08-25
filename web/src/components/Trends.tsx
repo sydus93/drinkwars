@@ -4,6 +4,7 @@ import { fmt } from "../labels.js";
 import { RATIO_DEFS, RATIO_GROUPS, ratioDisplay, type RatioInput } from "../lib/ratios.js";
 import { Card, Eyebrow } from "./ui.js";
 import { LineChart, Legend, type Series } from "./charts.js";
+import { ScorecardPanel } from "./Scorecard.js";
 
 const COPPER = "var(--color-copper)";
 const HOP = "var(--color-hop)";
@@ -25,10 +26,13 @@ export function Trends({ view }: { view: GameView }) {
   const h = view.history;
   if (h.length === 0) {
     return (
-      <Card>
-        <Eyebrow>Trends</Eyebrow>
-        <div className="text-sm text-inksoft">Play a round to start charting your trajectory over the season.</div>
-      </Card>
+      <div className="grid gap-3">
+        <ScorecardPanel view={view} />
+        <Card>
+          <Eyebrow>Trends</Eyebrow>
+          <div className="text-sm text-inksoft">Play a round to start charting your trajectory over the season.</div>
+        </Card>
+      </div>
     );
   }
 
@@ -56,6 +60,7 @@ export function Trends({ view }: { view: GameView }) {
 
   return (
     <div className="grid gap-4">
+      <ScorecardPanel view={view} />
       <Card>
         <Eyebrow>This Season So Far</Eyebrow>
         <div className="grid grid-cols-3 gap-4 sm:grid-cols-5">

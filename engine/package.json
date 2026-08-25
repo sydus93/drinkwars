@@ -10,9 +10,12 @@
   },
   "scripts": {
     "balance": "tsx harness/balance.ts",
+    "calibrate": "tsx harness/calibrate.ts",
+    "bands": "tsx harness/bands.ts",
     "smoke": "tsx harness/smoke.ts",
     "test": "tsx --test test/*.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "fuzz": "tsx harness/fuzz.ts"
   },
   "engines": {
     "node": ">=20"

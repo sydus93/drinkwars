@@ -129,6 +129,9 @@ export interface DistressRow {
   leverage: number;
   creditRationed: boolean;
   rank: number;
+  /** Engine solvency clock (DW-046) — optional so older rows still work. */
+  belowSafety?: boolean;
+  roundsBelowSafety?: number;
 }
 
 /** Short flag labels for the LATEST round given one firm's per-round history
@@ -138,6 +141,10 @@ export function distressFlags(history: DistressRow[]): string[] {
   if (n === 0) return [];
   const last = history[n - 1];
   const flags: string[] = [];
+  // The engine's own rule first: below the safety line (cash under the threshold or
+  // coverage under 1×) — the covenant breaches after 3 such quarters and a rival can bid
+  // to acquire after 4. Everything after this is a heuristic early warning.
+  if (last.belowSafety) flags.push(`below safety line${(last.roundsBelowSafety ?? 0) > 1 ? ` · ${last.roundsBelowSafety} qtrs` : ""}`);
   let losses = 0;
   for (let i = n - 1; i >= 0 && history[i].netIncome < 0; i--) losses++;
   if (losses >= 2) flags.push("2+ loss rounds");

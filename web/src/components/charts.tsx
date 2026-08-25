@@ -218,7 +218,7 @@ type Score = { financial: number; market: number; intangible: number; stakeholde
 /** Scorecard radar — your four normalized pillars (vs the field average when supplied). */
 export function RadialScore({ you, field }: { you: Score; field?: Score | null }) {
   const S = 200, c = S / 2, R = 70;
-  const axes: [keyof Score, string][] = [["financial", "Financial"], ["market", "Market"], ["intangible", "Intangible"], ["stakeholder", "Stakeholder"]];
+  const axes: [keyof Score, string][] = [["financial", "Financial"], ["market", "Market"], ["intangible", "Preparedness"], ["stakeholder", "Standing"]];
   const ang = (i: number) => (Math.PI * 2 * i) / axes.length - Math.PI / 2;
   const pt = (i: number, v: number): [number, number] => [c + Math.cos(ang(i)) * R * v, c + Math.sin(ang(i)) * R * v];
   const ringPath = (g: number) => axes.map((_, i) => { const q = pt(i, g); return `${i ? "L" : "M"}${q[0].toFixed(1)} ${q[1].toFixed(1)}`; }).join(" ") + " Z";

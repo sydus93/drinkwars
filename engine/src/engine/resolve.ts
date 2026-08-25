@@ -15,7 +15,7 @@ import { computeBetaDeltas, zeroBetaDelta } from "./drift.js";
 import { resolvePrEvents } from "./pr.js";
 import { resolveSustainability } from "./sustainability.js";
 import { resolvePublicGoods } from "./publicgoods.js";
-import { resolveGeography, updateFxRates, type GeoOutcome } from "./geography.js";
+import { resolveGeography, updateFxRates, segmentDemandTotals, type GeoOutcome } from "./geography.js";
 import { updateReputation, reputationSpread } from "./reputation.js";
 import { resolveRnd, rndFirstMoverBonus } from "./rndrace.js";
 import { resolveAssets, verticalCostReduction, verticalRegRelief } from "./assets.js";
@@ -31,6 +31,7 @@ import { computeShockEffects } from "./shocks.js";
 import { scoreRound, type ScoreSnapshot } from "./scoring.js";
 import { buildStrategyVector, computeDistinctiveness, type StrategyVector } from "./distinctiveness.js";
 import { processExits } from "./exit.js";
+import { sanitizeDecision } from "./sanitize.js";
 
 function zeroDecision(firmId: FirmId, segments: SegmentId[]): FirmDecision {
   const price: Record<SegmentId, number> = {};
@@ -47,7 +48,6 @@ function zeroDecision(firmId: FirmId, segments: SegmentId[]): FirmDecision {
   };
 }
 
-const nn = (x: number) => (Number.isFinite(x) && x > 0 ? x : 0);
 
 export function resolveRound(prevWorld: WorldState, decisionList: FirmDecision[], c: Config): { world: WorldState; result: RoundResult } {
   const w: WorldState = structuredClone(prevWorld);
@@ -68,22 +68,13 @@ export function resolveRound(prevWorld: WorldState, decisionList: FirmDecision[]
   const participants = w.firms.filter((f) => f.status === "active").map((f) => f.id);
 
   // Step 1: ingest & sanitize decisions; zero-fill missing (locked controls = 0).
+  // sanitizeDecision is the engine's input boundary (DW-046): every numeric lever comes
+  // out finite and non-negative, every record/array well-shaped, every enum in-vocabulary
+  // — a client that POSTs NaN/negative/string values cannot poison the shared market.
   const decisions = new Map<FirmId, FirmDecision>();
   for (const id of participants) {
-    const raw = decisionList.find((d) => d.firm_id === id) ?? zeroDecision(id, allSegmentIds);
-    const price: Record<SegmentId, number> = {};
-    const presence: Record<SegmentId, number> = {};
-    for (const s of allSegmentIds) {
-      price[s] = Math.max(0, raw.price?.[s] ?? 0);
-      presence[s] = Math.max(0, raw.presence?.[s] ?? 0);
-    }
-    decisions.set(id, {
-      ...raw, price, presence,
-      invest_cap: nn(raw.invest_cap), invest_process: nn(raw.invest_process), invest_Q: nn(raw.invest_Q),
-      invest_B: nn(raw.invest_B), invest_T_emp: nn(raw.invest_T_emp), invest_T_inv: nn(raw.invest_T_inv), invest_T_gov: nn(raw.invest_T_gov),
-      debt_draw: nn(raw.debt_draw), debt_repay: nn(raw.debt_repay), equity_raise: nn(raw.equity_raise), dividend: nn(raw.dividend),
-      agreement_actions: raw.agreement_actions ?? [],
-    });
+    const raw = decisionList.find((d) => d?.firm_id === id) ?? zeroDecision(id, allSegmentIds);
+    decisions.set(id, sanitizeDecision(raw, id, allSegmentIds));
   }
 
   // Step 3: resolve agreement actions (form/defect), trust effects & costs.
@@ -137,7 +128,12 @@ export function resolveRound(prevWorld: WorldState, decisionList: FirmDecision[]
   // so the §7.2 finance invariants are untouched.
   for (const f of w.firms) {
     const b = facRes.brandByFirm.get(f.id);
-    if (b && f.status === "active") f.B += b;
+    if (b && f.status === "active") {
+      // Saturating in B (brand_halfsat) so a district portfolio can't pump the Brand
+      // stock linearly forever — same DW-041 guard as employee stock gains.
+      const bh = c.modules?.facilities?.brand_halfsat;
+      f.B += bh != null ? b * (bh / (bh + Math.max(0, f.B))) : b;
+    }
   }
 
   // Step 4.5: sustainability (MOD-A03) — advance water-efficiency + T_gov goodwill
@@ -372,7 +368,7 @@ export function resolveRound(prevWorld: WorldState, decisionList: FirmDecision[]
       regBurdenReduction: verticalRegRelief(f, c, round),
       disposalProceeds: facRes.salvageByFirm.get(f.id) ?? 0, // MOD-B11 divest proceeds (book-neutral)
       round,
-      instruments: { draw_convertible: nn(d.draw_convertible ?? 0), draw_rbf: nn(d.draw_rbf ?? 0) },
+      instruments: { draw_convertible: d.draw_convertible ?? 0, draw_rbf: d.draw_rbf ?? 0 },
       config: c,
     });
     f.cash = fin.next.cash;
@@ -428,9 +424,19 @@ export function resolveRound(prevWorld: WorldState, decisionList: FirmDecision[]
       firm_id: id, net_income: fin.pnl.net_income, invested_capital: fin.balance_sheet.debt + fin.balance_sheet.equity,
       coverage: fin.cost_of_capital.coverage, leverage: fin.cost_of_capital.leverage, cash: f.cash,
       shareSum, Q: f.Q, B: f.B, T_emp: f.T_emp, T_inv: f.T_inv, T_gov: f.T_gov,
+      // Penalty-registry metric bag (scoring-layer §4) — only values already emitted.
+      metrics: (() => {
+        const fl = invByFirm.get(id);
+        return {
+          ending_inventory: fl?.end ?? f.inventory_units ?? 0,
+          production: fl?.produced ?? 0,
+          revenue: fin.pnl.revenue,
+          capacity: f.cap,
+        };
+      })(),
     };
   });
-  const scores = scoreRound(snaps, c, firmsById);
+  const scores = scoreRound(snaps, c, firmsById, round);
 
   // Step 13: emit per-firm results + next world.
   const firm_results: FirmRoundResult[] = participants.map((id) => {
@@ -454,6 +460,7 @@ export function resolveRound(prevWorld: WorldState, decisionList: FirmDecision[]
       pnl: fin.pnl, balance_sheet: fin.balance_sheet, cash_flow: fin.cash_flow, cost_of_capital: fin.cost_of_capital,
       state: { cash: f.cash, cap: f.cap, Q: f.Q, B: f.B, T_emp: f.T_emp, T_inv: f.T_inv, T_gov: f.T_gov, process: f.process, cum_output: f.cum_output, debt: f.debt, equity: fin.balance_sheet.equity, inventory_units: f.inventory_units, reputation: f.reputation ?? 0, water_efficiency: f.water_efficiency ?? 0, rnd_progress: f.rnd_progress ?? 0 },
       scorecard_raw: sc.raw, scorecard_norm: sc.norm, scorecard_cumulative: sc.cumulative,
+      scored: sc.scored, scorecard_bridge: sc.bridge, penalty_multipliers: sc.penalties,
       distinctiveness: distinct.get(id) ?? null,
       valuation: valuationByFirm.get(id) ?? 0,
       info_purchased: d.buy_info,
@@ -466,7 +473,10 @@ export function resolveRound(prevWorld: WorldState, decisionList: FirmDecision[]
     };
   });
 
-  const market = w.segments.map((s) => ({ segment: s.id, D: s.D, total_q: segTotals.get(s.id) ?? 0, active: s.active }));
+  // Demand reported next to units sold is the total across every open market (home only
+  // when geography is off) — see segmentDemandTotals. Note w.round is still this round here.
+  const demandTotals = segmentDemandTotals({ ...w, round }, c);
+  const market = w.segments.map((s) => ({ segment: s.id, D: demandTotals.get(s.id) ?? s.D, total_q: segTotals.get(s.id) ?? 0, active: s.active }));
 
   // Grow active-segment demand for the next round; advance the clock.
   for (const sw of w.segments) {

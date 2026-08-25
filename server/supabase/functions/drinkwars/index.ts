@@ -8,7 +8,7 @@
 // Game logic comes from ./drinkwars-core.js (esbuild bundle of the orchestrator
 // + Supabase adapter + engine). Rebuild it with `npm run build:edge` in server/.
 import { createClient } from "@supabase/supabase-js";
-import { GameOrchestrator, SupabaseAdapter, buildInstructorDashboard, dashboardToCsv, randomBreweryNames, renameFirms, resolveConfig, roleBriefings, summarizeAgreementsFor, summarizeLobbying, deepMerge, generateHiringMarket, projectMarkets, projectFirms, projectShocks, projectHistory } from "./drinkwars-core.js";
+import { GameOrchestrator, SupabaseAdapter, buildInstructorDashboard, dashboardToCsv, randomBreweryNames, renameFirms, resolveConfig, roleBriefings, summarizeAgreementsFor, summarizeLobbying, withRequestCache, deepMerge, generateHiringMarket, projectMarkets, projectFirms, projectShocks, projectHistory } from "./drinkwars-core.js";
 
 const url = Deno.env.get("SUPABASE_URL")!;
 const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -28,7 +28,11 @@ const ownsGame = (tier: InstructorTier | null, game: { owner_tag: string | null 
 
 const db = createClient(url, serviceKey, { auth: { persistSession: false } });
 const store = new SupabaseAdapter(db);
-const orch = new GameOrchestrator(store, () => Date.now(), { botFillEmptySlots: true });
+const baseStore = store;
+// noShowPolicy "carry": a claimed firm that misses the deadline keeps trading on its
+// standing plan instead of being zero-filled out of the market for a quarter (DW-039).
+const ORCH_OPTS = { botFillEmptySlots: true, noShowPolicy: "carry" as const };
+const orch = new GameOrchestrator(store, () => Date.now(), ORCH_OPTS);
 
 const CORS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -74,6 +78,11 @@ async function readToken(token: string): Promise<Session | null> {
  *  server/src/transport.ts::viewFor so deployed multiplayer matches single-player + the
  *  local dev transport — these projections come from the shared engine views.ts helpers. */
 async function viewFor(gameId: string, teamId: string, userId?: string) {
+  // One request, one cache — the projections below re-read the game, world state, round
+  // results and team roster several times each (35 storage round-trips before this, ~350
+  // queries/sec for a 25-student class). Read-only scope; see server/src/request-cache.ts.
+  const store = withRequestCache(baseStore);
+  const orch = new GameOrchestrator(store, () => Date.now(), ORCH_OPTS);
   const pub = await orch.getPublicState(gameId);
   const tv = await orch.getTeamView(gameId, teamId);
   const game = await store.getGame(gameId);
@@ -172,7 +181,7 @@ Deno.serve(async (req: Request) => {
 
     // ---- student ----
     if (method === "POST" && path === "/join") {
-      const { code, name, claim, teamId, role } = body;
+      const { code, name, claim, teamId, role, teamName } = body;
       if (!code) return json(400, { error: "code required" });
       const codeUp = String(code).toUpperCase();
       // Validate BEFORE creating an auth user, so a bad/typo code leaves no orphan.
@@ -193,7 +202,7 @@ Deno.serve(async (req: Request) => {
         if (created.error || !created.data.user) return json(500, { error: `auth: ${created.error?.message ?? "could not create player"}` });
         userId = created.data.user.id;
       }
-      const joined = await orch.joinGame(codeUp, displayName, userId, { teamId, role });
+      const joined = await orch.joinGame(codeUp, displayName, userId, { teamId, role, teamName: teamName ? String(teamName).slice(0, 40) : undefined });
       const token = await mintToken({ gameId: joined.gameId, teamId: joined.teamId, userId, role: joined.role });
       return json(200, { token, gameId: joined.gameId, teamId: joined.teamId, firmId: joined.firmId, nRounds: game.n_rounds, config: game.config, firmMode: game.firm_mode ?? "solo", role: joined.role ?? null, claim: joined.claim ?? null });
     }
@@ -226,7 +235,8 @@ Deno.serve(async (req: Request) => {
       if (method === "POST" && path === "/instructor/games") {
         const nFirms = Number(body.nFirms ?? 6);
         const nRounds = Number(body.nRounds ?? 16);
-        let override: Record<string, unknown> = { game: { n_firms: nFirms, n_rounds: nRounds } };
+        // Fresh seed per game (DW-046) — see transport.ts; a configOverride.game.seed still wins via deepMerge.
+        let override: Record<string, unknown> = { game: { n_firms: nFirms, n_rounds: nRounds, seed: 1 + Math.floor(Math.random() * 2_000_000_000) } };
         // Expansion modules (instructor selector) + legacy inventory boolean.
         const mods: Record<string, unknown> = body.modules && typeof body.modules === "object" ? { ...body.modules } : {};
         if (body.inventory) mods.inventory = { enabled: true };
@@ -246,22 +256,44 @@ Deno.serve(async (req: Request) => {
       if (method === "POST" && path === "/instructor/roster") {
         const roster = body.roster;
         if (!Array.isArray(roster) || !roster.length) return json(400, { error: "roster array required" });
-        const entries: { external_id: string; name: string; email?: string | null; user_id?: string }[] = [];
+        // DW-046 (twin of transport.ts): dedupe by case-insensitive NetID, provision one row at
+        // a time so one bad line can't 500 the paste or orphan auth accounts, and re-use an
+        // auth account that already exists for the row's email.
+        const seen = new Set<string>();
+        const students: any[] = [];
+        const errors: { external_id: string; error: string }[] = [];
         for (const r of roster) {
-          if (!r?.external_id || !r?.name) continue;
-          const existing = await store.getUserByExternalId(String(r.external_id));
-          let user_id: string;
-          if (existing) user_id = existing.id;
-          else {
-            const email = r.email || `${String(r.external_id).toLowerCase().replace(/[^a-z0-9._-]/g, "")}@roster.drinkwars.local`;
-            const created = await db.auth.admin.createUser({ email, email_confirm: true });
-            if (created.error || !created.data.user) return json(500, { error: `auth: ${created.error?.message ?? "could not create roster user"}` });
-            user_id = created.data.user.id;
+          const id = String(r?.external_id ?? "").trim();
+          if (!id || seen.has(id.toLowerCase())) continue;
+          seen.add(id.toLowerCase());
+          const name = String(r?.name ?? "").trim() || id;
+          const email = typeof r?.email === "string" && r.email.includes("@") ? r.email.trim().toLowerCase() : `${id.toLowerCase().replace(/[^a-z0-9._-]/g, "")}@roster.drinkwars.local`;
+          try {
+            const existing = await store.getUserByExternalId(id);
+            let user_id: string;
+            if (existing) user_id = existing.id;
+            else {
+              const created = await db.auth.admin.createUser({ email, email_confirm: true });
+              if (!created.error && created.data.user) user_id = created.data.user.id;
+              else {
+                let found: string | null = null;
+                for (let page = 1; page <= 20 && !found; page++) {
+                  const list = await db.auth.admin.listUsers({ page, perPage: 1000 });
+                  if (list.error) break;
+                  const hit = list.data.users.find((u: any) => (u.email ?? "").toLowerCase() === email);
+                  if (hit) found = hit.id;
+                  if (list.data.users.length < 1000) break;
+                }
+                if (!found) throw new Error(`auth: ${created.error?.message ?? "could not create roster user"}`);
+                user_id = found;
+              }
+            }
+            students.push(...(await orch.provisionRoster([{ external_id: id, name, email: typeof r?.email === "string" ? r.email : null, user_id }], { cohort: body.cohort ?? null })));
+          } catch (e) {
+            errors.push({ external_id: id, error: e instanceof Error ? e.message : String(e) });
           }
-          entries.push({ external_id: String(r.external_id), name: String(r.name), email: r.email ?? null, user_id });
         }
-        const students = await orch.provisionRoster(entries, { cohort: body.cohort ?? null });
-        return json(200, { students });
+        return json(200, { students, errors });
       }
       // Re-enter a running game by its join code (instructor reconnect after a drop).
       if (method === "POST" && path === "/instructor/resume") {
@@ -281,7 +313,7 @@ Deno.serve(async (req: Request) => {
       const ex = path.match(/^\/instructor\/games\/([^/]+)\/export$/);
       if (ex && method === "GET") {
         const gameId = ex[1];
-        const dash = await buildInstructorDashboard(store, gameId);
+        const dash = await buildInstructorDashboard(store, gameId, { noShowPolicy: ORCH_OPTS.noShowPolicy });
         const format = (u.searchParams.get("format") ?? "csv").toLowerCase();
         if (format === "json") return attachment(200, "application/json", JSON.stringify(dash, null, 2), `drinkwars-${gameId}.json`);
         return attachment(200, "text/csv", dashboardToCsv(dash), `drinkwars-${gameId}.csv`);
@@ -302,7 +334,7 @@ Deno.serve(async (req: Request) => {
       const m = path.match(/^\/instructor\/games\/([^/]+)\/(status|lock|resolve|advance|dashboard)$/);
       if (m) {
         const [, gameId, action] = m;
-        if (action === "dashboard" && method === "GET") return json(200, await buildInstructorDashboard(store, gameId));
+        if (action === "dashboard" && method === "GET") return json(200, await buildInstructorDashboard(store, gameId, { noShowPolicy: ORCH_OPTS.noShowPolicy }));
         if (action === "status" && method === "GET") {
           const status = await orch.getStatus(gameId);
           const game = await store.getGame(gameId);
@@ -316,7 +348,7 @@ Deno.serve(async (req: Request) => {
         }
         if (action === "lock" && method === "POST") return json(200, { nonSubmitters: await orch.lockRound(gameId) });
         if (action === "resolve" && method === "POST") {
-          const r = await orch.resolveRound(gameId);
+          const r = await orch.resolveRound(gameId, { force: !!body?.force });
           if (r.lifecycle === "published") await orch.advanceRound(gameId);
           return json(200, r);
         }

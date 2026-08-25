@@ -48,6 +48,15 @@ const DESKS: { id: DeskId; label: string; color: string }[] = [
   { id: "strategy", label: "Strategy", color: "var(--color-plum)" },
 ];
 
+/** Does the CURRENT round count toward the season score? Mirrors the engine's
+ *  roundIsScored on the view's scoring config (accumulation window, §2). */
+function roundCounts(view: GameView): boolean {
+  const win = view.scoring?.accumulation_window;
+  if (!win) return true;
+  if (win.tail_only != null) return view.round >= view.nRounds - win.tail_only;
+  return view.round >= (win.drop_first ?? 0);
+}
+
 export function Play({
   view,
   busy,
@@ -181,6 +190,13 @@ export function Play({
           <h1 className="display text-2xl font-semibold sm:text-3xl">
             Round <span className="text-copper">{Math.min(view.round + 1, view.nRounds)}</span>
             <span className="text-inksoft"> / {view.nRounds}</span>
+            {/* Scoring-layer §2: an excluded round must be visibly marked BEFORE it's
+                played — an announced exclusion teaches that experimenting is cheap. */}
+            {!roundCounts(view) && (
+              <span className="ml-2 inline-flex translate-y-[-3px] items-center rounded-full border border-gold bg-gold/15 px-2 py-0.5 align-middle font-mono text-[0.58rem] font-bold uppercase tracking-wide text-copperdeep" title="This round resolves and publishes normally, but does not count toward the season score.">
+                practice · not scored
+              </span>
+            )}
           </h1>
           <div className="mt-1 flex flex-wrap gap-1.5">
             {view.segments.filter((s) => s.active).map((s) => (

@@ -173,9 +173,11 @@ export class SupabaseAdapter implements StorageAdapter {
 
   // ── World states (append-only) ──────────────────────────────────────────────
   async appendWorldState(rec: WorldStateRecord): Promise<void> {
-    must(await this.db.from("world_states").insert({
+    // Upsert on the natural key (DW-046): a resolve that failed half-way and is retried
+    // rewrites the identical deterministic row instead of tripping a duplicate-key error.
+    must(await this.db.from("world_states").upsert({
       game_id: rec.game_id, round: rec.round, state: rec.state, seed: rec.seed, created_at: toTs(rec.created_at),
-    }));
+    }, { onConflict: "game_id,round" }));
   }
   async updateWorldState(gameId: string, round: number, state: WorldState): Promise<void> {
     must(await this.db.from("world_states").update({ state }).eq("game_id", gameId).eq("round", round));
@@ -213,9 +215,9 @@ export class SupabaseAdapter implements StorageAdapter {
 
   // ── Results + research (append-only, except agreements upsert) ──────────────
   async appendRoundResult(rec: RoundResultRecord): Promise<void> {
-    must(await this.db.from("round_results").insert({
+    must(await this.db.from("round_results").upsert({
       game_id: rec.game_id, round: rec.round, result: rec.result, created_at: toTs(rec.created_at),
-    }));
+    }, { onConflict: "game_id,round" }));
   }
   async getRoundResult(gameId: string, round: number): Promise<RoundResultRecord | null> {
     const r = must(await this.db.from("round_results").select("*").eq("game_id", gameId).eq("round", round).maybeSingle());
@@ -227,9 +229,9 @@ export class SupabaseAdapter implements StorageAdapter {
   }
 
   async appendPublicRound(rec: PublicRoundRecord): Promise<void> {
-    must(await this.db.from("public_round").insert({
+    must(await this.db.from("public_round").upsert({
       game_id: rec.game_id, round: rec.round, events: rec.events, standings: rec.standings, market: rec.market, created_at: toTs(rec.created_at),
-    }));
+    }, { onConflict: "game_id,round" }));
   }
   async getPublicRound(gameId: string, round: number): Promise<PublicRoundRecord | null> {
     const r = must(await this.db.from("public_round").select("*").eq("game_id", gameId).eq("round", round).maybeSingle());
@@ -242,10 +244,10 @@ export class SupabaseAdapter implements StorageAdapter {
 
   async appendFirmRounds(rows: FirmRoundRow[]): Promise<void> {
     if (!rows.length) return;
-    must(await this.db.from("firm_round").insert(rows.map((r) => ({
+    must(await this.db.from("firm_round").upsert(rows.map((r) => ({
       game_id: r.game_id, round: r.round, firm_id: r.firm_id, team_id: r.team_id,
       consent: r.consent, deid_code: r.deid_code, data: r.data,
-    }))));
+    })), { onConflict: "game_id,round,firm_id" }));
   }
   async getFirmRounds(gameId: string): Promise<FirmRoundRow[]> {
     const rows = must(await this.db.from("firm_round").select("*").eq("game_id", gameId));
@@ -274,7 +276,7 @@ export class SupabaseAdapter implements StorageAdapter {
 
   async appendBeliefs(rows: BeliefRow[]): Promise<void> {
     if (!rows.length) return;
-    must(await this.db.from("beliefs").insert(rows));
+    must(await this.db.from("beliefs").upsert(rows, { onConflict: "game_id,round,team_id" }));
   }
   async getBeliefs(gameId: string): Promise<BeliefRow[]> {
     const rows = must(await this.db.from("beliefs").select("*").eq("game_id", gameId));
@@ -283,11 +285,11 @@ export class SupabaseAdapter implements StorageAdapter {
 
   async appendTelemetry(rows: TelemetryRow[]): Promise<void> {
     if (!rows.length) return;
-    must(await this.db.from("telemetry").insert(rows.map((r) => ({
+    must(await this.db.from("telemetry").upsert(rows.map((r) => ({
       game_id: r.game_id, round: r.round, team_id: r.team_id, revision_count: r.revision_count,
       info_purchased: r.info_purchased, submitted: r.submitted,
       submitted_at: toTs(r.submitted_at), time_to_decide_s: r.time_to_decide_s,
-    }))));
+    })), { onConflict: "game_id,round,team_id" }));
   }
   async getTelemetry(gameId: string): Promise<TelemetryRow[]> {
     const rows = must(await this.db.from("telemetry").select("*").eq("game_id", gameId));
@@ -300,7 +302,7 @@ export class SupabaseAdapter implements StorageAdapter {
 
   async appendReflections(rows: ReflectionRow[]): Promise<void> {
     if (!rows.length) return;
-    must(await this.db.from("reflections").insert(rows));
+    must(await this.db.from("reflections").upsert(rows, { onConflict: "game_id,round,team_id" }));
   }
   async getReflections(gameId: string): Promise<ReflectionRow[]> {
     const rows = must(await this.db.from("reflections").select("*").eq("game_id", gameId));
@@ -309,7 +311,7 @@ export class SupabaseAdapter implements StorageAdapter {
 
   async appendDistinctiveness(rows: DistinctivenessRow[]): Promise<void> {
     if (!rows.length) return;
-    must(await this.db.from("distinctiveness").insert(rows));
+    must(await this.db.from("distinctiveness").upsert(rows, { onConflict: "game_id,round,firm_id" }));
   }
   async getDistinctiveness(gameId: string): Promise<DistinctivenessRow[]> {
     const rows = must(await this.db.from("distinctiveness").select("*").eq("game_id", gameId));

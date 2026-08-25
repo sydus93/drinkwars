@@ -45,6 +45,31 @@ export function activeMarkets(c: Config, round?: number): MarketConfig[] {
   return geo.markets.filter((m) => m.kind !== "export" || exportsOpen);
 }
 
+/** How much of a segment's calibrated demand a market carries this round: its
+ *  `demand_mult` (the slice of the calibrated pool this region opens up — see the market
+ *  configs) compounded by its own growth. One helper for the arena, the totals, the views
+ *  and the bots, so every reader of "demand" agrees (DW-046). */
+export function marketDemandScale(m: MarketConfig, _c: Config, round: number): number {
+  return m.demand_mult * Math.pow(1 + (m.demand_growth ?? 0), round);
+}
+
+/** Total addressable demand per segment across every market open this round — the same
+ *  per-market formula resolveGeography feeds each arena, summed. With geography off it is
+ *  simply the segment's D. Use this wherever "demand" is shown next to units sold: before
+ *  DW-046 RoundResult.market.D was the home-market figure while total_q summed every
+ *  market, so dashboards could show more units sold than demand. */
+export function segmentDemandTotals(world: WorldState, c: Config): Map<SegmentId, number> {
+  const out = new Map<SegmentId, number>();
+  const markets = activeMarkets(c, world.round);
+  for (const s of world.segments) {
+    if (!markets.length) { out.set(s.id, s.D); continue; }
+    let tot = 0;
+    for (const m of markets) tot += s.D * marketDemandScale(m, c, world.round);
+    out.set(s.id, tot);
+  }
+  return out;
+}
+
 /** Advance the FX rates for export markets (mean-reverting, deterministic). Mutates
  *  world.fx_rates. No-op unless international is on. */
 export function updateFxRates(world: WorldState, c: Config): void {
@@ -234,7 +259,7 @@ export function resolveGeography(
     const fx = fxRateFor(world, c, m);
     const locUtilMap = locUtilForMarket(m, activeFirms, c, world.round);
     const arena: Arena = {
-      segments: world.segments.map((s) => ({ id: s.id, D: s.D * m.demand_mult * Math.pow(1 + (m.demand_growth ?? 0), world.round), active: s.active })),
+      segments: world.segments.map((s) => ({ id: s.id, D: s.D * marketDemandScale(m, c, world.round), active: s.active })),
       betaMult: { p: m.beta_p_mult, q: m.beta_q_mult, b: m.beta_b_mult },
       brandMult: m.brand_transfer,
       supplyOf: (id) => (sellableByFirm.get(id) ?? 0) * (fracByFirm.get(id)?.get(m.id) ?? 0),

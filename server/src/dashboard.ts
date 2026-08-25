@@ -21,6 +21,9 @@ export interface DashTeam {
   firmId: FirmId;
   name: string;
   joined: boolean; // false ⇒ open slot played by an adaptive NPC (when bot-fill is on)
+  /** Who sits in the firm (DW-046): the grading map from a renamable brewery to real
+   *  students. NetID/name come from roster provisioning; role is the C-suite chair. */
+  members: { userId: string; name: string | null; externalId: string | null; role: string | null }[];
 }
 
 export interface DashSegmentResult {
@@ -73,10 +76,19 @@ export interface DashPanelRow {
   leverage: number;
   creditRationed: boolean;
   rDebt: number;
+  /** The engine's own solvency clock (DW-046): below the safety line this round
+   *  (cash < cash_safety_threshold OR coverage < 1) and how many consecutive rounds — the
+   *  covenant breaches at solvency_runway_rounds, and a distressed target is acquirable
+   *  after ma.min_distress_rounds. The panel's other flags are heuristics; this is the rule. */
+  belowSafety: boolean;
+  roundsBelowSafety: number;
+  cashSafetyThreshold: number;
   // Scoring
   scoreCumulative: number;
   scoreRaw: Scorecard;
   scoreNorm: Scorecard;
+  scored: boolean; // false ⇒ practice round (outside the accumulation window)
+  scoreBridge: { financial: number; market: number; intangible: number; stakeholder: number; terminal: number } | null;
   // Strategy
   distinctiveness: { mahalanobis: number; nearest_neighbor: number } | null;
   valuation: number;
@@ -137,6 +149,9 @@ export interface DashMeta {
   weights: Scorecard;
   accumulation: string;
   segments: { id: SegmentId }[];
+  /** What this game was created with (DW-046) — the instructor could not see it after
+   *  creation before: enabled expansion modules, seed, firm mode, practice rounds, no-show rule. */
+  setup: { modules: string[]; seed: number; firmMode: string; nFirms: number; practiceRounds: number; terminalWeight: number; noShowPolicy: string; frontierRound: number | null; exportRound: number | null };
 }
 
 export interface InstructorDashboard {
@@ -162,14 +177,21 @@ function byFirmId(a: { firm_id: FirmId }, b: { firm_id: FirmId }): number {
  * over the existing StorageAdapter — safe to call any time after a game exists
  * (returns empty per-round arrays until the first round resolves).
  */
-export async function buildInstructorDashboard(store: StorageAdapter, gameId: string): Promise<InstructorDashboard> {
+export async function buildInstructorDashboard(store: StorageAdapter, gameId: string, opts: { noShowPolicy?: string } = {}): Promise<InstructorDashboard> {
   const game = await store.getGame(gameId);
   if (!game) throw new Error(`no game ${gameId}`);
 
   const teamsRaw = await store.getTeams(gameId);
-  const teams: DashTeam[] = [...teamsRaw]
-    .sort(byFirmId)
-    .map((t) => ({ teamId: t.id, firmId: t.firm_id, name: t.name, joined: t.member_user_ids.length > 0 }));
+  const teams: DashTeam[] = [];
+  for (const t of [...teamsRaw].sort(byFirmId)) {
+    const members: DashTeam["members"] = [];
+    for (const uid of t.member_user_ids) {
+      const u = await store.getUser(uid);
+      const role = await store.getMemberRole(t.id, uid);
+      members.push({ userId: uid, name: u?.display_name ?? null, externalId: u?.external_id ?? null, role });
+    }
+    teams.push({ teamId: t.id, firmId: t.firm_id, name: t.name, joined: t.member_user_ids.length > 0, members });
+  }
 
   const results = await store.getRoundResults(gameId); // ordered by round
 
@@ -177,6 +199,8 @@ export async function buildInstructorDashboard(store: StorageAdapter, gameId: st
   const market: DashMarketRow[] = [];
   const events: DashEventRound[] = [];
   const engagement: DashEngagementRow[] = [];
+  const cashSafety = game.config.scoring.cash_safety_threshold;
+  const belowStreak = new Map<string, number>();
 
   for (const rr of results) {
     const r = rr.round;
@@ -229,10 +253,15 @@ export async function buildInstructorDashboard(store: StorageAdapter, gameId: st
         waterEfficiency: fr.state.water_efficiency ?? 0,
         rndProgress: fr.state.rnd_progress ?? 0,
         coverage: fr.cost_of_capital.coverage,
+        belowSafety: fr.state.cash < cashSafety || fr.cost_of_capital.coverage < 1,
+        roundsBelowSafety: (() => { const b = fr.state.cash < cashSafety || fr.cost_of_capital.coverage < 1; const n = b ? (belowStreak.get(fr.firm_id) ?? 0) + 1 : 0; belowStreak.set(fr.firm_id, n); return n; })(),
+        cashSafetyThreshold: cashSafety,
         leverage: fr.cost_of_capital.leverage,
         creditRationed: fr.cost_of_capital.credit_rationed,
         rDebt: fr.cost_of_capital.r_debt,
         scoreCumulative: fr.scorecard_cumulative,
+        scored: fr.scored ?? true,
+        scoreBridge: fr.scorecard_bridge ?? null,
         scoreRaw: fr.scorecard_raw,
         scoreNorm: fr.scorecard_norm,
         distinctiveness: fr.distinctiveness,
@@ -296,6 +325,17 @@ export async function buildInstructorDashboard(store: StorageAdapter, gameId: st
       weights: game.config.scoring.weights,
       accumulation: game.config.scoring.accumulation,
       segments: game.config.segments.map((s) => ({ id: s.id })),
+      setup: {
+        modules: Object.entries(game.config.modules ?? {}).filter(([, m]) => (m as { enabled?: boolean } | undefined)?.enabled).map(([id]) => id),
+        seed: game.config.game.seed,
+        firmMode: game.firm_mode ?? "solo",
+        nFirms: game.config.game.n_firms,
+        practiceRounds: game.config.scoring.accumulation_window?.drop_first ?? 0,
+        terminalWeight: game.config.scoring.terminal_weight ?? 0,
+        noShowPolicy: opts.noShowPolicy ?? "carry",
+        frontierRound: game.config.segments.find((s) => s.id === "frontier")?.emerge_round ?? null,
+        exportRound: game.config.modules?.international?.enabled ? game.config.modules.international.export_unlock_round ?? null : null,
+      },
     },
     teams,
     panel,
@@ -327,14 +367,18 @@ export function dashboardToCsv(d: InstructorDashboard): string {
   const joinedByFirm = new Map(d.teams.map((t) => [t.firmId, t.joined]));
   const engByKey = new Map(d.engagement.map((e) => [`${e.round}::${e.firmId}`, e]));
 
+  const membersByFirm = new Map(d.teams.map((t) => [t.firmId, t.members.map((m) => `${m.name ?? m.userId}${m.externalId ? ` <${m.externalId}>` : ""}${m.role ? ` [${m.role}]` : ""}`).join("; ")]));
+  const teamIdByFirm = new Map(d.teams.map((t) => [t.firmId, t.teamId]));
   const baseCols = [
-    "game_id", "round", "firm_id", "team_name", "joined", "status", "rank",
+    "game_id", "round", "firm_id", "team_id", "team_name", "members", "joined", "status", "rank",
     "cash", "revenue", "net_income", "equity", "debt",
     "cap", "Q", "B", "T_emp", "T_inv", "T_gov", "process", "cum_output",
-    "unit_cost", "inventory_units", "inventory_spoiled", "inventory_turnover", "reputation", "water_efficiency", "rnd_progress", "coverage", "leverage", "credit_rationed", "r_debt",
+    "gross", "ebit", "interest", "ppe", "assets",
+    "unit_cost", "inventory_units", "inventory_spoiled", "inventory_turnover", "reputation", "water_efficiency", "rnd_progress", "coverage", "leverage", "credit_rationed", "r_debt", "below_safety", "rounds_below_safety",
     "score_cumulative",
     "score_fin_raw", "score_mkt_raw", "score_int_raw", "score_stk_raw",
     "score_fin_norm", "score_mkt_norm", "score_int_norm", "score_stk_norm",
+    "scored", "bridge_fin", "bridge_mkt", "bridge_int", "bridge_stk", "bridge_terminal",
     "distinct_mahalanobis", "distinct_nearest_neighbor", "valuation",
     "total_q_sold", "share", "mean_price", "info_purchased",
   ];
@@ -346,13 +390,15 @@ export function dashboardToCsv(d: InstructorDashboard): string {
   for (const p of d.panel) {
     const eng = engByKey.get(`${p.round}::${p.firmId}`);
     const row: unknown[] = [
-      d.meta.gameId, p.round, p.firmId, nameByFirm.get(p.firmId) ?? "", joinedByFirm.get(p.firmId) ?? false, p.status, p.rank,
+      d.meta.gameId, p.round, p.firmId, teamIdByFirm.get(p.firmId) ?? "", nameByFirm.get(p.firmId) ?? "", membersByFirm.get(p.firmId) ?? "", joinedByFirm.get(p.firmId) ?? false, p.status, p.rank,
       p.cash, p.revenue, p.netIncome, p.equity, p.debt,
       p.cap, p.Q, p.B, p.T_emp, p.T_inv, p.T_gov, p.process, p.cumOutput,
-      p.unitCost, p.inventoryUnits, p.inventorySpoiled, p.inventoryTurnover, p.reputation, p.waterEfficiency, p.rndProgress, p.coverage, p.leverage, p.creditRationed, p.rDebt,
+      p.gross, p.ebit, p.interest, p.ppe, p.assets,
+      p.unitCost, p.inventoryUnits, p.inventorySpoiled, p.inventoryTurnover, p.reputation, p.waterEfficiency, p.rndProgress, p.coverage, p.leverage, p.creditRationed, p.rDebt, p.belowSafety, p.roundsBelowSafety,
       p.scoreCumulative,
       p.scoreRaw.financial, p.scoreRaw.market, p.scoreRaw.intangible, p.scoreRaw.stakeholder,
       p.scoreNorm.financial, p.scoreNorm.market, p.scoreNorm.intangible, p.scoreNorm.stakeholder,
+      p.scored, p.scoreBridge?.financial ?? "", p.scoreBridge?.market ?? "", p.scoreBridge?.intangible ?? "", p.scoreBridge?.stakeholder ?? "", p.scoreBridge?.terminal ?? "",
       p.distinctiveness?.mahalanobis ?? "", p.distinctiveness?.nearest_neighbor ?? "", p.valuation,
       p.totalQSold, p.share, p.meanPrice, p.infoPurchased,
     ];

@@ -39,33 +39,33 @@ export const TUNING_GROUPS: Group[] = [
     knobs: [
       { key: "beta_p", label: "Price sensitivity", min: 0.2, max: 3, typ: 1, fmt: (v) => v.toFixed(2) + "×", feel: (v) => v < 0.7 ? calm("Buyers barely notice price", "you can charge a premium and keep volume — the “$100 monopoly” regime.") : v > 1.7 ? hot("Buyers chase the cheapest pint", "a few cents swings big share — price wars dominate.") : mid("Balanced price response", "price matters but quality and brand still pull weight.") },
       { key: "beta_q", label: "Quality pull", min: 0, max: 2.5, typ: 1, fmt: (v) => v.toFixed(2) + "×", feel: (v) => v > 1.6 ? calm("Quality wins markets", "investing in recipe quality pays off strongly.") : v < 0.5 ? hot("Quality barely registers", "R&D spend is hard to justify.") : mid("Quality matters moderately", "a real but not dominant differentiator.") },
-      { key: "beta_b", label: "Brand pull", min: 0, max: 2.5, typ: 0.9, fmt: (v) => v.toFixed(2) + "×", feel: (v) => v > 1.5 ? calm("Brand is king", "marketing and PR splashes drive outsized share.") : v < 0.4 ? hot("Brand barely moves buyers", "marketing spend mostly wasted.") : mid("Brand has real weight", "marketing compounds but isn't everything.") },
-      { key: "U0", label: "Outside option", min: 0, max: 3, typ: 1.2, fmt: (v) => v.toFixed(2), feel: (v) => v > 2 ? hot("Buyers walk away easily", "weak total demand — firms fight over a small pie.") : v < 0.6 ? calm("Captive market", "almost everyone buys something.") : mid("Normal walk-away rate", "a healthy share of buyers can abstain.") },
+      { key: "beta_b", label: "Brand pull", min: 0, max: 2.5, typ: 1, fmt: (v) => v.toFixed(2) + "×", feel: (v) => v > 1.5 ? calm("Brand is king", "marketing and PR splashes drive outsized share.") : v < 0.4 ? hot("Brand barely moves buyers", "marketing spend mostly wasted.") : mid("Brand has real weight", "marketing compounds but isn't everything.") },
+      { key: "U0", label: "Outside option", min: 0.3, max: 2.5, typ: 1, fmt: (v) => v.toFixed(2) + "×", feel: (v) => v > 1.6 ? hot("Buyers walk away easily", "weak total demand — firms fight over a small pie.") : v < 0.6 ? calm("Captive market", "almost everyone buys something.") : mid("Normal walk-away rate", "a healthy share of buyers can abstain.") },
     ],
   },
   {
     id: "spatial", label: "Spatial", kicker: "Geography & catchment", blurb: "How much location matters — catchment strength, reach, distance decay and home advantage.",
     knobs: [
-      { key: "beta_loc", label: "Location pull", min: 0, max: 2.5, typ: 1, fmt: (v) => v.toFixed(2), feel: (v) => v > 1.6 ? calm("Place is destiny", "siting near foot traffic dominates.") : v < 0.4 ? hot("Location barely matters", "you can sell from anywhere.") : mid("Location matters", "good siting helps, but isn't the whole game.") },
-      { key: "radius", label: "Catchment reach", min: 0.5, max: 4, typ: 2, fmt: (v) => v.toFixed(1) + " km", feel: (v) => v > 3 ? calm("Wide catchments", "one taproom serves a big area.") : v < 1.2 ? hot("Tight catchments", "you need dense coverage to reach buyers.") : mid("Moderate reach", "a sensible coverage-vs-cost trade-off.") },
-      { key: "lambda", label: "Distance decay", min: 0.2, max: 2.5, typ: 1, fmt: (v) => v.toFixed(2), feel: (v) => v > 1.7 ? hot("Steep decay", "buyers strongly prefer the nearest option.") : v < 0.5 ? calm("Flat decay", "distance hardly deters buyers.") : mid("Normal decay", "convenience matters at a believable rate.") },
-      { key: "self_weight", label: "Home advantage", min: 0, max: 2, typ: 0.8, fmt: (v) => v.toFixed(2), feel: (v) => v > 1.4 ? calm("Strong home turf", "incumbents are hard to dislodge at home.") : v < 0.3 ? hot("No home edge", "every market is contestable from round one.") : mid("Modest home edge", "a slight incumbent advantage.") },
+      { key: "beta_loc", label: "Location pull", min: 0, max: 2.5, typ: 1, fmt: (v) => v.toFixed(2) + "×", feel: (v) => v > 1.6 ? calm("Place is destiny", "siting near foot traffic dominates.") : v < 0.4 ? hot("Location barely matters", "you can sell from anywhere.") : mid("Location matters", "good siting helps, but isn't the whole game.") },
+      { key: "radius", label: "Catchment reach", min: 0.4, max: 2, typ: 1, fmt: (v) => v.toFixed(2) + "×", feel: (v) => v > 1.4 ? calm("Wide catchments", "one taproom serves a big area.") : v < 0.7 ? hot("Tight catchments", "you need dense coverage to reach buyers.") : mid("Moderate reach", "a sensible coverage-vs-cost trade-off.") },
+      { key: "lambda", label: "Distance decay", min: 0.3, max: 2.5, typ: 1, fmt: (v) => v.toFixed(2) + "×", feel: (v) => v > 1.7 ? hot("Steep decay", "buyers strongly prefer the nearest option.") : v < 0.5 ? calm("Flat decay", "distance hardly deters buyers.") : mid("Normal decay", "convenience matters at a believable rate.") },
+      { key: "self_weight", label: "Home advantage", min: 0, max: 2.5, typ: 1, fmt: (v) => v.toFixed(2) + "×", feel: (v) => v > 1.4 ? calm("Strong home turf", "incumbents are hard to dislodge at home.") : v < 0.3 ? hot("No home edge", "every market is contestable from round one.") : mid("Modest home edge", "a slight incumbent advantage.") },
     ],
   },
   {
     id: "trade", label: "Trade", kicker: "Shipping & markets", blurb: "The transportation game: shipping cost, market growth, entry cost and tariffs.",
     knobs: [
-      { key: "rate_per_unit_distance", label: "Shipping cost", min: 0, max: 5, typ: 1.5, fmt: (v) => "$" + v.toFixed(2), feel: (v) => v > 3.2 ? hot("Shipping is brutal", "far markets only pay off with local production.") : v < 0.5 ? calm("Shipping is cheap", "produce anywhere, sell everywhere.") : mid("Shipping has teeth", "distance costs real money; produce near demand.") },
-      { key: "demand_growth", label: "Market growth", min: -0.1, max: 0.3, typ: 0.06, fmt: (v) => (v * 100).toFixed(0) + "%/rd", feel: (v) => v > 0.18 ? calm("Booming markets", "a rising tide — expansion is richly rewarded.") : v < 0 ? hot("Shrinking markets", "zero-sum and brutal — share must be taken.") : mid("Steady growth", "markets expand at a believable clip.") },
+      { key: "rate_per_unit_distance", label: "Shipping cost", min: 0, max: 3.5, typ: 1, fmt: (v) => v.toFixed(2) + "×", feel: (v) => v > 2 ? hot("Shipping is brutal", "far markets only pay off with local production.") : v < 0.4 ? calm("Shipping is cheap", "produce anywhere, sell everywhere.") : mid("Shipping has teeth", "distance costs real money; produce near demand.") },
+      { key: "demand_growth", label: "Market growth", min: -0.06, max: 0.1, typ: 0, step: 0.01, fmt: (v) => (v >= 0 ? "+" : "") + (v * 100).toFixed(0) + "%/rd", feel: (v) => v > 0.03 ? calm("Booming markets", "a rising tide on top of every market's own trend — expansion is richly rewarded.") : v < 0 ? hot("Shrinking markets", "zero-sum and brutal — share must be taken.") : mid("Post-boom growth", "each market keeps its calibrated trend (home flat, heartland +3%, coastal −2%, exports faster).") },
       { key: "entry_cost", label: "Entry cost", min: 0.2, max: 3, typ: 1, fmt: (v) => v.toFixed(2) + "×", feel: (v) => v > 2 ? hot("Costly to expand", "new markets are a big commitment.") : v < 0.5 ? calm("Cheap to expand", "land-grab everywhere early.") : mid("Meaningful entry cost", "expansion is a real decision.") },
-      { key: "tariff_rate", label: "Tariff rate", min: 0, max: 0.4, typ: 0.05, fmt: (v) => (v * 100).toFixed(0) + "%", feel: (v) => v > 0.25 ? hot("Protectionist", "cross-border selling is heavily taxed.") : v < 0.02 ? calm("Free trade", "international markets are wide open.") : mid("Modest tariffs", "international sales carry a small penalty.") },
+      { key: "tariff_rate", label: "Tariff rate", min: 0, max: 3, typ: 1, fmt: (v) => v.toFixed(2) + "×", feel: (v) => v > 1.8 ? hot("Protectionist", "cross-border selling is heavily taxed.") : v < 0.2 ? calm("Free trade", "international markets are wide open.") : mid("Calibrated tariffs", "EU 12% / Asia 8% by default — international sales carry a real but modest penalty.") },
     ],
   },
   {
     id: "conduct", label: "Conduct", kicker: "Antitrust & fairness", blurb: "How aggressively dominance and unfair pricing are policed — and how much goodwill shields you.",
     knobs: [
-      { key: "dominance_threshold", label: "Dominance line", min: 0.3, max: 0.8, typ: 0.5, fmt: (v) => (v * 100).toFixed(0) + "%", feel: (v) => v < 0.4 ? hot("Trigger-happy regulators", "even modest share draws scrutiny.") : v > 0.7 ? calm("Hands-off regulators", "near-monopoly before anyone acts.") : mid("Standard threshold", "clear market leaders get watched.") },
-      { key: "fair_markup", label: "Fair markup ceiling", min: 1.1, max: 3, typ: 1.8, fmt: (v) => v.toFixed(1) + "×", feel: (v) => v < 1.4 ? hot("Tight price policing", "high margins flagged as gouging fast.") : v > 2.5 ? calm("Loose price policing", "you can mark up steeply before trouble.") : mid("Reasonable ceiling", "extreme markups draw penalties.") },
+      { key: "dominance_threshold", label: "Dominance line", min: 0.6, max: 2, typ: 1, fmt: (v) => v.toFixed(2) + "×", feel: (v) => v < 0.8 ? hot("Trigger-happy regulators", "even modest share draws scrutiny.") : v > 1.4 ? calm("Hands-off regulators", "near-monopoly before anyone acts.") : mid("Standard threshold", "a 40% segment share draws the regulator's eye.") },
+      { key: "fair_markup", label: "Fair markup ceiling", min: 0.6, max: 1.5, typ: 1, fmt: (v) => v.toFixed(2) + "×", feel: (v) => v < 0.8 ? hot("Tight price policing", "high margins flagged as gouging fast.") : v > 1.2 ? calm("Loose price policing", "you can mark up steeply before trouble.") : mid("Reasonable ceiling", "markups beyond ~2.2× cost draw penalties.") },
       { key: "fine_scale", label: "Fine severity", min: 0, max: 3, typ: 1, fmt: (v) => v.toFixed(2) + "×", feel: (v) => v > 2 ? hot("Ruinous fines", "a violation can sink a firm.") : v < 0.4 ? calm("Slap on the wrist", "fines are a cost of doing business.") : mid("Material fines", "penalties sting but rarely fatal.") },
       { key: "goodwill_k", label: "Goodwill shield", min: 0, max: 2, typ: 1, fmt: (v) => v.toFixed(2) + "×", feel: (v) => v > 1.5 ? calm("Goodwill protects a lot", "regulator trust + reputation soften most penalties.") : v < 0.3 ? hot("Goodwill barely helps", "no buying your way out of trouble.") : mid("Goodwill helps", "reputation meaningfully mitigates fines.") },
     ],
@@ -73,9 +73,16 @@ export const TUNING_GROUPS: Group[] = [
   {
     id: "shocks", label: "Shocks", kicker: "Disruptions & volatility", blurb: "Severity and frequency of water/harvest/CO₂ shocks — and whether they hit by region.",
     knobs: [
-      { key: "magnitude_mean", label: "Shock severity", min: 0, max: 0.6, typ: 0.25, fmt: (v) => (v * 100).toFixed(0) + "%", feel: (v) => v > 0.4 ? hot("Devastating shocks", "a single event can reshape the table.") : v < 0.1 ? calm("Gentle shocks", "disruptions are a nuisance, not a crisis.") : mid("Real shocks", "events meaningfully move costs and capacity.") },
-      { key: "prob_per_round", label: "Shock frequency", min: 0, max: 1, typ: 0.3, fmt: (v) => (v * 100).toFixed(0) + "%/rd", feel: (v) => v > 0.6 ? hot("Constant turbulence", "expect a shock almost every round.") : v < 0.1 ? calm("Calm seas", "shocks are rare surprises.") : mid("Occasional shocks", "a shock every few rounds keeps teams honest.") },
-      { key: "regional", label: "Regional shocks", min: 0, max: 1, typ: 1, toggle: true, fmt: (v) => (v >= 0.5 ? "On" : "Off"), feel: (v) => v >= 0.5 ? mid("Shocks hit by region", "where you produce determines exposure — geography is risk.") : calm("Shocks hit everyone equally", "no geographic risk diversification.") },
+      { key: "magnitude_mean", label: "Shock severity", min: 0, max: 2.4, typ: 1, fmt: (v) => v.toFixed(2) + "×", feel: (v) => v > 1.6 ? hot("Devastating shocks", "a single event can reshape the table.") : v < 0.4 ? calm("Gentle shocks", "disruptions are a nuisance, not a crisis.") : mid("Real shocks", "drought 35% / harvest 55% / CO₂ 28% by default — events meaningfully move costs and capacity.") },
+      { key: "prob_per_round", label: "Shock frequency", min: 0, max: 3, typ: 1, fmt: (v) => v.toFixed(2) + "×", feel: (v) => v > 2 ? hot("Constant turbulence", "expect a shock almost every round.") : v < 0.4 ? calm("Calm seas", "shocks are rare surprises.") : mid("Occasional shocks", "a shock every few rounds keeps teams honest (gamemaster events never roll on their own).") },
+      { key: "regional", label: "Regional drought", min: 0, max: 1, typ: 1, toggle: true, fmt: (v) => (v >= 0.5 ? "On" : "Off"), feel: (v) => v >= 0.5 ? mid("Drought hits one region", "the water shock strikes a single region — where you produce determines exposure. Harvest, CO₂ and demand events always hit everyone.") : calm("Every shock hits everyone equally", "no geographic risk diversification.") },
+    ],
+  },
+  {
+    id: "pacing", label: "Pacing", kicker: "Course timeline", blurb: "When the game's story beats land — line them up with your syllabus. (Demand-side events are planted per-round on the Schedule tab after creation.)",
+    knobs: [
+      { key: "frontier_round", label: "New category arrives", min: 5, max: 15, typ: 10, step: 1, fmt: (v) => `R${Math.round(v)}`, feel: (v) => v <= 7 ? hot("Early emergence", "the non-alcoholic category opens while teams are still finding their feet — a scramble.") : v >= 13 ? calm("Late emergence", "a brief end-game land grab; less time for the growth story to pay.") : mid("Mid-game emergence", "teams that prepared (R&D, quality) can jump as legacy demand matures. An R&D leader can still pull it earlier.") },
+      { key: "export_round", label: "Exports open", min: 1, max: 11, typ: 5, step: 1, fmt: (v) => `R${Math.round(v)}`, feel: (v) => v <= 2 ? hot("Exports from the start", "international expansion competes with getting the home market right.") : v >= 9 ? calm("Late exports", "international is an end-game option only.") : mid("Exports open early-mid game", "teams expand abroad once the home base is standing.") },
     ],
   },
   {
@@ -94,57 +101,77 @@ export const tuningDefaults = (): TuningVals => Object.fromEntries(ALL_KNOBS.map
 
 export const TUNING_PRESETS: Record<string, TuningVals> = {
   balanced: tuningDefaults(),
-  forgiving: { ...tuningDefaults(), beta_p: 0.5, U0: 0.7, rate_per_unit_distance: 0.8, magnitude_mean: 0.1, prob_per_round: 0.12, investScale: 1.8, aggression: 0.4, fine_scale: 0.5 },
-  cutthroat: { ...tuningDefaults(), beta_p: 2.2, U0: 2.1, rate_per_unit_distance: 3.4, magnitude_mean: 0.45, prob_per_round: 0.65, investScale: 0.6, aggression: 1.7, demand_growth: -0.02, roster: 9 },
+  forgiving: { ...tuningDefaults(), beta_p: 0.5, U0: 0.6, rate_per_unit_distance: 0.5, magnitude_mean: 0.4, prob_per_round: 0.4, investScale: 1.8, aggression: 0.4, fine_scale: 0.5 },
+  cutthroat: { ...tuningDefaults(), beta_p: 2.2, U0: 1.7, rate_per_unit_distance: 2.2, magnitude_mean: 1.8, prob_per_round: 2.2, investScale: 0.6, aggression: 1.7, demand_growth: -0.02, roster: 9 },
 };
 
-/** Map the instructor knobs to a real engine ConfigOverride. Reads the resolved default
- *  so multipliers compose correctly, and rebuilds arrays whole (deepMerge replaces arrays).
- *  Difficulty knobs are intentionally NOT emitted — they're feel-only / controller-side. */
+/** Map the instructor knobs to a real engine ConfigOverride. Every knob is a MULTIPLIER
+ *  (or, for market growth, an additive delta) on the calibrated default, and only knobs the
+ *  instructor actually moved are emitted — so nudging one Pacing slider leaves the other
+ *  ~40 calibrated parameters exactly as shipped (DW-046; before, every knob group was
+ *  written whole with its own "typical" values, several of which were not the defaults).
+ *  Reads the resolved default so multipliers compose, and rebuilds arrays whole (deepMerge
+ *  replaces arrays). Pacing knobs are 1-based like every round label in the app (R1..R16);
+ *  the engine counts from 0. Difficulty knobs are intentionally NOT emitted — they're
+ *  feel-only / controller-side. */
 export function tuningToOverride(vals: TuningVals): ConfigOverride {
   const base = resolveConfig();
+  const dflt = tuningDefaults();
+  const moved = (k: string) => vals[k] != null && Math.abs(vals[k] - dflt[k]) > 1e-9;
+  const m = (k: string) => (moved(k) ? vals[k] : 1);
   const o: Record<string, unknown> = {};
   const modules: Record<string, unknown> = {};
 
-  // Demand — per segment: beta_p/q/b are multipliers on the default; U0 absolute.
-  if (base.segments?.length) {
-    o.segments = base.segments.map((s) => ({ ...s, beta_p: s.beta_p * (vals.beta_p ?? 1), beta_q: s.beta_q * (vals.beta_q ?? 1), beta_b: s.beta_b * (vals.beta_b ?? 1), U0: vals.U0 ?? s.U0 }));
+  // Demand — per segment multipliers; pacing: the frontier's scheduled arrival (an R&D leader
+  // can still pull it forward — the knob moves the calendar, not the race).
+  if (base.segments?.length && (moved("beta_p") || moved("beta_q") || moved("beta_b") || moved("U0") || moved("frontier_round"))) {
+    o.segments = base.segments.map((s) => ({
+      ...s,
+      beta_p: s.beta_p * m("beta_p"), beta_q: s.beta_q * m("beta_q"), beta_b: s.beta_b * m("beta_b"), U0: s.U0 * m("U0"),
+      emerge_round: s.emerge_round != null && moved("frontier_round") ? Math.round(vals.frontier_round) - 1 : s.emerge_round,
+    }));
   }
 
-  // Spatial — catchment: absolute values (only when facilities/catchment exist).
+  // Spatial — catchment multipliers (only when facilities/catchment exist).
   const fac = base.modules?.facilities;
-  if (fac?.catchment) {
-    modules.facilities = { catchment: { ...fac.catchment, beta_loc: vals.beta_loc ?? fac.catchment.beta_loc, radius: vals.radius ?? fac.catchment.radius, lambda: vals.lambda ?? fac.catchment.lambda, self_weight: vals.self_weight ?? fac.catchment.self_weight } };
+  if (fac?.catchment && (moved("beta_loc") || moved("radius") || moved("lambda") || moved("self_weight"))) {
+    modules.facilities = { catchment: { ...fac.catchment, beta_loc: fac.catchment.beta_loc * m("beta_loc"), radius: fac.catchment.radius * m("radius"), lambda: fac.catchment.lambda * m("lambda"), self_weight: fac.catchment.self_weight * m("self_weight") } };
   }
 
-  // Trade — shipping (knob $typ1.5 ⇒ ×1 on the tiny per-degree default) + per-market knobs.
+  // Trade — shipping ×; per-market: growth is a delta on each market's own trend, entry × , tariff × (export markets only).
   const geo = base.modules?.geography;
-  if (geo) {
-    const dfltRate = geo.shipping?.rate_per_unit_distance ?? 0.004;
-    const gOver: Record<string, unknown> = { shipping: { rate_per_unit_distance: dfltRate * ((vals.rate_per_unit_distance ?? 1.5) / 1.5) } };
-    if (geo.markets?.length) {
-      gOver.markets = geo.markets.map((m) => ({ ...m, demand_growth: vals.demand_growth ?? m.demand_growth ?? 0, entry_cost: (m.entry_cost ?? 0) * (vals.entry_cost ?? 1), tariff_rate: m.kind === "export" ? (vals.tariff_rate ?? m.tariff_rate ?? 0) : m.tariff_rate }));
+  if (geo && (moved("rate_per_unit_distance") || moved("demand_growth") || moved("entry_cost") || moved("tariff_rate"))) {
+    const gOver: Record<string, unknown> = {};
+    if (moved("rate_per_unit_distance")) gOver.shipping = { ...geo.shipping, rate_per_unit_distance: (geo.shipping?.rate_per_unit_distance ?? 0.004) * vals.rate_per_unit_distance };
+    if (geo.markets?.length && (moved("demand_growth") || moved("entry_cost") || moved("tariff_rate"))) {
+      const dg = moved("demand_growth") ? vals.demand_growth : 0;
+      gOver.markets = geo.markets.map((mk) => ({ ...mk, demand_growth: (mk.demand_growth ?? 0) + dg, entry_cost: (mk.entry_cost ?? 0) * m("entry_cost"), tariff_rate: mk.kind === "export" ? (mk.tariff_rate ?? 0) * m("tariff_rate") : mk.tariff_rate }));
     }
     modules.geography = gOver;
   }
 
-  // Conduct (MOD-A10) — thresholds absolute; fine × default; goodwill × on both mitigation ks.
+  // Pacing — when exports open (only meaningful when international is on).
+  const intl = base.modules?.international;
+  if (intl && moved("export_round")) modules.international = { export_unlock_round: Math.round(vals.export_round) - 1 };
+
+  // Conduct (MOD-A10) — all multipliers; goodwill × on both mitigation ks.
   const mc = base.modules?.marketConduct;
-  if (mc) {
+  if (mc && (moved("dominance_threshold") || moved("fair_markup") || moved("fine_scale") || moved("goodwill_k"))) {
     modules.marketConduct = {
-      dominance_threshold: vals.dominance_threshold ?? mc.dominance_threshold,
-      fair_markup: vals.fair_markup ?? mc.fair_markup,
-      fine_scale: mc.fine_scale * (vals.fine_scale ?? 1),
-      tgov_k: mc.tgov_k * (vals.goodwill_k ?? 1),
-      rep_k: mc.rep_k * (vals.goodwill_k ?? 1),
+      dominance_threshold: Math.min(0.95, mc.dominance_threshold * m("dominance_threshold")),
+      fair_markup: Math.max(1.05, mc.fair_markup * m("fair_markup")),
+      fine_scale: mc.fine_scale * m("fine_scale"),
+      tgov_k: mc.tgov_k * m("goodwill_k"),
+      rep_k: mc.rep_k * m("goodwill_k"),
     };
   }
 
-  // Shocks — per type: magnitude & frequency as multipliers (preserve per-type spread); regional bool.
-  if (base.shocks?.types?.length) {
-    const magM = (vals.magnitude_mean ?? 0.25) / 0.25;
-    const probM = (vals.prob_per_round ?? 0.3) / 0.3;
-    o.shocks = { types: base.shocks.types.map((t) => ({ ...t, magnitude_mean: t.magnitude_mean * magM, prob_per_round: Math.min(1, t.prob_per_round * probM), regional: (vals.regional ?? 1) >= 0.5 })) };
+  // Shocks — per type: magnitude & frequency as multipliers (preserve per-type spread; a
+  // gamemaster-only type at probability 0 stays 0); the regional toggle only ever turns the
+  // designed regional shocks (drought) into everyone-shocks — it never makes demand events regional.
+  if (base.shocks?.types?.length && (moved("magnitude_mean") || moved("prob_per_round") || moved("regional"))) {
+    const off = moved("regional") && vals.regional < 0.5;
+    o.shocks = { types: base.shocks.types.map((t) => ({ ...t, magnitude_mean: t.magnitude_mean * m("magnitude_mean"), prob_per_round: Math.min(1, t.prob_per_round * m("prob_per_round")), regional: off ? false : t.regional })) };
   }
 
   if (Object.keys(modules).length) o.modules = modules;
@@ -154,9 +181,9 @@ export function tuningToOverride(vals: TuningVals): ConfigOverride {
 // ───────────────────────── feel-meters (UI-only) ─────────────────────────
 const clampPct = (x: number) => Math.max(4, Math.min(100, x));
 function feelMeters(v: TuningVals) {
-  const volat = clampPct(((v.magnitude_mean ?? 0.25) / 0.6 * 0.6 + (v.prob_per_round ?? 0.3) * 0.4) * 100);
-  const pressure = clampPct(((v.aggression ?? 1) / 2 * 0.4 + (v.beta_p ?? 1) / 3 * 0.35 + (1 - (v.dominance_threshold ?? 0.5)) * 0.25) * 100);
-  const tradew = clampPct(((v.rate_per_unit_distance ?? 1.5) / 5 * 0.6 + (v.tariff_rate ?? 0.05) / 0.4 * 0.4) * 100);
+  const volat = clampPct(((v.magnitude_mean ?? 1) / 2.4 * 0.6 + (v.prob_per_round ?? 1) / 3 * 0.4) * 100);
+  const pressure = clampPct(((v.aggression ?? 1) / 2 * 0.4 + (v.beta_p ?? 1) / 3 * 0.35 + Math.max(0, 2 - (v.dominance_threshold ?? 1)) / 2 * 0.25) * 100);
+  const tradew = clampPct(((v.rate_per_unit_distance ?? 1) / 3.5 * 0.6 + (v.tariff_rate ?? 1) / 3 * 0.4) * 100);
   const meter = (pct: number, label: string, lo: string, midL: string, hi: string, notes: [string, string, string]) => {
     const i = pct > 66 ? 2 : pct > 33 ? 1 : 0;
     return { label, pct, tag: [lo, midL, hi][i], color: ["var(--color-hop)", "var(--color-copperdeep)", "var(--color-brick)"][i], note: notes[i] };
@@ -173,7 +200,7 @@ const TONE_BORDER: Record<Tone, string> = { hot: "color-mix(in srgb, var(--color
 const TONE_ICON: Record<Tone, string> = { hot: "🔴", calm: "🟢", mid: "🟡" };
 
 interface SavedPreset { name: string; vals: TuningVals }
-const SAVED_KEY = "dw_tuning_presets";
+const SAVED_KEY = "dw_tuning_presets_v2"; // v2: multiplier semantics (DW-046) — older absolute-value presets must not load
 const loadSaved = (): SavedPreset[] => { try { return JSON.parse(localStorage.getItem(SAVED_KEY) || "[]"); } catch { return []; } };
 
 /** Controlled Tuning Board. `value` is the current knob map; `onChange` fires on every edit. */

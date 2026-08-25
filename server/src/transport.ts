@@ -21,7 +21,7 @@ import { loadConfig } from "drinkwars-engine/node";
 import { deepMerge, generateHiringMarket, projectMarkets, projectFirms, projectShocks, projectHistory, roleBriefings, summarizeAgreementsFor, summarizeLobbying } from "drinkwars-engine";
 import type { FirmDecision } from "drinkwars-engine";
 import { createClient } from "@supabase/supabase-js";
-import { GameOrchestrator, InMemoryAdapter, buildInstructorDashboard, createSupabaseAdapter, dashboardToCsv, randomBreweryNames, renameFirms, type StorageAdapter } from "./index.js";
+import { GameOrchestrator, InMemoryAdapter, buildInstructorDashboard, createSupabaseAdapter, dashboardToCsv, randomBreweryNames, renameFirms, withRequestCache, type StorageAdapter } from "./index.js";
 
 // Load server/.env (only needed for supabase mode; harmless otherwise).
 try {
@@ -51,13 +51,18 @@ const ownsGame = (tier: InstructorTier | null, game: { owner_tag: string | null 
 const useSupabase = (process.env.DW_ADAPTER ?? "memory") === "supabase";
 
 const store: StorageAdapter = useSupabase ? createSupabaseAdapter() : new InMemoryAdapter();
-const orch = new GameOrchestrator(store, () => Date.now(), { botFillEmptySlots: true });
+const baseStore = store;
+// noShowPolicy "carry": a claimed firm that misses the deadline keeps trading on its
+// standing plan instead of being zero-filled out of the market for a quarter (DW-039).
+const ORCH_OPTS = { botFillEmptySlots: true, noShowPolicy: "carry" as const };
+const orch = new GameOrchestrator(store, () => Date.now(), ORCH_OPTS);
 
 // In supabase mode the users→auth.users FK requires a real auth user per joiner,
 // so /join admin-creates an anonymous one. (Memory mode needs no auth.)
 const admin = useSupabase
   ? createClient(process.env.SUPABASE_URL ?? "", process.env.SUPABASE_SERVICE_ROLE_KEY ?? "", { auth: { persistSession: false } })
   : null;
+const adminRef = admin; // typed alias for helpers declared below
 
 // token -> student session. In-memory; fine for a single-process local transport.
 const sessions = new Map<string, { gameId: string; teamId: string; userId: string; role?: string }>();
@@ -92,7 +97,45 @@ async function readJson(req: IncomingMessage): Promise<any> {
 /** Everything a joined student needs to render: their OWN full firm state +
  *  their own last-round diagnostics + the public standings/market. A rival's
  *  private state is never included (this team's slice only). */
+/** Roster paste → unique, trimmed rows keyed by case-insensitive NetID (first name wins). */
+export function dedupeRoster(roster: unknown[]): { external_id: string; name: string; email?: string | null }[] {
+  const seen = new Set<string>();
+  const out: { external_id: string; name: string; email?: string | null }[] = [];
+  for (const r of roster as { external_id?: unknown; name?: unknown; email?: unknown }[]) {
+    const id = String(r?.external_id ?? "").trim();
+    if (!id) continue;
+    const key = id.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const name = String(r?.name ?? "").trim() || id;
+    const email = typeof r?.email === "string" && r.email.includes("@") ? r.email.trim().toLowerCase() : null;
+    out.push({ external_id: id, name, email });
+  }
+  return out;
+}
+export const rosterEmail = (externalId: string) => `${externalId.toLowerCase().replace(/[^a-z0-9._-]/g, "")}@roster.drinkwars.local`;
+/** Create the auth account for a roster email, or find the one that already exists (an
+ *  earlier partial provisioning, a re-paste). Returns the auth user id. */
+export async function findOrCreateAuthUser(admin: NonNullable<typeof adminRef>, email: string): Promise<string> {
+  const { data, error } = await admin.auth.admin.createUser({ email, email_confirm: true });
+  if (!error && data.user) return data.user.id;
+  // Already registered (or any create failure): look the account up by email.
+  for (let page = 1; page <= 20; page++) {
+    const { data: list, error: lerr } = await admin.auth.admin.listUsers({ page, perPage: 1000 });
+    if (lerr) break;
+    const hit = list.users.find((u) => (u.email ?? "").toLowerCase() === email.toLowerCase());
+    if (hit) return hit.id;
+    if (list.users.length < 1000) break;
+  }
+  throw new Error(`auth: ${error?.message ?? "could not create roster user"}`);
+}
+
 async function viewFor(gameId: string, teamId: string, userId?: string) {
+  // One request, one cache: the projections below re-read the game, the world state,
+  // the round results and the team roster several times each. Read-only — see
+  // request-cache.ts for the scope rule.
+  const store = withRequestCache(baseStore);
+  const orch = new GameOrchestrator(store, () => Date.now(), ORCH_OPTS);
   const pub = await orch.getPublicState(gameId);
   const tv = await orch.getTeamView(gameId, teamId);
   const game = await store.getGame(gameId);
@@ -205,7 +248,7 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
 
   // ---- student ----
   if (method === "POST" && path === "/join") {
-    const { code, name, claim, teamId, role } = await readJson(req);
+    const { code, name, claim, teamId, role, teamName } = await readJson(req);
     if (!code) return send(res, 400, { error: "code required" });
     const codeUp = String(code).toUpperCase();
     // Validate BEFORE creating an auth user, so a bad/typo code leaves no orphan.
@@ -231,7 +274,7 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     }
     let joined;
     try {
-      joined = await orch.joinGame(codeUp, displayName, userId, { teamId, role });
+      joined = await orch.joinGame(codeUp, displayName, userId, { teamId, role, teamName: teamName ? String(teamName).slice(0, 40) : undefined });
     } catch (e) {
       return send(res, 400, { error: msg(e) });
     }
@@ -273,7 +316,10 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
 
     if (method === "POST" && path === "/instructor/games") {
       const { nFirms = 6, nRounds = 16, modules, inventory = false, configOverride, firmMode = "solo", title } = await readJson(req);
-      let override: Record<string, unknown> = { game: { n_firms: nFirms, n_rounds: nRounds } };
+      // A fresh seed per game (DW-046): the seed drives the rolled shock timeline, location
+      // factors and hiring markets — with the config default (12345) every game with the same
+      // modules replayed the same droughts, so section 2 could learn section 1's schedule.
+      let override: Record<string, unknown> = { game: { n_firms: nFirms, n_rounds: nRounds, seed: 1 + Math.floor(Math.random() * 2_000_000_000) } };
       // Expansion modules: the instructor selector sends a `modules` override block
       // ({ asymmetricStarts: { enabled: true }, … }). Legacy `inventory` boolean still honored.
       const mods: Record<string, unknown> = modules && typeof modules === "object" ? { ...modules } : {};
@@ -296,24 +342,29 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     if (method === "POST" && path === "/instructor/roster") {
       const { roster, cohort } = await readJson(req);
       if (!Array.isArray(roster) || !roster.length) return send(res, 400, { error: "roster array required" });
-      const entries: { external_id: string; name: string; email?: string | null; user_id?: string }[] = [];
-      for (const r of roster) {
-        if (!r?.external_id || !r?.name) continue;
-        let user_id: string | undefined;
-        if (admin) {
-          const existing = await store.getUserByExternalId(String(r.external_id));
-          if (existing) user_id = existing.id;
-          else {
-            const email = r.email || `${String(r.external_id).toLowerCase().replace(/[^a-z0-9._-]/g, "")}@roster.drinkwars.local`;
-            const { data, error } = await admin.auth.admin.createUser({ email, email_confirm: true });
-            if (error || !data.user) return send(res, 500, { error: `auth: ${error?.message ?? "could not create roster user"}` });
-            user_id = data.user.id;
+      // DW-046: rows are de-duplicated (NetID is case-insensitive), provisioned ONE AT A TIME
+      // (a row that fails no longer loses the rows before it or 500s the whole paste), and an
+      // auth account that already exists for the NetID's email is re-used rather than
+      // re-created — the pre-DW-046 path created auth users in a loop and only wrote user
+      // rows afterwards, so a duplicate line left orphaned auth accounts that made every
+      // later paste of those NetIDs fail with "already registered".
+      const rows = dedupeRoster(roster);
+      const students: Awaited<ReturnType<typeof orch.provisionRoster>> = [];
+      const errors: { external_id: string; error: string }[] = [];
+      for (const r of rows) {
+        try {
+          let user_id: string | undefined;
+          if (admin) {
+            const existing = await store.getUserByExternalId(r.external_id);
+            if (existing) user_id = existing.id;
+            else user_id = await findOrCreateAuthUser(admin, r.email || rosterEmail(r.external_id));
           }
+          students.push(...(await orch.provisionRoster([{ external_id: r.external_id, name: r.name, email: r.email ?? null, user_id }], { cohort: cohort ?? null })));
+        } catch (e) {
+          errors.push({ external_id: r.external_id, error: e instanceof Error ? e.message : String(e) });
         }
-        entries.push({ external_id: String(r.external_id), name: String(r.name), email: r.email ?? null, user_id });
       }
-      const students = await orch.provisionRoster(entries, { cohort: cohort ?? null });
-      return send(res, 200, { students });
+      return send(res, 200, { students, errors });
     }
 
     // Re-enter a running game by its join code (instructor reconnect after a drop).
@@ -339,7 +390,7 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     if (ex && method === "GET") {
       const gameId = ex[1];
       try {
-        const dash = await buildInstructorDashboard(store, gameId);
+        const dash = await buildInstructorDashboard(store, gameId, { noShowPolicy: ORCH_OPTS.noShowPolicy });
         const format = (url.searchParams.get("format") ?? "csv").toLowerCase();
         if (format === "json") return sendAttachment(res, 200, "application/json", JSON.stringify(dash, null, 2), `drinkwars-${gameId}.json`);
         return sendAttachment(res, 200, "text/csv", dashboardToCsv(dash), `drinkwars-${gameId}.csv`);
@@ -370,7 +421,7 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     if (m) {
       const [, gameId, action] = m;
       try {
-        if (action === "dashboard" && method === "GET") return send(res, 200, await buildInstructorDashboard(store, gameId));
+        if (action === "dashboard" && method === "GET") return send(res, 200, await buildInstructorDashboard(store, gameId, { noShowPolicy: ORCH_OPTS.noShowPolicy }));
         if (action === "status" && method === "GET") {
           const status = await orch.getStatus(gameId);
           const game = await store.getGame(gameId);
@@ -384,7 +435,8 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
         }
         if (action === "lock" && method === "POST") return send(res, 200, { nonSubmitters: await orch.lockRound(gameId) });
         if (action === "resolve" && method === "POST") {
-          const r = await orch.resolveRound(gameId);
+          const body = await readJson(req).catch(() => ({}));
+          const r = await orch.resolveRound(gameId, { force: !!body?.force });
           if (r.lifecycle === "published") await orch.advanceRound(gameId); // open the next round
           return send(res, 200, r);
         }

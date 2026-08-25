@@ -42,8 +42,18 @@ export function validateConfig(c: Config): Config {
     nonneg(s.beta_p, `segments[${i}].beta_p`);
     nonneg(s.D0, `segments[${i}].D0`);
     pos(s.growth, `segments[${i}].growth`);
+    nonneg(s.beta_q, `segments[${i}].beta_q`);
+    nonneg(s.beta_b, `segments[${i}].beta_b`);
+    if (s.emerge_round != null) req(Number.isInteger(s.emerge_round) && s.emerge_round >= 0, `segments[${i}].emerge_round must be a non-negative integer or null`);
+    if (s.emerge_round != null && isNum(c.game?.n_rounds) && s.emerge_round >= c.game.n_rounds) console.warn(`config warning: segments[${i}].emerge_round (${s.emerge_round}) is at or past the last round — the segment will never open on schedule`);
     if (s.active_at_start) anyActive = true;
   }
+
+  // init — a firm has to be able to exist
+  nonneg(c.init?.starting_cash, "init.starting_cash");
+  pos(c.init?.starting_cap, "init.starting_cap");
+  nonneg(c.init?.starting_debt, "init.starting_debt");
+  for (const k of ["starting_Q", "starting_B", "starting_T_emp", "starting_T_inv", "starting_T_gov", "starting_process"] as const) nonneg(c.init?.[k], `init.${k}`);
   req(anyActive, "at least one segment must be active_at_start");
 
   // demand
@@ -90,6 +100,11 @@ export function validateConfig(c: Config): Config {
     req(["unannounced", "signaled_noisy"].includes(t.signaling), `shocks.types[${i}].signaling invalid`);
     req(Number.isInteger(t.duration) && t.duration >= 1, `shocks.types[${i}].duration must be ≥ 1`);
     if (t.target !== "all") req(ids.has(t.target), `shocks.types[${i}].target "${t.target}" is not a segment id`);
+    nonneg(t.magnitude_mean, `shocks.types[${i}].magnitude_mean`);
+    nonneg(t.magnitude_sd, `shocks.types[${i}].magnitude_sd`);
+    if (t.kind === "demand_drop" || t.kind === "cash_hit") req(isNum(t.magnitude_mean) && t.magnitude_mean <= 1, `shocks.types[${i}].magnitude_mean must be ≤ 1 for a ${t.kind} (a fraction)`);
+    req(Number.isInteger(t.earliest_round) && t.earliest_round >= 0, `shocks.types[${i}].earliest_round must be a non-negative integer`);
+    req(Number.isInteger(t.latest_round) && t.latest_round >= t.earliest_round, `shocks.types[${i}].latest_round must be ≥ earliest_round`);
   }
   rate(c.shocks?.max_mitigation, "shocks.max_mitigation");
 
@@ -107,6 +122,37 @@ export function validateConfig(c: Config): Config {
     req(Math.abs(fs - 1) < 1e-6, `scoring.financial_blend must sum to 1 (got ${fs.toFixed(4)})`);
   }
   req(["round_average", "auc"].includes(c.scoring?.accumulation), "scoring.accumulation must be round_average|auc");
+
+  // Scoring layer (06_scoring_layer_spec §2–§5).
+  const win = c.scoring?.accumulation_window;
+  if (win) {
+    const drop = win.drop_first ?? 0;
+    req(Number.isInteger(drop) && drop >= 0, "scoring.accumulation_window.drop_first must be a non-negative integer");
+    req(drop < (c.game?.n_rounds ?? 1), "scoring.accumulation_window.drop_first must leave at least one scored round");
+    if (win.tail_only != null) {
+      req(Number.isInteger(win.tail_only) && win.tail_only >= 1, "scoring.accumulation_window.tail_only must be an integer ≥ 1");
+      req(drop === 0, "scoring.accumulation_window: drop_first and tail_only are mutually exclusive");
+    }
+  }
+  const tw = c.scoring?.terminal_weight ?? 0;
+  req(isNum(tw) && tw >= 0 && tw <= 0.5, `scoring.terminal_weight must be in [0, 0.5] (got ${String(tw)})`);
+  if (isNum(tw) && tw > 0.25 && tw <= 0.5) {
+    // Warning, not error (spec §3): λ this high reopens the end-game liquidation
+    // exploit — any config shipping it must hold the liquidation harness gate.
+    console.warn(`config warning: scoring.terminal_weight ${tw} > 0.25 — end-game weighting this heavy invites the liquidation exploit; verify the §16 liquidation gate for this config`);
+  }
+  for (const [i, p] of (c.scoring?.penalties ?? []).entries()) {
+    req(typeof p.id === "string" && p.id.length > 0, `scoring.penalties[${i}].id must be a non-empty string`);
+    req(["financial", "market", "intangible", "stakeholder"].includes(p.component), `scoring.penalties[${i}].component invalid`);
+    req(["profitability", "soundness", "cash_resilience", "market", "intangible", "stakeholder"].includes(p.submetric), `scoring.penalties[${i}].submetric invalid`);
+    req(p.form === "linear_ratio", `scoring.penalties[${i}].form must be linear_ratio`);
+    req(isNum(p.max_bite) && p.max_bite > 0 && p.max_bite <= 1, `scoring.penalties[${i}].max_bite must be in (0, 1]`);
+    req(typeof p.enabled === "boolean", `scoring.penalties[${i}].enabled must be a boolean`);
+    // §4 constraint: a penalty targets exactly one component, and its submetric must
+    // belong to that component.
+    const fin = ["profitability", "soundness", "cash_resilience"].includes(p.submetric);
+    req(fin ? p.component === "financial" : p.submetric === p.component, `scoring.penalties[${i}]: submetric "${p.submetric}" does not belong to component "${p.component}"`);
+  }
 
   // coopetition
   req(Number.isInteger(c.coopetition?.forms?.collective?.min_size) && c.coopetition.forms.collective.min_size >= 3, "coopetition.forms.collective.min_size must be ≥ 3");
@@ -157,6 +203,7 @@ export function validateConfig(c: Config): Config {
     if (intl) {
       req(typeof intl.enabled === "boolean", "modules.international.enabled must be a boolean");
       pos(intl.fx_mean, "modules.international.fx_mean");
+      if (intl.export_unlock_round != null) req(Number.isInteger(intl.export_unlock_round) && intl.export_unlock_round >= 0, "modules.international.export_unlock_round must be a non-negative integer");
       rate(intl.fx_speed, "modules.international.fx_speed");
     }
     const vi = mods.verticalIntegration;

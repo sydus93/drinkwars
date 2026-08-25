@@ -6,7 +6,7 @@
  * banks, invests in a survivor at fair value (§7.5), or rebuilds (§8.3/§8.4).
  */
 import type { Config, FirmId, FirmState, SegmentId, WorldState } from "../types.js";
-import { emptyPipeline } from "./stocks.js";
+import { initFirm } from "./init.js";
 
 const fmNum = (n: number): string => Math.round(n).toLocaleString("en-US"); // comma-grouped for event prose
 
@@ -25,34 +25,34 @@ function assets(f: FirmState): number {
 }
 
 function resetToFresh(f: FirmState, c: Config, repositionSegment: SegmentId | null, round: number): void {
-  const init = c.init;
-  f.cash = init.starting_cash;
-  f.cap = init.starting_cap;
-  f.Q = init.starting_Q;
-  f.B = init.starting_B;
-  f.T_emp = init.starting_T_emp;
-  f.T_inv = init.starting_T_inv;
-  f.T_gov = init.starting_T_gov;
-  f.process = init.starting_process;
-  f.debt = init.starting_debt;
-  f.ppe_book = init.starting_cap * c.capacity.book_value_per_unit;
-  f.paid_in_capital = f.cash + f.ppe_book - f.debt;
-  f.retained_earnings = 0;
-  f.cum_output = 0;
-  f.unit_cost = 0;
-  f.ni_history = [];
-  f.rounds_below_health = 0;
-  f.pipelines = {
-    cap: emptyPipeline(c.capacity.lag),
-    Q: emptyPipeline(c.stocks.Q.lag),
-    B: emptyPipeline(c.stocks.B.lag),
-    T_emp: emptyPipeline(c.stocks.T_emp.lag),
-    T_inv: emptyPipeline(c.stocks.T_inv.lag),
-    T_gov: emptyPipeline(c.stocks.T_gov.lag),
-    process: emptyPipeline(c.costs.process.lag),
+  // A rebuilt firm is a FRESH firm (§8.3): every stock, pipeline, balance-sheet line and
+  // every module holding starts over. Before DW-046 this reset only the v1 fundamentals,
+  // so a rebuilder carried its inventory, convertible note, RBF, facilities, employees,
+  // markets and R&D into the fresh balance sheet — and the §7.2 invariant threw on
+  // re-entry ("Balance sheet does not balance"), which would freeze a live round.
+  // Build the fresh state with the same constructor a round-0 firm uses and keep only
+  // identity, history and the exit-path bookkeeping.
+  const fresh = initFirm(f.id, c, f.location_factor);
+  const keep: Pick<FirmState, "id" | "status" | "location_factor" | "reentry_count" | "holdings" | "cap_table" | "banked_cash" | "initial_capital" | "score_accum" | "acquisitions_made"> = {
+    id: f.id, status: f.status, location_factor: f.location_factor, reentry_count: f.reentry_count,
+    holdings: f.holdings, cap_table: f.cap_table, banked_cash: f.banked_cash, initial_capital: f.initial_capital,
+    score_accum: f.score_accum, acquisitions_made: f.acquisitions_made,
   };
+  Object.assign(f, fresh, keep);
+  // Optional module arrays are absent from a fresh state, so Object.assign leaves them —
+  // clear them explicitly (plants free their parcels, people leave payroll).
+  releaseHoldings(f);
   f.primary_segment = repositionSegment;
   f.cooldown_until_round = round + c.exit.reentry_cooldown_rounds;
+}
+
+/** A firm that leaves the game for good (bankruptcy, clean exit, acquisition) releases
+ *  what it physically held: its plants free their parcels for the lease pool and its
+ *  people leave payroll. Nothing here touches the balance sheet — the firm's books are
+ *  frozen at exit and no longer resolved. */
+export function releaseHoldings(f: FirmState): void {
+  if (f.facilities?.length) f.facilities = [];
+  if (f.employees?.length) f.employees = [];
 }
 
 export function processExits(input: ExitInputs): { events: string[] } {
@@ -84,6 +84,7 @@ export function processExits(input: ExitInputs): { events: string[] } {
     const covenantBreach = f.rounds_below_health >= c.finance.solvency_runway_rounds && coverage < 1 && f.cash < cashSafety * 0.5;
     if (f.cash <= 0 || covenantBreach) {
       f.status = "bankrupt";
+      releaseHoldings(f); // liquidation: parcels return to the lease pool, staff leave
       events.push(`FORCED EXIT (bankruptcy): ${f.id} (cash $${fmNum(f.cash)}, coverage ${coverage.toFixed(2)})`);
       registerDistressDumping(f);
       continue;
@@ -103,6 +104,7 @@ export function processExits(input: ExitInputs): { events: string[] } {
     if (ea.path === "bank") {
       f.banked_cash += net;
       f.status = "exited_banked";
+      releaseHoldings(f);
       events.push(`CLEAN EXIT (bank): ${f.id} recovers $${fmNum(net)}`);
     } else if (ea.path === "invest" && ea.target_firm) {
       const target = world.firms.find((x) => x.id === ea.target_firm && x.status === "active");
@@ -112,15 +114,18 @@ export function processExits(input: ExitInputs): { events: string[] } {
         target.cap_table.push({ holder_id: f.id, shares: stake });
         f.holdings.push({ firm_id: target.id, stake_fraction: stake, basis: net });
         f.status = "exited_invested";
+        releaseHoldings(f);
         events.push(`EXIT→INVEST: ${f.id} buys ${(stake * 100).toFixed(1)}% of ${target.id} at V=$${fmNum(V)}`);
       } else {
         f.banked_cash += net;
         f.status = "exited_banked";
+        releaseHoldings(f);
         events.push(`EXIT→INVEST failed (no valid target); ${f.id} banked $${fmNum(net)}`);
       }
     } else if (ea.path === "rebuild") {
       const reentryCost = c.exit.reentry_cost * Math.pow(c.exit.reentry_cost_escalation, f.reentry_count);
-      const reposition = ea.reposition_segment ?? null;
+      const known = new Set(world.segments.map((s) => s.id));
+      const reposition = ea.reposition_segment != null && known.has(ea.reposition_segment) ? ea.reposition_segment : null;
       if (reposition !== null && reposition === f.primary_segment) {
         events.push(`REBUILD rejected: ${f.id} must reposition to a different primary segment`);
         continue;

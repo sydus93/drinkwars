@@ -11,6 +11,11 @@ import { Emblem, EMBLEM_IDS, FacilityChip } from "../components/FacilityGlyph.js
  *   2. Found your firm: name, house colour + mark, and — only for team games — your
  *      C-suite seat. Solo games never show the seat picker (it doesn't apply).
  * Colour/emblem apply to this student's own firm (setSelfFirm runs in MultiplayerPlay).
+ *
+ * Team games ask for TWO names (DW-039): the brewery, and the person. One field doing
+ * both jobs put the brewery's name in the seat roster where teammates look for a person.
+ * Every team seat is also a named chair — the founder takes the CEO's by default —
+ * because two generalist seats on one firm overwrite each other in the desk merge.
  */
 /** C-suite seats for team games. The server slices each seat's submit by its desk
  *  (mirrors engine ROLE_DESK: ceo→all, cfo→finance, cmo→commercial, coo→operations, chro→people). */
@@ -27,6 +32,7 @@ export function Join({ onJoined, onBack }: { onJoined: (c: StudentClient) => voi
   const [peek, setPeek] = useState<GamePeek | null>(null);
   const [code, setCode] = useState("");
   const [name, setName] = useState("");
+  const [firmName, setFirmName] = useState(""); // team games: the brewery, separate from the person
   const [claim, setClaim] = useState("");
   const [role, setRole] = useState<string>("");
   const [teamId, setTeamId] = useState<string>(""); // team mode: WHICH firm to sit down at ("" = emptiest)
@@ -41,7 +47,9 @@ export function Join({ onJoined, onBack }: { onJoined: (c: StudentClient) => voi
     try {
       const p = await peekGame(code.trim().toUpperCase());
       setPeek(p);
-      if (p.firmMode !== "team") setRole(""); // solo firms have no seats
+      // Solo firms have no seats. Team founders take the CEO's chair unless they pick
+      // another — every seat is named, so no two players share the whole-firm desk.
+      setRole(p.firmMode === "team" ? "ceo" : "");
       setTeamId("");
       setStep("found");
     } catch (e) {
@@ -60,7 +68,11 @@ export function Join({ onJoined, onBack }: { onJoined: (c: StudentClient) => voi
       const founding = !(peek?.firmMode === "team" && (teamId ? (peek?.teams?.find((t) => t.teamId === teamId)?.members ?? 0) > 0 : !(peek?.teams ?? []).some((t) => t.members === 0)));
       if (founding) { setPlayerColor(color); setPlayerEmblem(emblem); }
       const c = new StudentClient();
-      await c.join(code.trim().toUpperCase(), name.trim(), { claim: claim.trim() || undefined, role: role || undefined, teamId: teamId || undefined });
+      await c.join(code.trim().toUpperCase(), name.trim(), {
+        claim: claim.trim() || undefined, role: role || undefined, teamId: teamId || undefined,
+        // Only a founder names the brewery; a joiner inherits the name already on the board.
+        teamName: peek?.firmMode === "team" && founding ? firmName.trim() || undefined : undefined,
+      });
       await c.fetchView();
       onJoined(c);
     } catch (e) {
@@ -104,15 +116,19 @@ export function Join({ onJoined, onBack }: { onJoined: (c: StudentClient) => voi
   // ── Step 2 — found your firm (or take a seat at an existing one) ────────────
   const isTeam = peek?.firmMode === "team";
   const complete = peek?.lifecycle === "complete";
-  const display = name.trim() || "Your Brewery";
+  const display = (isTeam ? firmName.trim() : name.trim()) || "Your Brewery";
   const pickedTeam = isTeam ? peek?.teams?.find((t) => t.teamId === teamId) : undefined;
   const anyEmpty = (peek?.teams ?? []).some((t) => t.members === 0);
   // Joining a firm that already has members = taking a seat, NOT founding: the firm is
-  // already named/marked, and the server requires a distinct C-suite seat (two blank
-  // "whole firm" seats would clobber each other in the desk merge).
+  // already named/marked, and the server requires a distinct C-suite seat (two seats that
+  // both cover the whole firm would clobber each other in the desk merge).
   const joiningFounded = isTeam && (pickedTeam ? pickedTeam.members > 0 : !anyEmpty);
   const needFirmPick = joiningFounded && !teamId; // which founded firm? must be explicit
-  const canJoin = !busy && !!name.trim() && (!joiningFounded || (!!role && !needFirmPick));
+  const seatTaken = (id: string) => (pickedTeam?.roles ?? []).includes(id);
+  const canJoin = !busy && !!name.trim()
+    && (!isTeam || joiningFounded || !!firmName.trim()) // founders name the brewery
+    && (!isTeam || (!!role && !seatTaken(role))) // and everyone takes a free chair
+    && !needFirmPick;
   return (
     <div className="mx-auto flex min-h-screen max-w-lg flex-col justify-center px-6 py-12">
       <div className="rise">
@@ -130,7 +146,11 @@ export function Join({ onJoined, onBack }: { onJoined: (c: StudentClient) => voi
         {complete && <div className="mt-2 text-[0.72rem] text-brick">This game's season is already complete — you may only be able to review it.</div>}
 
         <div className="mt-5 grid gap-4">
-          <label className="grid gap-1"><span className="text-sm text-inksoft">{joiningFounded ? "Your name" : "Brewery name"}</span><input value={name} onChange={(e) => setName(e.target.value)} maxLength={40} placeholder={joiningFounded ? "e.g. Sam" : "e.g. Sediment Co."} autoFocus /></label>
+          {/* Team games name the brewery AND the person; solo games have only the brewery. */}
+          {isTeam && !joiningFounded && (
+            <label className="grid gap-1"><span className="text-sm text-inksoft">Brewery name <span className="text-[0.7rem]">· your team's firm on the board</span></span><input value={firmName} onChange={(e) => setFirmName(e.target.value)} maxLength={40} placeholder="e.g. Sediment Co." autoFocus /></label>
+          )}
+          <label className="grid gap-1"><span className="text-sm text-inksoft">{isTeam ? "Your name" : "Brewery name"} {isTeam && <span className="text-[0.7rem]">· how teammates see your seat</span>}</span><input value={name} onChange={(e) => setName(e.target.value)} maxLength={40} placeholder={isTeam ? "e.g. Sam" : "e.g. Sediment Co."} autoFocus={!isTeam || joiningFounded} /></label>
 
           {isTeam && (peek?.teams?.length ?? 0) > 0 && (() => {
             const picked = peek!.teams!.find((t) => t.teamId === teamId);
@@ -142,7 +162,11 @@ export function Join({ onJoined, onBack }: { onJoined: (c: StudentClient) => voi
                     const on = teamId === t.teamId;
                     const founded = t.members > 0;
                     return (
-                      <button key={t.teamId} type="button" onClick={() => setTeamId(on ? "" : t.teamId)} className="flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left transition-colors" style={{ borderColor: on ? "var(--color-copper)" : "var(--color-line2)", background: on ? "color-mix(in srgb, var(--color-copper) 12%, var(--color-panel))" : "var(--color-panel)" }}>
+                      <button key={t.teamId} type="button" onClick={() => {
+                        setTeamId(on ? "" : t.teamId);
+                        // Don't carry a seat into a firm where it's already occupied.
+                        if (!on && t.roles.includes(role)) setRole("");
+                      }} className="flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left transition-colors" style={{ borderColor: on ? "var(--color-copper)" : "var(--color-line2)", background: on ? "color-mix(in srgb, var(--color-copper) 12%, var(--color-panel))" : "var(--color-panel)" }}>
                         <span className="min-w-0 flex-1 truncate text-sm font-semibold" style={{ color: founded ? "var(--color-ink)" : "var(--color-inksoft)" }}>{founded ? t.name : "— open firm —"}</span>
                         <span className="shrink-0 font-mono text-[0.58rem] uppercase tracking-wide text-inksoft">{t.members ? `${t.members} aboard` : "empty"}</span>
                         {t.roles.length > 0 && <span className="shrink-0 font-mono text-[0.56rem] uppercase text-copperdeep">{t.roles.map((r) => r.toUpperCase()).join(" ")}</span>}
@@ -159,20 +183,20 @@ export function Join({ onJoined, onBack }: { onJoined: (c: StudentClient) => voi
 
           {isTeam && (
             <div>
-              <div className="mb-2 font-mono text-[0.6rem] uppercase tracking-[0.12em] text-copperdeep">Your seat <span className="text-[0.7rem] lowercase tracking-normal text-inksoft">{joiningFounded ? "· required — each seat owns one desk of the firm's decision" : "· each seat owns one desk — leave blank to run the whole firm (founders only)"}</span></div>
+              <div className="mb-2 font-mono text-[0.6rem] uppercase tracking-[0.12em] text-copperdeep">Your seat <span className="text-[0.7rem] lowercase tracking-normal text-inksoft">{joiningFounded ? "· required — each seat owns one desk of the firm's decision" : "· the CEO runs every desk until teammates take theirs"}</span></div>
               <div className="flex flex-wrap gap-1.5">
                 {SEATS.map((s) => {
                   const on = role === s.id;
-                  const taken = !!teamId && (peek?.teams?.find((t) => t.teamId === teamId)?.roles ?? []).includes(s.id);
+                  const taken = seatTaken(s.id);
                   return (
-                    <button key={s.id} type="button" disabled={taken && !on} onClick={() => setRole(on ? "" : s.id)} title={taken ? `${s.label} — already taken on this firm` : `${s.label} — ${s.desk}`} className="rounded-lg border px-2.5 py-1.5 text-left transition-colors" style={{ borderColor: on ? "var(--color-copper)" : "var(--color-line2)", background: on ? "color-mix(in srgb, var(--color-copper) 12%, var(--color-panel))" : "var(--color-panel)", opacity: taken && !on ? 0.45 : 1, cursor: taken && !on ? "not-allowed" : "pointer" }}>
+                    <button key={s.id} type="button" disabled={taken} onClick={() => setRole(s.id)} title={taken ? `${s.label} — already taken on this firm` : `${s.label} — ${s.desk}`} className="rounded-lg border px-2.5 py-1.5 text-left transition-colors" style={{ borderColor: on ? "var(--color-copper)" : "var(--color-line2)", background: on ? "color-mix(in srgb, var(--color-copper) 12%, var(--color-panel))" : "var(--color-panel)", opacity: taken ? 0.45 : 1, cursor: taken ? "not-allowed" : "pointer" }}>
                       <span className="font-mono text-[0.66rem] font-bold" style={{ color: on ? "var(--color-copperdeep)" : "var(--color-ink)" }}>{s.label}</span>
                       <span className="ml-1 text-[0.62rem] text-inksoft">{taken ? "taken" : s.desk}</span>
                     </button>
                   );
                 })}
               </div>
-              {joiningFounded && !role && <div className="mt-1 text-[0.66rem] text-inksoft">This firm already has members — pick a seat so your desks don't collide.</div>}
+              {!role && <div className="mt-1 text-[0.66rem] text-inksoft">{joiningFounded ? "This firm already has members — pick a seat so your desks don't collide." : "Pick the chair you'll hold."}</div>}
             </div>
           )}
 

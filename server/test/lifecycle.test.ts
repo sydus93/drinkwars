@@ -82,7 +82,7 @@ test("state-machine guards reject out-of-order operations", async () => {
   await assert.rejects(() => orch.lockRound(gameId), LifecycleError);
 });
 
-test("non-submission is flagged and zero-filled", async () => {
+test("non-submission is flagged, and the firm still resolves", async () => {
   const { config, store, orch, gameId, teamRecords } = await setup();
   const skipped = teamRecords[2].id;
   await submitAll(orch, gameId, teamRecords, config, [skipped]);
@@ -96,7 +96,7 @@ test("non-submission is flagged and zero-filled", async () => {
   const skippedFirm = teamRecords[2].firm_id;
   const tel = telemetry.find((t) => t.round === 0 && t.team_id === skipped);
   assert.ok(tel && tel.submitted === false, "skipped team should have a non-submitted telemetry row");
-  assert.ok(firmRounds.some((r) => r.firm_id === skippedFirm), "zero-filled firm still resolves");
+  assert.ok(firmRounds.some((r) => r.firm_id === skippedFirm), "a filled-in firm still resolves");
 });
 
 test("a resolved round is append-only (cannot be re-resolved)", async () => {

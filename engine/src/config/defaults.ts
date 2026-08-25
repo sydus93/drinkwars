@@ -37,7 +37,13 @@ export const defaultConfig: Config = {
 
   init: {
     starting_cash: 460_000, // seed capitalization — benchmark taproom brewery $400–750k
-    starting_cap: 40_000, // drinks/qtr of production capacity (~650 bbl/yr)
+    // 40k→64k (DW-042): demand/installed-capacity starts at 1.22× instead of 1.95×.
+    // At 1.95× every firm sold everything it could brew all game, so overbuilding
+    // capacity — the defining craft-beer strategy error of the 2020s — was literally
+    // unreachable (the calibrate.ts stranded-capacity probe showed a forced
+    // overbuilder MAKING money at 1.39×). At 1.22×, with honest idle-capacity
+    // carrying costs below, the probe finally punishes.
+    starting_cap: 64_000, // drinks/qtr of production capacity (~1,050 bbl/yr)
     starting_debt: 80_000, // modest opening equipment note
     starting_Q: 10,
     starting_B: 10,
@@ -59,7 +65,11 @@ export const defaultConfig: Config = {
       beta_b: 0.05,
       beta_fit: 0.5,
       D0: 440_000, // drinks/qtr city-wide
-      growth: 1.02,
+      // growth 1.02→1.005/qtr (DW-042): the old 8%/yr encoded the 2010s craft boom.
+      // BA 2024–25: craft volume is FLAT to declining; a mature local market grows
+      // ~2%/yr at best. Compounding boom-rate demand re-tightened supply by mid-game
+      // and made overbuilding profitable no matter the starting ratio.
+      growth: 1.005,
       U0: 1.2,
       active_at_start: true,
       emerge_round: null,
@@ -77,7 +87,7 @@ export const defaultConfig: Config = {
       beta_b: 0.16,
       beta_fit: 0.5,
       D0: 184_000,
-      growth: 1.03,
+      growth: 1.01, // premium still outgrows mass (4%/yr), but no longer boom-rate (DW-042)
       U0: 0.9,
       active_at_start: true,
       emerge_round: null,
@@ -93,7 +103,7 @@ export const defaultConfig: Config = {
       beta_b: 0.16,
       beta_fit: 0.5,
       D0: 152_000,
-      growth: 1.05,
+      growth: 1.03, // an emerging category can still grow ~12%/yr — the game's one growth story (DW-042)
       U0: 1.1,
       active_at_start: false,
       emerge_round: 9,
@@ -102,7 +112,11 @@ export const defaultConfig: Config = {
   ],
 
   demand: {
-    unmet_demand_lost_fraction: 0.5,
+    // 0.5→0.65 (DW-042): when a firm rations, most of its unserved customers walk
+    // (outside option) rather than queue at whichever rival has spare tanks. At 0.5
+    // the spill was generous enough that holding excess capacity harvested rivals'
+    // rationing — overbuilding worked as cheap insurance (see the calibrate probe).
+    unmet_demand_lost_fraction: 0.65,
     cross_segment_substitution: 0.2,
   },
 
@@ -134,7 +148,12 @@ export const defaultConfig: Config = {
     gain: 0.25, // $X capex → 0.25·X drinks/qtr of capacity (book_value_per_unit = 4)
     lag: 1,
     conversion: "linear",
-    fixed_cost_per_unit: 0.2, // $/qtr upkeep per drink of quarterly capacity
+    // 0.2→0.4 (DW-042): idle capacity has to hurt. At $0.2/qtr a drink of unused
+    // brewhouse paid for itself at ~30% utilization, so overbuilding was cheap
+    // insurance; at $0.4 (lease + utilities + insurance on space you aren't
+    // filling) a stranded expansion is a real P&L wound — the calibrate.ts
+    // stranded-capacity probe is the regression test for exactly this.
+    fixed_cost_per_unit: 0.4, // $/qtr upkeep per drink of quarterly capacity
     book_value_per_unit: 4.0, // ≈$250/bbl-yr of capacity — generic expansion tanks
   },
 
@@ -145,7 +164,11 @@ export const defaultConfig: Config = {
     // spender can hold and tripped the §16.2 dominant-strategy gate (brand_builder
     // 63%); lag-only moves the TIMING of payoff without cheapening the lever.
     Q: { depreciation: 0.18, gain: 0.0425, lag: 1, conversion: "sqrt" },
-    B: { depreciation: 0.18, gain: 0.0425, lag: 1, conversion: "sqrt" },
+    // B decay 0.18→0.21 (DW-042): abundant capacity (starting_cap 56k) removed the
+    // supply cap on demand-side plays and pushed brand_builder's fixed-sweep win share
+    // to 71% (§16.2 FAIL). Faster brand decay makes the brand position a flow to keep
+    // funding, not a stock to sit on — attention fades faster than craft skill.
+    B: { depreciation: 0.21, gain: 0.0425, lag: 1, conversion: "sqrt" },
     T_emp: { depreciation: 0.1, gain: 0.05, lag: 1, conversion: "sqrt" },
     T_inv: { depreciation: 0.1, gain: 0.05, lag: 1, conversion: "sqrt" },
     T_gov: { depreciation: 0.1, gain: 0.05, lag: 1, conversion: "sqrt" },
@@ -222,6 +245,67 @@ export const defaultConfig: Config = {
         resilience_mitigated: true,
         duration: 1,
       },
+      // ── Gamemaster-only events (DW-044): prob_per_round 0 — these NEVER roll on
+      // their own. They exist so an instructor can plant demand-side turns from the
+      // Schedule tab and align the market's story with the syllabus week by week.
+      {
+        // Macro slump — consumers tighten up across every segment.
+        id: "demand_slump",
+        kind: "demand_drop",
+        target: "all",
+        magnitude_mean: 0.15,
+        magnitude_sd: 0.03,
+        prob_per_round: 0,
+        earliest_round: 1,
+        latest_round: 15,
+        signaling: "signaled_noisy", // macro turns have leading indicators — info buyers see it coming
+        resilience_mitigated: false,
+        duration: 2,
+      },
+      {
+        // Craft wave — festival season / tourist influx lifts the whole market.
+        id: "craft_wave",
+        kind: "demand_boost",
+        target: "all",
+        magnitude_mean: 0.15,
+        magnitude_sd: 0.03,
+        prob_per_round: 0,
+        earliest_round: 1,
+        latest_round: 15,
+        signaling: "signaled_noisy",
+        resilience_mitigated: false,
+        duration: 2,
+      },
+      {
+        // Health shift — tastes turn away from legacy alcohol (mass segment). Pairs
+        // with the frontier growth story: plant it as the maturing-industry beat.
+        id: "health_shift",
+        kind: "demand_drop",
+        target: "mass",
+        magnitude_mean: 0.2,
+        magnitude_sd: 0.04,
+        prob_per_round: 0,
+        earliest_round: 1,
+        latest_round: 15,
+        signaling: "signaled_noisy",
+        resilience_mitigated: false,
+        duration: 3,
+      },
+      {
+        // NA moment — the non-alcoholic category goes mainstream. Only meaningful
+        // once frontier has emerged (round 9 by default); plant it after.
+        id: "na_moment",
+        kind: "demand_boost",
+        target: "frontier",
+        magnitude_mean: 0.25,
+        magnitude_sd: 0.05,
+        prob_per_round: 0,
+        earliest_round: 1,
+        latest_round: 15,
+        signaling: "signaled_noisy",
+        resilience_mitigated: false,
+        duration: 3,
+      },
       {
         // CO2 / packaging squeeze — capacity hit.
         id: "co2",
@@ -290,5 +374,34 @@ export const defaultConfig: Config = {
     cash_safety_threshold: 120_000,
     healthy_coverage: 2.0,
     healthy_leverage: 1.5,
+    // Scoring layer (06_scoring_layer_spec) — everything at its no-op default, so
+    // output is byte-identical to the pre-layer engine (acceptance gate §8.1).
+    // drop_first is expected to move to 1–2 once live-play data says how many rounds
+    // the interface takes to learn; flip it per-game, not here, until then.
+    accumulation_window: { drop_first: 0, tail_only: null },
+    terminal_weight: 0,
+    penalties: [],
+    // §5 benchmark bands — DISPLAY ONLY (gate §8.6: mutating these changes no score).
+    // Derived 2026-08-11 via `npm run bands` (mixed population, 24 seeds, steady-state,
+    // base + full preset; below P30 → weak, P30–P75 → sound, above P75 → strong),
+    // then rounded to teachable numbers reconciled across both configs:
+    //   roic            base P30/50/75 = −.024/.027/.062, full −.060/.007/.049 → weak
+    //                   boundary set at 0 (losing money reads "weak" — the honest lesson;
+    //                   quarterly, so ~12%/yr = sound, ~25%/yr = strong).
+    //   interest_cover  cohort distribution is degenerate (most firms run near debt-free:
+    //                   P50 = cap), so these are the textbook finance thresholds instead;
+    //                   the UI shows "no debt" rather than a tier when debt ≈ 0.
+    //   segment_share   sums across segments (a two-segment firm adds both).
+    //   intangible_index Q+B; P75 ≈ 47 in BOTH configs — unusually stable.
+    //   stakeholder_mean starting stocks are 10, so ≤10.5 = "never invested in people/
+    //                   investors/regulators", the weak read.
+    // Re-run `npm run bands` after any economy retune; these move with the economy.
+    benchmark_bands: {
+      roic: { weak: 0.0, sound: 0.03, strong: 0.06 },
+      interest_cover: { weak: 1.5, sound: 3.0, strong: 6.0 },
+      segment_share: { weak: 0.12, sound: 0.25, strong: 0.45 },
+      intangible_index: { weak: 18, sound: 32, strong: 47 },
+      stakeholder_mean: { weak: 10.5, sound: 18, strong: 28 },
+    },
   },
 };

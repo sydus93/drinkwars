@@ -184,7 +184,7 @@ test("employees poaching: a strong offer can lure a rival's hire across, and inv
   for (let i = 0; i < 10 && !moved; i++) {
     r = resolveRound(w, w.firms.map((f) => mkDecision(f.id, w, f.id === bb ? { poach_employees: [{ firm: a, employee: hire.id, offer: hire.salary * 4 }] } : {})), c);
     w = r.world;
-    moved = (w.firms.find((f) => f.id === bb)!.employees ?? []).some((e) => e.id === hire.id);
+    moved = (w.firms.find((f) => f.id === bb)!.employees ?? []).some((e) => e.id.startsWith(hire.id)); // re-keyed on arrival (DW-046)
     for (const fr of r.result.firm_results) {
       const bs = fr.balance_sheet;
       assert.ok(Math.abs(bs.assets - (bs.debt + bs.equity)) < 1e-3, `balance ${fr.firm_id} r${fr.round}`);
@@ -212,8 +212,11 @@ test("registry is coherent: ids unique, deps resolve, presets reference real ids
   for (const p of PRESETS) {
     for (const id of p.modules) assert.ok(ids.has(id as ModuleId), `preset ${p.id} lists unknown module ${id}`);
   }
-  // The "full" preset must enable every registered module.
-  assert.equal(presetById("full")!.modules.length, MODULE_REGISTRY.length);
+  // The "full" preset enables every registered LEVER module. asymmetricStarts is
+  // deliberately excluded (DW-042): it sets initial conditions, not capabilities,
+  // and a class competition starts symmetric.
+  assert.equal(presetById("full")!.modules.length, MODULE_REGISTRY.length - 1);
+  assert.ok(!presetById("full")!.modules.includes("asymmetricStarts"), "full preset starts symmetric");
 });
 
 test("modulesOverride flips exactly the named flags on", () => {
@@ -494,10 +497,12 @@ test("MOD-B08 instruments: RBF amortizes from revenue; convertible converts when
 test("MOD-B07 M&A: a distressed rival can be bought; acquirer absorbs it, books balance", () => {
   const c = loadConfig(modulesOverride(["ma"]));
   const w = initGame(c);
-  // Make firm_2 distressed and bid at a price above the floor. Cash burns through
-  // retained earnings (a real loss) so the opening balance sheet stays balanced.
+  // Make firm_2 deeply distressed (min_distress_rounds is 4 since DW-041 — M&A is a
+  // rescue of a firm past its covenant runway, and the target's cash must also be
+  // below the safety threshold) and bid at a price above the floor. Cash burns
+  // through retained earnings (a real loss) so the opening balance sheet balances.
   const t = w.firms.find((f) => f.id === "firm_2")!;
-  t.rounds_below_health = 2;
+  t.rounds_below_health = 4;
   t.retained_earnings -= t.cash - 50;
   t.cash = 50;
   const a0 = w.firms.find((f) => f.id === "firm_1")!;
