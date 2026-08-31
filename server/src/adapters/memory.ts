@@ -58,6 +58,18 @@ export class InMemoryAdapter implements StorageAdapter {
     g.lifecycle = lifecycle;
     g.current_round = currentRound;
   }
+  async setGameTitle(id: string, title: string | null): Promise<void> {
+    const g = this.games.get(id);
+    if (g) g.title = title;
+  }
+  async listGames(): Promise<GameRecord[]> {
+    return [...this.games.values()].map((g) => clone(g)).sort((a, b) => b.created_at - a.created_at);
+  }
+  async setGameDeadline(id: string, deadlineAt: number | null): Promise<void> {
+    const g = this.games.get(id);
+    if (!g) throw new Error(`no game ${id}`);
+    g.deadline_at = deadlineAt;
+  }
 
   async createUser(u: UserRecord): Promise<void> {
     this.users.set(u.id, clone(u));
@@ -92,6 +104,9 @@ export class InMemoryAdapter implements StorageAdapter {
   async upsertMemberDecision(rec: MemberDecisionRecord): Promise<void> {
     this.memberDecisions.set(key(rec.game_id, rec.round, rec.user_id), clone(rec));
   }
+  async deleteMemberDecision(gameId: string, round: number, userId: string): Promise<void> {
+    this.memberDecisions.delete(key(gameId, round, userId));
+  }
   async getMemberDecisions(gameId: string, round: number, teamId: string): Promise<MemberDecisionRecord[]> {
     return [...this.memberDecisions.values()].filter((m) => m.game_id === gameId && m.round === round && m.team_id === teamId).map(clone);
   }
@@ -100,10 +115,22 @@ export class InMemoryAdapter implements StorageAdapter {
     if (!t) throw new Error(`no team ${teamId}`);
     if (!t.member_user_ids.includes(userId)) t.member_user_ids.push(userId);
   }
+  async removeTeamMember(teamId: string, userId: string): Promise<void> {
+    const t = this.teams.get(teamId);
+    if (!t) throw new Error(`no team ${teamId}`);
+    t.member_user_ids = t.member_user_ids.filter((u) => u !== userId);
+    this.memberRoles.delete(key(teamId, userId));
+  }
   async setTeamName(teamId: string, name: string): Promise<void> {
     const t = this.teams.get(teamId);
     if (!t) throw new Error(`no team ${teamId}`);
     t.name = name;
+  }
+  async setTeamStyle(teamId: string, style: { color?: string | null; emblem?: string | null }): Promise<void> {
+    const t = this.teams.get(teamId);
+    if (!t) throw new Error(`no team ${teamId}`);
+    if (style.color !== undefined) t.color = style.color;
+    if (style.emblem !== undefined) t.emblem = style.emblem;
   }
   private memberRoles = new Map<string, string>(); // key team::user → role
   async setMemberRole(teamId: string, userId: string, role: string | null): Promise<void> {
@@ -148,8 +175,14 @@ export class InMemoryAdapter implements StorageAdapter {
   async getDecisions(gameId: string, round: number): Promise<DecisionRecord[]> {
     return [...this.decisions.values()].filter((d) => d.game_id === gameId && d.round === round).map(clone);
   }
+  async deleteDecision(gameId: string, round: number, teamId: string): Promise<void> {
+    this.decisions.delete(key(gameId, round, teamId));
+  }
   async lockDecisions(gameId: string, round: number): Promise<void> {
     for (const d of this.decisions.values()) if (d.game_id === gameId && d.round === round) d.locked = true;
+  }
+  async unlockDecisions(gameId: string, round: number): Promise<void> {
+    for (const d of this.decisions.values()) if (d.game_id === gameId && d.round === round) d.locked = false;
   }
 
   async appendRoundResult(rec: RoundResultRecord): Promise<void> {

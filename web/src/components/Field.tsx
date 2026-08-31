@@ -16,7 +16,7 @@ const median = (xs: number[]) => {
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 };
 
-export function Field({ view, infoActive, onInspect }: { view: GameView; infoActive: boolean; onInspect?: (firmId: string) => void }) {
+export function Field({ view, infoActive, pending = false, onInspect }: { view: GameView; infoActive: boolean; pending?: boolean; onInspect?: (firmId: string) => void }) {
   const firms = view.firms;
   const you = firms.find((f) => f.isYou);
   const others = firms.filter((f) => !f.isYou);
@@ -70,6 +70,11 @@ export function Field({ view, infoActive, onInspect }: { view: GameView; infoAct
         <>
           <Card>
             <Eyebrow>Market Intelligence · rivals revealed</Eyebrow>
+            {onInspect && (
+              <div className="mb-1.5 text-[0.72rem] text-inksoft">
+                Click a brewery to open its dossier — finances, facilities{view.modules?.employees?.enabled ? ", and its crew: every employee's role, skill, pay and morale, with an" : " and a"} <b className="text-ink">{view.modules?.employees?.enabled ? "offer $" : "read"}</b>{view.modules?.employees?.enabled ? " box to poach them (your offer must beat their current pay; unhappy staff jump easier). Poach offers queue on this round's decision." : " on their position."}
+              </div>
+            )}
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
@@ -81,6 +86,7 @@ export function Field({ view, infoActive, onInspect }: { view: GameView; infoAct
                     <th className="py-1 pr-2 text-right">Cap</th>
                     <th className="py-1 pr-2 text-right">Avg price</th>
                     <th className="py-1">Focus</th>
+                    {onInspect && <th className="py-1 pl-2"></th>}
                   </tr>
                 </thead>
                 <tbody className="tnum">
@@ -97,6 +103,7 @@ export function Field({ view, infoActive, onInspect }: { view: GameView; infoAct
                       <td className="py-1 pr-2 text-right">{fmt.int(f.cap)}</td>
                       <td className="py-1 pr-2 text-right">{avgPrice(f) ? fmt.price(avgPrice(f)) : "—"}</td>
                       <td className="py-1 text-[0.7rem]">{f.focus.map((s) => (SEG_LABEL[s] ?? s).split(" ")[0]).join(", ") || "—"}</td>
+                      {onInspect && <td className="py-1 pl-2 text-right font-mono text-[0.58rem] uppercase tracking-wide text-copperdeep">{f.isYou ? "" : view.modules?.employees?.enabled && f.status === "active" ? "Dossier · poach →" : "Dossier →"}</td>}
                     </tr>
                   ))}
                 </tbody>
@@ -107,8 +114,9 @@ export function Field({ view, infoActive, onInspect }: { view: GameView; infoAct
         </>
       ) : (
         <Card>
-          <Eyebrow>Market Intelligence · locked</Eyebrow>
+          <Eyebrow>Market Intelligence · {pending ? "unlocks on submit" : "locked"}</Eyebrow>
           <div className="flex flex-col items-start gap-2 py-4">
+            {pending && <p className="text-sm text-ink"><b>Research is ticked in your form but not submitted yet.</b> Submit your desk and this opens for the whole firm within a few seconds.</p>}
             <p className="text-sm text-inksoft">
               Rivals' quality, brand, capacity, pricing, and the positioning map are hidden. Tick <span className="font-semibold text-copperdeep">Buy market research</span> in
               your decision to reveal the field — its cost and effect show right there.

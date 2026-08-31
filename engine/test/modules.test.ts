@@ -497,12 +497,12 @@ test("MOD-B08 instruments: RBF amortizes from revenue; convertible converts when
 test("MOD-B07 M&A: a distressed rival can be bought; acquirer absorbs it, books balance", () => {
   const c = loadConfig(modulesOverride(["ma"]));
   const w = initGame(c);
-  // Make firm_2 deeply distressed (min_distress_rounds is 4 since DW-041 — M&A is a
-  // rescue of a firm past its covenant runway, and the target's cash must also be
+  // Make firm_2 deeply distressed (min_distress_rounds is 3 since DW-051, inside the
+  // 5-round covenant runway — M&A is a rescue window, and the target's cash must also be
   // below the safety threshold) and bid at a price above the floor. Cash burns
   // through retained earnings (a real loss) so the opening balance sheet balances.
   const t = w.firms.find((f) => f.id === "firm_2")!;
-  t.rounds_below_health = 4;
+  t.rounds_below_health = 3;
   t.retained_earnings -= t.cash - 50;
   t.cash = 50;
   const a0 = w.firms.find((f) => f.id === "firm_1")!;

@@ -39,6 +39,7 @@ const mapGame = (r: any): GameRecord => ({
   id: r.id, config: r.config, n_rounds: r.n_rounds, current_round: r.current_round,
   lifecycle: r.lifecycle as Lifecycle, join_code: r.join_code ?? null, owner_tag: r.owner_tag ?? null,
   firm_mode: (r.firm_mode ?? "solo") as GameRecord["firm_mode"], title: r.title ?? null, created_at: fromTs(r.created_at),
+  deadline_at: r.deadline_at ? fromTs(r.deadline_at) : null, // null when migration 0006 hasn't run yet (column absent)
 });
 const mapUser = (r: any): UserRecord => ({
   id: r.id, role: r.role, email: r.email, consent: r.consent, deid_code: r.deid_code,
@@ -50,7 +51,7 @@ const mapMemberDecision = (r: any): MemberDecisionRecord => ({
 });
 const USER_COLS = "id, role, email, consent, deid_code, external_id, display_name, cohort, claim_code";
 const mapTeam = (r: any): TeamRecord => ({
-  id: r.id, game_id: r.game_id, firm_id: r.firm_id, name: r.name,
+  id: r.id, game_id: r.game_id, firm_id: r.firm_id, name: r.name, color: r.color ?? null, emblem: r.emblem ?? null,
   member_user_ids: (r.team_members ?? []).map((m: any) => m.user_id),
 });
 const mapWorldState = (r: any): WorldStateRecord => ({
@@ -97,6 +98,16 @@ export class SupabaseAdapter implements StorageAdapter {
   async setGameLifecycle(id: string, lifecycle: Lifecycle, currentRound: number): Promise<void> {
     must(await this.db.from("games").update({ lifecycle, current_round: currentRound }).eq("id", id));
   }
+  async setGameTitle(id: string, title: string | null): Promise<void> {
+    must(await this.db.from("games").update({ title }).eq("id", id));
+  }
+  async listGames(): Promise<GameRecord[]> {
+    const rows = must(await this.db.from("games").select("*").order("created_at", { ascending: false }));
+    return ((rows ?? []) as Record<string, unknown>[]).map((r) => mapGame(r as never));
+  }
+  async setGameDeadline(id: string, deadlineAt: number | null): Promise<void> {
+    must(await this.db.from("games").update({ deadline_at: deadlineAt == null ? null : toTs(deadlineAt) }).eq("id", id));
+  }
 
   // ── Users & teams ─────────────────────────────────────────────────────────
   private userRow(u: UserRecord) {
@@ -130,18 +141,27 @@ export class SupabaseAdapter implements StorageAdapter {
     }
   }
   async getTeams(gameId: string): Promise<TeamRecord[]> {
-    const rows = must(await this.db.from("teams").select("id, game_id, firm_id, name, team_members(user_id)").eq("game_id", gameId));
+    const rows = must(await this.db.from("teams").select("id, game_id, firm_id, name, color, emblem, team_members(user_id)").eq("game_id", gameId));
     return (rows ?? []).map(mapTeam);
   }
   async getTeam(id: string): Promise<TeamRecord | null> {
-    const r = must(await this.db.from("teams").select("id, game_id, firm_id, name, team_members(user_id)").eq("id", id).maybeSingle());
+    const r = must(await this.db.from("teams").select("id, game_id, firm_id, name, color, emblem, team_members(user_id)").eq("id", id).maybeSingle());
     return r ? mapTeam(r) : null;
   }
   async addTeamMember(teamId: string, userId: string): Promise<void> {
     must(await this.db.from("team_members").upsert({ team_id: teamId, user_id: userId }, { onConflict: "team_id,user_id", ignoreDuplicates: true }));
   }
+  async removeTeamMember(teamId: string, userId: string): Promise<void> {
+    must(await this.db.from("team_members").delete().eq("team_id", teamId).eq("user_id", userId));
+  }
   async setTeamName(teamId: string, name: string): Promise<void> {
     must(await this.db.from("teams").update({ name }).eq("id", teamId));
+  }
+  async setTeamStyle(teamId: string, style: { color?: string | null; emblem?: string | null }): Promise<void> {
+    const patch: Record<string, string | null> = {};
+    if (style.color !== undefined) patch.color = style.color;
+    if (style.emblem !== undefined) patch.emblem = style.emblem;
+    if (Object.keys(patch).length) must(await this.db.from("teams").update(patch).eq("id", teamId));
   }
   async setMemberRole(teamId: string, userId: string, role: string | null): Promise<void> {
     must(await this.db.from("team_members").update({ role }).eq("team_id", teamId).eq("user_id", userId));
@@ -155,7 +175,7 @@ export class SupabaseAdapter implements StorageAdapter {
     const mine = must(await this.db.from("team_members").select("team_id").eq("user_id", userId));
     const ids = (mine ?? []).map((m: any) => m.team_id);
     if (!ids.length) return [];
-    const rows = must(await this.db.from("teams").select("id, game_id, firm_id, name, team_members(user_id)").in("id", ids));
+    const rows = must(await this.db.from("teams").select("id, game_id, firm_id, name, color, emblem, team_members(user_id)").in("id", ids));
     return (rows ?? []).map(mapTeam);
   }
 
@@ -165,6 +185,9 @@ export class SupabaseAdapter implements StorageAdapter {
       game_id: rec.game_id, round: rec.round, team_id: rec.team_id, user_id: rec.user_id,
       desk: rec.desk, partial: rec.partial, submitted: rec.submitted, updated_at: toTs(rec.updated_at),
     }, { onConflict: "game_id,round,user_id" }));
+  }
+  async deleteMemberDecision(gameId: string, round: number, userId: string): Promise<void> {
+    must(await this.db.from("member_decisions").delete().eq("game_id", gameId).eq("round", round).eq("user_id", userId));
   }
   async getMemberDecisions(gameId: string, round: number, teamId: string): Promise<MemberDecisionRecord[]> {
     const rows = must(await this.db.from("member_decisions").select("*").eq("game_id", gameId).eq("round", round).eq("team_id", teamId));
@@ -209,8 +232,14 @@ export class SupabaseAdapter implements StorageAdapter {
     const rows = must(await this.db.from("decisions").select("*").eq("game_id", gameId).eq("round", round));
     return (rows ?? []).map(mapDecision);
   }
+  async deleteDecision(gameId: string, round: number, teamId: string): Promise<void> {
+    must(await this.db.from("decisions").delete().eq("game_id", gameId).eq("round", round).eq("team_id", teamId));
+  }
   async lockDecisions(gameId: string, round: number): Promise<void> {
     must(await this.db.from("decisions").update({ locked: true }).eq("game_id", gameId).eq("round", round));
+  }
+  async unlockDecisions(gameId: string, round: number): Promise<void> {
+    must(await this.db.from("decisions").update({ locked: false }).eq("game_id", gameId).eq("round", round));
   }
 
   // ── Results + research (append-only, except agreements upsert) ──────────────

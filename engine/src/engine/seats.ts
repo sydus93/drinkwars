@@ -60,6 +60,8 @@ export interface SeatPartial {
   role?: string | null;
   desk?: SeatDesk | "all" | null;
   partial: Partial<FirmDecision>;
+  /** when this slice was submitted — among non-owners the LATER word wins (DW-051) */
+  updated_at?: number | null;
 }
 
 const deskOf = (s: SeatPartial): SeatDesk | "all" =>
@@ -73,13 +75,27 @@ const deskOf = (s: SeatPartial): SeatDesk | "all" =>
  */
 export function mergeMemberDecisions(base: FirmDecision, seats: SeatPartial[]): FirmDecision {
   const out: FirmDecision = { ...base };
-  // Generalists (desk "all") first, specialists after — stable so equal-precedence seats
-  // keep input order (deterministic for replay).
-  const ordered = [...seats].sort((a, b) => Number(deskOf(a) !== "all") - Number(deskOf(b) !== "all"));
-  for (const s of ordered) {
+  // Per lever (DW-051): the desk's own specialist always wins. Among everyone else — the CEO
+  // (desk "all") and any teammate covering an empty/silent chair — the LATER submission wins,
+  // so a CFO's hire for an empty CHRO chair lands even if the CEO submitted earlier, and the
+  // CEO can still overrule it by submitting again afterwards (their form mirrors covers, so a
+  // re-submit carries them unless deliberately changed). Ties keep input order; ordering by
+  // stored timestamps is deterministic for replay.
+  const owns = (s: SeatPartial, f: keyof FirmDecision): boolean => {
     const desk = deskOf(s);
-    const fields = desk === "all" ? ALL_LEVERS : DESK_LEVERS[desk];
-    for (const f of fields) {
+    return desk !== "all" && (DESK_LEVERS[desk] as (keyof FirmDecision)[]).includes(f);
+  };
+  const byTime = seats.map((s, i) => ({ s, i })).sort((a, b) => ((a.s.updated_at ?? 0) - (b.s.updated_at ?? 0)) || (a.i - b.i)).map((x) => x.s);
+  for (const s of byTime) {
+    for (const f of ALL_LEVERS) {
+      if (owns(s, f)) continue;
+      const v = s.partial[f];
+      if (v !== undefined) (out as unknown as Record<string, unknown>)[f as string] = v;
+    }
+  }
+  for (const s of seats) {
+    for (const f of ALL_LEVERS) {
+      if (!owns(s, f)) continue;
       const v = s.partial[f];
       if (v !== undefined) (out as unknown as Record<string, unknown>)[f as string] = v;
     }

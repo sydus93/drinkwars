@@ -58,6 +58,19 @@ export function capacityInMarket(view: GameView, marketId: string): number {
  *  so entering a market or siting a facility on the City View tab always shows up in projected
  *  cash, and nothing is double-counted. With no cityActions (geography off / multiplayer) it
  *  collapses to the draft (plus poaches), preserving prior behavior. */
+// On a team firm the draft MIRRORS the composed plan — which may already contain the very
+// builds still queued in cityActions (submitted last click). The merge must therefore be
+// idempotent: union by identity, never concat, or every submit stacks another copy of the
+// same facility (and the projected-cash readout digs deeper each click). Two deliberately
+// identical orders in one round (same type+district+market+lot+bid) would collapse — give
+// the second one a lot or a different bid.
+const buildKey = (b: CityBuildOrder) => [b.type, b.location, b.market, b.lot ?? "", b.bid ?? ""].join("|");
+export function dedupeBuilds(builds: CityBuildOrder[]): CityBuildOrder[] {
+  const seen = new Set<string>();
+  return builds.filter((b) => { const k = buildKey(b); if (seen.has(k)) return false; seen.add(k); return true; });
+}
+const unionIds = (a: string[] | undefined, b: string[]): string[] => Array.from(new Set([...(a ?? []), ...b]));
+
 export function mergeDecision(
   view: GameView,
   draft: FirmDecision,
@@ -68,15 +81,24 @@ export function mergeDecision(
   if (!cityActions) return base;
   return {
     ...base,
-    build_facilities: [...(base.build_facilities ?? []), ...cityActions.builds],
+    build_facilities: dedupeBuilds([...((base.build_facilities ?? []) as CityBuildOrder[]), ...cityActions.builds]),
     market_presence: marketPresenceFrom(view, cityActions.markets),
-    mothball_facilities: [...(base.mothball_facilities ?? []), ...cityActions.mothballs],
-    reactivate_facilities: [...(base.reactivate_facilities ?? []), ...cityActions.reactivations],
-    divest_facilities: [...(base.divest_facilities ?? []), ...cityActions.divests],
+    mothball_facilities: unionIds(base.mothball_facilities, cityActions.mothballs),
+    reactivate_facilities: unionIds(base.reactivate_facilities, cityActions.reactivations),
+    divest_facilities: unionIds(base.divest_facilities, cityActions.divests),
     maintain_facilities: { ...(base.maintain_facilities ?? {}), ...cityActions.maintain },
     // Stage 2: explicit per-market supply overrides the presence split (only when the player set any).
     market_supply: Object.keys(cityActions.supply ?? {}).length ? cityActions.supply : base.market_supply,
   };
+}
+
+/** Did the player change the committed-markets set away from what the firm already has?
+ *  (The seeded set is not a decision — recomputing presence from it would register a
+ *  phantom "markets served" edit on every desk.) */
+export function marketsTouched(view: GameView, cityActions: CityActions): boolean {
+  const seeded = new Set(emptyCityActions(view).markets);
+  const cur = new Set(cityActions.markets);
+  return cur.size !== seeded.size || [...cur].some((m) => !seeded.has(m));
 }
 
 /** Turn the committed-markets set into engine `market_presence` weights. Home keeps a base

@@ -193,7 +193,7 @@ export const defaultConfig: Config = {
     regulatory_burden_base: 16_000, // $/qtr compliance drag, relieved by T_gov
     regulatory_burden_halfsat: 10,
     dividend_max_fraction: 0.5,
-    solvency_runway_rounds: 3,
+    solvency_runway_rounds: 5, // DW-051: 3→5 so the M&A window (min_distress_rounds 3) opens before the covenant closes
     valuation: {
       multiple: 12, // ≈3× annualized quarterly earnings — distressed craft-M&A comps
       normalization_window: 3,

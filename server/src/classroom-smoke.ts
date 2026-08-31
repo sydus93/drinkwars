@@ -96,6 +96,29 @@ ok(unplant.status === 200 && !(unplant.body.timeline as { id: string }[]).some((
 const replant = await asInstructor(`/instructor/games/${gameId}/timeline`, { method: "POST", body: JSON.stringify({ op: "schedule", spec: { type_id: "na_moment", round: 10, duration: 3 } }) });
 ok(replant.status === 200, "plant the NA-moment (frontier demand +25%) on round 10 for the maturing-industry beat");
 
+// ── 5b. DW-048 classroom ops: per-chair status, deadline, unlock, remove/re-seat ──
+const st0 = (await asInstructor(`/instructor/games/${gameId}/status`)).body as { firmMode?: string; deadlineAt?: number | null; teams?: { teamId: string; members?: { userId: string; role: string | null; submitted: boolean }[] }[] };
+const chairs = (st0.teams ?? []).flatMap((t) => t.members ?? []);
+ok(st0.firmMode === "team" && chairs.length === 25 && chairs.every((m) => m.submitted), "status lists all 25 chairs with per-chair submit state", `${chairs.length} chairs, ${chairs.filter((m) => m.submitted).length} submitted`);
+const dl = Date.now() + 3 * 3600_000;
+const setDl = await asInstructor(`/instructor/games/${gameId}/deadline`, { method: "POST", body: JSON.stringify({ deadlineAt: dl }) });
+const viewDl = await api(`/view?token=${tokens[0].token}`);
+ok(setDl.status === 200 && viewDl.body.deadlineAt === dl && !!viewDl.body.standing, "deadline announced → students' view carries it (+ standing plan seed)", String(setDl.body.error ?? ""));
+const lock0 = await asInstructor(`/instructor/games/${gameId}/lock`, { method: "POST" });
+const lateSubmit = await submit(tokens[2].token, { invest_B: 1 });
+const unlock0 = await asInstructor(`/instructor/games/${gameId}/unlock`, { method: "POST" });
+const okAgain = await submit(tokens[2].token, { price: { mass: 7.4, niche: 8.4, frontier: 0 }, presence: { mass: 0.6, niche: 0.4, frontier: 0 }, invest_B: 12_000 });
+ok(lock0.status === 200 && lateSubmit.status === 400 && /locked|not open/i.test(String(lateSubmit.body.error)) && unlock0.status === 200 && okAgain.status === 200, "lock rejects a late submit with a plain error; unlock re-opens the window", String(lateSubmit.body.error ?? unlock0.body.error ?? okAgain.body.error ?? ""));
+const t5 = (st0.teams ?? []).find((t) => t.teamId === tokens[24].teamId)!;
+const chro = t5.members!.find((m) => m.role === "chro")!;
+const rm = await asInstructor(`/instructor/games/${gameId}/members`, { method: "POST", body: JSON.stringify({ op: "remove", teamId: t5.teamId, userId: chro.userId }) });
+const st1 = (await asInstructor(`/instructor/games/${gameId}/status`)).body as { teams?: { teamId: string; members?: unknown[] }[] };
+const rejoinChro = await api("/join", { method: "POST", body: JSON.stringify({ code: joinCode, claim: students[24].claim_code, teamId: t5.teamId, role: "chro" }) });
+const st2 = (await asInstructor(`/instructor/games/${gameId}/status`)).body as { teams?: { teamId: string; members?: unknown[] }[] };
+ok(rm.status === 200 && st1.teams?.find((t) => t.teamId === t5.teamId)?.members?.length === 4 && rejoinChro.status === 200 && st2.teams?.find((t) => t.teamId === t5.teamId)?.members?.length === 5, "instructor removes a chair (4 left) and the student re-takes it by claim code (5 again)", String(rm.body.error ?? rejoinChro.body.error ?? ""));
+if (rejoinChro.status === 200) tokens[24] = { ...tokens[24], token: String(rejoinChro.body.token) };
+await submit(tokens[24].token, { invest_T_emp: 5_000 });
+
 // ── 6. run the game: lock → resolve × 12 rounds, everyone keeps trading ────
 let npcTraded = false, allRoundsClean = true, deadStudentFirms = 0;
 for (let r = 0; r < 12; r++) {
@@ -104,8 +127,9 @@ for (let r = 0; r < 12; r++) {
   if (lock.status !== 200 || resolve.status !== 200) { allRoundsClean = false; console.log(`   round ${r}: lock ${lock.status} resolve ${resolve.status} ${resolve.body.error ?? ""}`); break; }
 }
 const status = await asInstructor(`/instructor/games/${gameId}/status`);
-const st = status.body as { round?: number; teams?: { teamId: string; firmId: string; joined: boolean }[] };
+const st = status.body as { round?: number; deadlineAt?: number | null; teams?: { teamId: string; firmId: string; joined: boolean }[] };
 ok(allRoundsClean && (st.round ?? 0) >= 12, `12 rounds lock/resolve cleanly (round now ${st.round})`);
+ok(st.deadlineAt == null, "the round-1 deadline cleared itself when the next round opened");
 
 // Student + NPC firm health after 12 rounds of nobody re-submitting (no-show carry).
 const dash = await asInstructor(`/instructor/games/${gameId}/dashboard`);
@@ -126,6 +150,41 @@ ok(npcTraded, "NPC firms trade the empty slots", `combined NPC revenue $${Math.r
 // ── 7. a student reconnects by claim code (lost laptop) ────────────────────
 const rejoin = await api("/join", { method: "POST", body: JSON.stringify({ code: joinCode, claim: students[7].claim_code }) });
 ok(rejoin.status === 200 && String(rejoin.body.teamId) === tokens[7].teamId, "student 8 reconnects via claim code into the same seat");
+
+// ── 8. instructor administration (DW-049): list · rename · return codes · end early ──
+const lst = await asInstructor("/instructor/games");
+const lrow = ((lst.body as { games?: { gameId: string; title: string | null; nFirms: number; firmMode: string }[] }).games ?? []).find((g) => g.gameId === gameId);
+ok(lst.status === 200 && !!lrow, "the game appears in the instructor's game list", lrow ? `${lrow.nFirms} firms · ${lrow.firmMode}` : undefined);
+await asInstructor(`/instructor/games/${gameId}/title`, { method: "POST", body: JSON.stringify({ title: "Smoke · Section A" }) });
+const st8 = await asInstructor(`/instructor/games/${gameId}/status`);
+const s8 = st8.body as { title?: string | null; modules?: string[]; teams?: { members?: { claim?: string | null }[] }[] };
+ok(s8.title === "Smoke · Section A" && Array.isArray(s8.modules), "status carries the title + enabled-module list (set-up card)", `modules: ${(s8.modules ?? []).join(",") || "standard"}`);
+const chairs8 = (s8.teams ?? []).flatMap((t) => t.members ?? []);
+ok(chairs8.length > 0 && chairs8.every((m) => typeof m.claim === "string" && m.claim.length >= 6), "every chair's return code is visible to the instructor");
+const end = await asInstructor(`/instructor/games/${gameId}/end`, { method: "POST" });
+const stEnd = await asInstructor(`/instructor/games/${gameId}/status`);
+const vEnd = await api(`/view?token=${tokens[0].token}`);
+ok(end.status === 200 && (stEnd.body as { lifecycle?: string }).lifecycle === "complete" && (vEnd.body as { complete?: boolean }).complete === true, "End game → season complete for instructor and student");
+
+// ── 9. pre-seating (DW-050): plan → claim-only join lands in the chair; pulse is quiet until a write ──
+const g2 = await asInstructor("/instructor/games", { method: "POST", body: JSON.stringify({ nFirms: 3, nRounds: 4, firmMode: "team", modules: { teamRoles: { enabled: true } } }) });
+const g2id = String(g2.body.gameId), g2code = String(g2.body.joinCode);
+const seatPlan = await asInstructor(`/instructor/games/${g2id}/seats`, { method: "POST", body: JSON.stringify({ plan: [
+  { external_id: "student01", team: "Alpha Ales", role: "CEO" }, { external_id: "student02", team: "Alpha Ales", role: "cfo" }, { external_id: "student03", team: "Alpha Ales", role: "cmo" },
+  { external_id: "student04", team: "Beta Brew", role: "ceo" }, { external_id: "ghost99", team: "Beta Brew", role: "cfo" }, { external_id: "student05", team: "Beta Brew", role: "ceo" },
+] }) });
+const pb = seatPlan.body as { seated?: unknown[]; errors?: { external_id: string; error: string }[] };
+ok(seatPlan.status === 200 && (pb.seated ?? []).length === 4 && (pb.errors ?? []).length === 2, "seat plan: 4 seated, 2 row errors (unprovisioned NetID, chair taken)", (pb.errors ?? []).map((e) => `${e.external_id}: ${e.error}`).join(" | "));
+const peek2 = await api(`/game?code=${g2code}&claim=${students[1].claim_code}`);
+const ys = (peek2.body as { yourSeat?: { team: string; role: string } }).yourSeat;
+ok(!!ys && ys.team === "Alpha Ales" && ys.role === "cfo", "peek with claim code reveals the pre-assigned chair", ys ? `${ys.team} · ${ys.role}` : "no yourSeat");
+const j2 = await api("/join", { method: "POST", body: JSON.stringify({ code: g2code, claim: students[1].claim_code }) });
+ok(j2.status === 200 && j2.body.role === "cfo", "join with code + claim only (no picks) lands in the planned chair", String(j2.body.error ?? j2.body.role));
+const pulseA = await api(`/pulse?token=${j2.body.token}`);
+const pulseB = await api(`/pulse?token=${j2.body.token}`);
+await submit(String(j2.body.token), { dividend: 1000 });
+const pulseC = await api(`/pulse?token=${j2.body.token}`);
+ok(pulseA.status === 200 && pulseA.body.stamp === pulseB.body.stamp && pulseC.body.stamp !== pulseA.body.stamp, "pulse stamp is stable between reads and moves on a seat's write", `${String(pulseA.body.stamp).length}-char stamp`);
 
 console.log(failures ? `\n✗ ${failures} failure(s)` : "\nAll classroom-flow checks green.");
 process.exit(failures ? 1 : 0);

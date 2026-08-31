@@ -78,3 +78,28 @@ test("ROLE_DESK maps the C-suite onto the five role-aligned desks", () => {
   assert.equal(DESK_LEVERS.finance.includes("invest_T_inv"), true);
   assert.equal(DESK_LEVERS.people.includes("invest_T_emp"), true);
 });
+
+test("DW-051 empty-chair cover: owner always wins; among CEO + covering teammates the LATER submission wins", () => {
+  const base = fullDecision("firm_1");
+  const cfoCover: SeatPartial = { role: "cfo", updated_at: 10, partial: { dividend: 99, invest_Q: 7, price: { mass: 1 } } };
+  // nobody else speaks for operations/commercial → the CFO's cover lands (own desk lands too)
+  let m = mergeMemberDecisions(base, [cfoCover]);
+  assert.equal(m.dividend, 99); assert.equal(m.invest_Q, 7); assert.deepEqual(m.price, { mass: 1 });
+  // CEO submitted EARLIER → the later cover wins on the empty desks; the CFO's own desk is untouchable
+  const ceoEarly: SeatPartial = { role: "ceo", updated_at: 5, partial: { invest_Q: 50, price: { mass: 4 }, dividend: 0 } };
+  m = mergeMemberDecisions(base, [ceoEarly, cfoCover]);
+  assert.equal(m.invest_Q, 7); assert.deepEqual(m.price, { mass: 1 }); assert.equal(m.dividend, 99);
+  // CEO re-submits LATER → overrules the cover (input order irrelevant)
+  const ceoLate: SeatPartial = { ...ceoEarly, updated_at: 20 };
+  m = mergeMemberDecisions(base, [cfoCover, ceoLate]);
+  assert.equal(m.invest_Q, 50); assert.deepEqual(m.price, { mass: 4 }); assert.equal(m.dividend, 99);
+  // the desk owner beats both, whenever they submitted
+  const coo: SeatPartial = { role: "coo", updated_at: 1, partial: { invest_Q: 3 } };
+  m = mergeMemberDecisions(base, [coo, ceoLate, cfoCover]);
+  assert.equal(m.invest_Q, 3); assert.deepEqual(m.price, { mass: 4 });
+  // no timestamps → input order (later in the list = later word)
+  m = mergeMemberDecisions(base, [{ role: "cfo", partial: { invest_Q: 7 } }, { role: "ceo", partial: { invest_Q: 50 } }]);
+  assert.equal(m.invest_Q, 50);
+  // a lever nobody touched keeps the base
+  assert.equal(m.invest_process, base.invest_process);
+});

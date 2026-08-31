@@ -1,7 +1,7 @@
 {
   "name": "drinkwars-web",
   "version": "0.1.0",
-  "description": "Drink Wars — single-player in-browser prototype (engine + orchestration + adaptive NPCs, no backend).",
+  "description": "Drink Wars \u2014 single-player in-browser prototype (engine + orchestration + adaptive NPCs, no backend).",
   "type": "module",
   "private": true,
   "scripts": {
@@ -9,7 +9,9 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "deploy": "VITE_ENABLE_MP=1 VITE_TRANSPORT_URL=https://kikmdmldfgakdabbsdcq.supabase.co/functions/v1/drinkwars vite build --base=/drinkwars/ && rm -rf ../../Webpage/drinkwars && cp -R dist ../../Webpage/drinkwars && echo 'Built into ../../Webpage/drinkwars (multiplayer enabled) — now commit & push the devinstein.me repo to go live.'"
+    "deploy": "VITE_ENABLE_MP=1 VITE_TRANSPORT_URL=https://kikmdmldfgakdabbsdcq.supabase.co/functions/v1/drinkwars vite build --base=/drinkwars/ && rm -rf ../../Webpage/drinkwars && cp -R dist ../../Webpage/drinkwars && echo 'Built into ../../Webpage/drinkwars (multiplayer enabled) \u2014 now commit & push the devinstein.me repo to go live.'",
+    "playtest": "node scripts/playtest.mjs",
+    "ui:audit": "node scripts/ui-audit.mjs"
   },
   "dependencies": {
     "drinkwars-engine": "*",
@@ -24,6 +26,7 @@
     "@vitejs/plugin-react": "^4.3.4",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.7.0",
-    "vite": "^6.0.7"
+    "vite": "^6.0.7",
+    "puppeteer-core": "^25.9.0"
   }
 }

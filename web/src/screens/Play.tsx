@@ -20,9 +20,11 @@ import { MarketMap } from "../components/MarketMap.js";
 import { CityView } from "../components/CityView.js";
 import { TapDispatch } from "../components/TapDispatch.js";
 import { Emblem } from "../components/FacilityGlyph.js";
-import { firmColor, playerEmblem } from "../lib/teamColors.js";
-import { ROLE_DESK } from "drinkwars-engine";
-import { emptyCityActions, type CityActions } from "../game/cityActions.js";
+import { firmColor, firmEmblem } from "../lib/teamColors.js";
+import { DESK_LEVERS, ROLE_DESK } from "drinkwars-engine";
+import { Reconcile } from "../components/Reconcile.js";
+import { computeConflicts, leverText, offDeskEdits, openConflicts, same } from "../lib/reconcile.js";
+import { dedupeBuilds, emptyCityActions, marketPresenceFrom, marketsTouched, type CityActions } from "../game/cityActions.js";
 
 const SEAT_LABEL: Record<string, string> = { ceo: "CEO", cfo: "CFO", cmo: "CMO", coo: "COO", chro: "CHRO" };
 
@@ -41,7 +43,7 @@ const NAV_ICON: Record<Dest, JSX.Element> = {
  *  one area. The future role system maps a player's role → a default desk here. */
 const DESKS: { id: DeskId; label: string; color: string }[] = [
   { id: "all", label: "All", color: "var(--color-inksoft)" },
-  { id: "commercial", label: "Commercial", color: "var(--color-copper)" },
+  { id: "commercial", label: "Marketing", color: "var(--color-copper)" },
   { id: "operations", label: "Operations", color: "var(--color-aero)" },
   { id: "people", label: "People", color: "var(--color-gold)" },
   { id: "finance", label: "Finance", color: "var(--color-hop)" },
@@ -70,11 +72,12 @@ export function Play({
   submitLabel,
   footerNote,
   onExit,
+  standing,
 }: {
   view: GameView;
   busy: boolean;
   infoCost: number;
-  onPlay: (d: FirmDecision) => Promise<void> | void;
+  onPlay: (d: FirmDecision, covers?: Set<string>) => Promise<void> | void;
   defaultDecision: () => Promise<FirmDecision>;
   onReset: () => void;
   seatRole?: string | null; // team firms: this player's C-suite seat (defaults the desk focus)
@@ -86,6 +89,7 @@ export function Play({
   submitLabel?: string;
   footerNote?: string;
   onExit?: () => void;
+  standing?: FirmDecision | null; // DW-050: the firm's standing plan (team reconcile: "CEO left it alone" guard)
 }) {
   const [dest, setDest] = useState<Dest>("decide");
   const [rtab, setRtab] = useState<RTab>("dispatch");
@@ -129,6 +133,57 @@ export function Play({
     });
     return () => { live = false; };
   }, [view.round]);
+  // DW-050: a specialist's form tracks the FIRM's plan on every desk that isn't theirs —
+  // when the CEO submits a facility build, the CFO's cash projection shows it within a poll.
+  // Their own desk is never touched; a stray off-desk edit is overwritten (it wouldn't apply).
+  const firmPlan = view.teamPlan?.composed ?? standing ?? null;
+  const composedKey = JSON.stringify(firmPlan);
+  const prevComposed = useRef<Record<string, string> | null>(null);
+  const hasDecision = decision != null;
+  useEffect(() => {
+    if (!mp || !seatRole || !hasDecision) return;
+    const desk = ROLE_DESK[seatRole] ?? "all";
+    const composed = firmPlan;
+    if (!composed) return;
+    if (desk === "all") {
+      // CEO (DW-051): levers on EMPTY desks follow the composed plan — a teammate's cover lands
+      // in this form (so a later CEO re-submit carries it), the Reconcile card names it. Only
+      // keys whose composed value changed since the last poll move, so the CEO's own typing on
+      // other levers is never clobbered by a teammate's unrelated submit.
+      const src = composed as unknown as Record<string, unknown>;
+      const seatedDesks = new Set((view.teamPlan?.seats ?? []).filter((s) => s.role && ROLE_DESK[s.role] && ROLE_DESK[s.role] !== "all").map((s) => ROLE_DESK[s.role!] as string));
+      const emptyLevers = new Set<string>();
+      for (const [d, fs] of Object.entries(DESK_LEVERS)) if (!seatedDesks.has(d)) for (const f of fs as string[]) emptyLevers.add(f);
+      const snap: Record<string, string> = {};
+      for (const k of Object.keys(src)) snap[k] = JSON.stringify(src[k]);
+      const prev = prevComposed.current;
+      prevComposed.current = snap;
+      setDecision((d) => {
+        if (!d) return d;
+        const next = { ...d } as unknown as Record<string, unknown>;
+        let changed = false;
+        for (const k of emptyLevers) {
+          if (!(k in src) || !(k in next)) continue;
+          const moved = prev ? prev[k] !== snap[k] : true; // first sight = seed from the plan
+          if (moved && JSON.stringify(next[k]) !== snap[k]) { next[k] = src[k]; changed = true; }
+        }
+        return changed ? (next as unknown as FirmDecision) : d;
+      });
+      return;
+    }
+    const own = new Set<string>(DESK_LEVERS[desk] as string[]);
+    setDecision((d) => {
+      if (!d) return d;
+      const next = { ...d } as unknown as Record<string, unknown>;
+      const src = composed as unknown as Record<string, unknown>;
+      let changed = false;
+      for (const k of Object.keys(src)) {
+        if (own.has(k) || k === "firm_id" || !(k in next)) continue;
+        if (JSON.stringify(next[k]) !== JSON.stringify(src[k])) { next[k] = src[k]; changed = true; }
+      }
+      return changed ? (next as unknown as FirmDecision) : d;
+    });
+  }, [composedKey, mp, seatRole, hasDecision]);
   // On each resolution, surface the round in Review (the Tap Dispatch) — replaces the
   // old one-popup-per-event queue. Keyed on resolved-round COUNT (the round pointer
   // stops on the final round, but history still grows by one).
@@ -149,11 +204,63 @@ export function Play({
   const hasHistory = view.history.length > 0;
   // Map = the city view when geography is in play; otherwise the demand/supply Market map.
   const cityEnabled = !!view.modules?.geography?.enabled && view.markets.length > 0;
-  const infoActive = view.infoActive || infoPreview;
+  // Multiplayer: research is live only once the FIRM's submitted plan buys it (server truth) —
+  // a ticked box previews nothing (it showed redacted zeros as if revealed). Solo previews.
+  const infoActive = mp ? view.infoActive : (view.infoActive || infoPreview);
+  const infoPending = mp && infoPreview && !view.infoActive;
   const detailSnapshot = detailFirm ? view.firms.find((f) => f.firm_id === detailFirm) ?? null : null;
 
-  const handlePlay = async (d: FirmDecision) => {
-    await onPlay(d); // resolution effect navigates to Review
+  // DW-050: team firms — where this seat and another disagree, given the CURRENT form.
+  const conflicts = mp && seatRole && view.teamPlan ? computeConflicts(view, seatRole, decision, standing) : [];
+  const offDesk = mp && seatRole && view.teamPlan ? offDeskEdits(view, seatRole, decision, standing) : [];
+  const handlePlay = async (d0: FirmDecision) => {
+    let d = d0;
+    let covers: Set<string> | undefined;
+    if (mp && seatRole && view.teamPlan) {
+      // A specialist's slice carries the firm's values (as mirrored in the form) on every desk
+      // that isn't theirs — the City View / poach merge must not rewrite those (it recomputed
+      // "markets served" from this browser's map and flagged it as a stray edit).
+      const myDesk = ROLE_DESK[seatRole] ?? "all";
+      if (myDesk !== "all" && decision) {
+        const own = new Set<string>(DESK_LEVERS[myDesk] as string[]);
+        const out = { ...d } as unknown as Record<string, unknown>;
+        const raw = decision as unknown as Record<string, unknown>;
+        for (const k of Object.keys(out)) if (!own.has(k) && k !== "firm_id" && k in raw) out[k] = raw[k];
+        // DW-052: the restore above also wiped this player's OWN City View actions (a CHRO
+        // siting a facility never reached the server — it "didn't resolve or show up"). Those
+        // are deliberate decisions, not mirror strays — lay them back on top, deduped against
+        // whatever the mirror already carries from an earlier submit.
+        if (cityActions.builds.length) out.build_facilities = dedupeBuilds([...(((raw.build_facilities as unknown) ?? []) as never[]), ...cityActions.builds as never[]]);
+        if (cityActions.mothballs.length) out.mothball_facilities = Array.from(new Set([...(((raw.mothball_facilities as unknown) ?? []) as string[]), ...cityActions.mothballs]));
+        if (cityActions.reactivations.length) out.reactivate_facilities = Array.from(new Set([...(((raw.reactivate_facilities as unknown) ?? []) as string[]), ...cityActions.reactivations]));
+        if (cityActions.divests.length) out.divest_facilities = Array.from(new Set([...(((raw.divest_facilities as unknown) ?? []) as string[]), ...cityActions.divests]));
+        if (Object.keys(cityActions.maintain).length) out.maintain_facilities = { ...(((raw.maintain_facilities as unknown) ?? {}) as Record<string, number>), ...cityActions.maintain };
+        if (Object.keys(cityActions.supply).length) out.market_supply = cityActions.supply;
+        if (marketsTouched(view, cityActions)) out.market_presence = marketPresenceFrom(view, cityActions.markets);
+        if (poaches.length) out.poach_employees = poaches;
+        d = out as unknown as FirmDecision;
+        // Deliberate covers = off-desk levers this player changed away from the firm's plan AS
+        // SHOWN in this form (firmPlan is what the mirror wrote). A mirror a poll stale is not a
+        // decision — sending it would overrule e.g. the CEO's research purchase (later word wins).
+        covers = new Set<string>();
+        const shown = (firmPlan ?? {}) as unknown as Record<string, unknown>;
+        for (const k of Object.keys(out)) if (!own.has(k) && k !== "firm_id" && !same(out[k], shown[k])) covers.add(k);
+      }
+      // Last chance before the slice lands: unacknowledged disagreements, spelled out.
+      const open = openConflicts(computeConflicts(view, seatRole, d, standing));
+      const off = offDeskEdits(view, seatRole, d, standing);
+      if (open.length || off.length) {
+        const T = (f: string, v: unknown) => leverText(f, v, view);
+        const lines = [
+          ...open.slice(0, 6).map((c) => c.cover
+            ? `• ${c.label}: ${c.who} set ${T(String(c.field), c.theirs)} for an empty desk; you have ${T(String(c.field), c.mine)}. ${c.winner === "me" ? "Yours will be used (you're submitting after them)." : "Theirs will be used unless you submit again after them."}`
+            : `• ${c.label}: ${c.who} submitted ${T(String(c.field), c.theirs)}; you have ${T(String(c.field), c.mine)}. ${c.winner === "me" ? "Yours will be used — it's your desk." : "Theirs will be used — it's their desk."}`),
+          ...off.slice(0, 6).map((e) => `• ${e.label} is the ${e.deskOwner}'s desk${e.ownerName ? ` (${e.ownerName})` : e.ceoSeated ? " — empty, so the CEO covers it" : " — empty, no CEO seated"}. You set ${T(String(e.field), e.mine)}; the firm's plan has ${T(String(e.field), e.firm)}. ${e.applies ? "Yours will be used, and the CEO will see it." : `${e.ownerName ?? "The owner"} decides — yours is only a suggestion.`}`),
+        ].join("\n");
+        if (!window.confirm(`Before you submit:\n\n${lines}\n\nSubmit anyway? (Cancel to talk it over first — the gold card above the form lists these.)`)) return;
+      }
+    }
+    await onPlay(d, covers); // resolution effect navigates to Review
   };
 
   const nav: { id: Dest; label: string }[] = [
@@ -183,7 +290,7 @@ export function Play({
           <div className="flex items-center gap-2">
             <div className="eyebrow">Drink Wars · {view.difficulty}</div>
             <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-panel px-2 py-0.5">
-              <span className="grid h-4 w-4 place-items-center rounded-[4px]" style={{ background: firmColor(view.own.id) }}>{playerEmblem() ? <Emblem id={playerEmblem()!} size={11} color="#fff" /> : <span className="text-[0.6rem] font-bold text-paper">{(view.names[view.own.id] ?? "B").charAt(0)}</span>}</span>
+              <span className="grid h-4 w-4 place-items-center rounded-[4px]" style={{ background: firmColor(view.own.id) }}>{firmEmblem(view.own.id) ? <Emblem id={firmEmblem(view.own.id)!} size={11} color="#fff" /> : <span className="text-[0.6rem] font-bold text-paper">{(view.names[view.own.id] ?? "B").charAt(0)}</span>}</span>
               <span className="font-mono text-[0.6rem] font-bold uppercase tracking-wide text-ink">{view.names[view.own.id] ?? "Your Brewery"}</span>
             </span>
           </div>
@@ -266,20 +373,29 @@ export function Play({
                     <DeskCockpit desk={desk} view={view} seatRole={seatRole} rationale={rationale[desk] ?? ""} onRationale={(v) => setRationale((p) => ({ ...p, [desk]: v }))} />
                   </div>
                 )}
+                {view.ownActive && !view.complete && (conflicts.length > 0 || offDesk.length > 0) && seatRole && (
+                  <div className="mb-3"><Reconcile view={view} conflicts={conflicts} offDesk={offDesk} seatRole={seatRole} onAdopt={(field, value) => setDecision((d) => (d ? { ...d, [field]: value } as FirmDecision : d))} /></div>
+                )}
                 {view.ownActive && !view.complete && (
                   <DecisionForm view={view} defaultDecision={defaultDecision} onPlay={handlePlay} busy={busy} infoCost={infoCost} onInfoChange={setInfoPreview} poaches={poaches} onPoach={queuePoach} cityActions={cityActions} decision={decision} setDecision={setDecision} desk={desk} submitLabel={submitLabel} footerNote={footerNote} />
                 )}
                 {!view.ownActive && !view.complete && (
                   <Card>
                     <Eyebrow>Forced exit</Eyebrow>
-                    <p className="text-sm text-ink">Your brewery ran out of road. Keep watching the shakeout, or start a new run.</p>
-                    <div className="mt-3 flex gap-2">
-                      <Button variant="go" onClick={() => handlePlay({} as FirmDecision)} disabled={busy}>{busy ? "…" : "Watch next round →"}</Button>
-                      <Button variant="ghost" onClick={onReset}>New brewery</Button>
-                    </div>
+                    {mp ? (
+                      <p className="text-sm text-ink">Your brewery has left the market. You still see every round resolve — follow the shakeout in Review, and use your Scorecard for the debrief. Your instructor will tell you if there's a reassignment.</p>
+                    ) : (
+                      <p className="text-sm text-ink">Your brewery ran out of road. Keep watching the shakeout, or start a new run.</p>
+                    )}
+                    {!mp && (
+                      <div className="mt-3 flex gap-2">
+                        <Button variant="go" onClick={() => handlePlay({} as FirmDecision)} disabled={busy}>{busy ? "…" : "Watch next round →"}</Button>
+                        <Button variant="ghost" onClick={onReset}>New brewery</Button>
+                      </div>
+                    )}
                   </Card>
                 )}
-                {view.complete && <SeasonOver view={view} rank={myRank} onReset={onReset} />}
+                {view.complete && <SeasonOver view={view} rank={myRank} onReset={onReset} mp={mp} />}
               </div>
               <div className="grid content-start gap-4 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:self-start lg:overflow-y-auto">
                 <Standings view={view} onSelect={setDetailFirm} />
@@ -318,7 +434,7 @@ export function Play({
               <div className="p-4">
                 {rtab === "dispatch" && (
                   <div className="grid gap-5">
-                    {view.complete && <SeasonOver view={view} rank={myRank} onReset={onReset} />}
+                    {view.complete && <SeasonOver view={view} rank={myRank} onReset={onReset} mp={mp} />}
                     <TapDispatch
                       view={view}
                       round={Math.max(resolved, 1)}
@@ -339,7 +455,7 @@ export function Play({
                 )}
                 {rtab === "trends" && (hasHistory ? <Trends view={view} /> : <Card>Trends open once a round has resolved.</Card>)}
                 {rtab === "analysis" && (hasHistory ? <Analysis view={view} /> : <Card>The analysis dashboards open once a round has resolved.</Card>)}
-                {rtab === "field" && (hasHistory ? <Field view={view} infoActive={infoActive} onInspect={setDetailFirm} /> : <Card>Field intel opens once a round has resolved.</Card>)}
+                {rtab === "field" && (hasHistory ? <Field view={view} infoActive={infoActive} pending={infoPending} onInspect={setDetailFirm} /> : <Card>Field intel opens once a round has resolved.</Card>)}
               </div>
             </div>
           )}
@@ -348,7 +464,7 @@ export function Play({
   );
 }
 
-function SeasonOver({ view, rank, onReset }: { view: GameView; rank: number; onReset: () => void }) {
+function SeasonOver({ view, rank, onReset, mp }: { view: GameView; rank: number; onReset: () => void; mp?: boolean }) {
   return (
     <Card className="rise">
       <Eyebrow>Season complete</Eyebrow>
@@ -356,7 +472,7 @@ function SeasonOver({ view, rank, onReset }: { view: GameView; rank: number; onR
         {rank === 1 ? "You finished first." : rank > 0 ? `You finished #${rank} of ${view.standings.length}.` : "Your run has ended."}
       </h2>
       <p className="mt-1 text-sm text-inksoft">Sustained scorecard rewards advantage held across the whole season, not a final-round spike.</p>
-      <div className="mt-3"><Button variant="go" onClick={onReset}>Play again</Button></div>
+      {mp ? <p className="mt-2 text-[0.78rem] text-inksoft">Your Scorecard and Trends stay available for the debrief — nothing more to submit.</p> : <div className="mt-3"><Button variant="go" onClick={onReset}>Play again</Button></div>}
     </Card>
   );
 }

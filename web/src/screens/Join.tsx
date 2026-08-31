@@ -33,8 +33,18 @@ export function Join({ onJoined, onBack }: { onJoined: (c: StudentClient) => voi
   const [code, setCode] = useState("");
   const [name, setName] = useState("");
   const [firmName, setFirmName] = useState(""); // team games: the brewery, separate from the person
-  const [claim, setClaim] = useState("");
+  // Prefill the claim code from this device's last session / returning-player entry (DW-048):
+  // Leave → Join used to mint a brand-new anonymous player, so a student who "re-joined"
+  // got a second identity and a second firm. With the code the server hands back the SAME
+  // seat (join is idempotent per player).
+  const [claim, setClaim] = useState<string>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("dw_mp") || "null");
+      return saved?.claim || localStorage.getItem("dw_claim") || "";
+    } catch { return ""; }
+  });
   const [role, setRole] = useState<string>("");
+  const [preSeat, setPreSeat] = useState<{ teamId: string; team: string; role: string | null } | null>(null); // DW-050: pre-seated CEO's founding moment
   const [teamId, setTeamId] = useState<string>(""); // team mode: WHICH firm to sit down at ("" = emptiest)
   const [color, setColor] = useState<string>(FIRM_COLORS[0].hex);
   const [emblem, setEmblem] = useState<string>(EMBLEM_IDS[0]);
@@ -45,8 +55,21 @@ export function Join({ onJoined, onBack }: { onJoined: (c: StudentClient) => voi
     setBusy(true);
     setErr(null);
     try {
-      const p = await peekGame(code.trim().toUpperCase());
+      const p = await peekGame(code.trim().toUpperCase(), claim.trim() || undefined);
       setPeek(p);
+      // DW-050: pre-seated (or returning) claim holder — the chair is already theirs; no picker.
+      // A pre-seated CEO still founds the firm ONCE per device: name + house colour/mark.
+      if (p.yourSeat) {
+        setName((n) => n || p.yourName || "");
+        let founded = false;
+        try { founded = localStorage.getItem(`dw_founded:${p.yourSeat.teamId}`) === "1"; } catch { /* ignore */ }
+        if (p.yourSeat.role === "ceo" && p.firmMode === "team" && !founded) {
+          setPreSeat(p.yourSeat); setFirmName(p.yourSeat.team); setRole("ceo"); setTeamId(p.yourSeat.teamId); setStep("found");
+          return;
+        }
+        await join();
+        return;
+      }
       // Solo firms have no seats. Team founders take the CEO's chair unless they pick
       // another — every seat is named, so no two players share the whole-firm desk.
       setRole(p.firmMode === "team" ? "ceo" : "");
@@ -65,14 +88,17 @@ export function Join({ onJoined, onBack }: { onJoined: (c: StudentClient) => voi
     try {
       // Taking a seat at a founded firm: no cosmetics to set — the firm reads in its
       // board color on this device too, instead of a second founder's picks.
-      const founding = !(peek?.firmMode === "team" && (teamId ? (peek?.teams?.find((t) => t.teamId === teamId)?.members ?? 0) > 0 : !(peek?.teams ?? []).some((t) => t.members === 0)));
+      const founding = !!preSeat || !(peek?.firmMode === "team" && (teamId ? (peek?.teams?.find((t) => t.teamId === teamId)?.members ?? 0) > 0 : !(peek?.teams ?? []).some((t) => t.members === 0)));
       if (founding) { setPlayerColor(color); setPlayerEmblem(emblem); }
       const c = new StudentClient();
       await c.join(code.trim().toUpperCase(), name.trim(), {
-        claim: claim.trim() || undefined, role: role || undefined, teamId: teamId || undefined,
+        claim: claim.trim() || undefined, role: preSeat ? undefined : role || undefined, teamId: preSeat ? undefined : teamId || undefined,
         // Only a founder names the brewery; a joiner inherits the name already on the board.
         teamName: peek?.firmMode === "team" && founding ? firmName.trim() || undefined : undefined,
+        // DW-051: the founder's house colour/mark are the firm's — stored server-side so teammates see them.
+        color: founding ? color : undefined, emblem: founding ? emblem : undefined,
       });
+      if (preSeat) { try { localStorage.setItem(`dw_founded:${preSeat.teamId}`, "1"); } catch { /* ignore */ } }
       await c.fetchView();
       onJoined(c);
     } catch (e) {
@@ -100,6 +126,8 @@ export function Join({ onJoined, onBack }: { onJoined: (c: StudentClient) => voi
             <label className="grid gap-1">
               <span className="text-sm text-inksoft">Claim code <span className="text-[0.7rem]">· optional — if your instructor gave you one, it keeps your games &amp; history</span></span>
               <input value={claim} onChange={(e) => setClaim(e.target.value.toUpperCase())} maxLength={8} placeholder="optional" className="uppercase tracking-[0.2em]" />
+              {claim && <span className="text-[0.66rem] text-inksoft">Prefilled from your last session on this device — keep it to return to the same seat, or clear it if this isn't you.</span>}
+              {!claim && <span className="text-[0.66rem] text-inksoft">If your instructor pre-assigned your firm and chair, your claim code takes you straight to your seat.</span>}
             </label>
             {err && <div className="text-sm text-brick">{err}</div>}
             <div className="flex gap-2">
@@ -122,19 +150,19 @@ export function Join({ onJoined, onBack }: { onJoined: (c: StudentClient) => voi
   // Joining a firm that already has members = taking a seat, NOT founding: the firm is
   // already named/marked, and the server requires a distinct C-suite seat (two seats that
   // both cover the whole firm would clobber each other in the desk merge).
-  const joiningFounded = isTeam && (pickedTeam ? pickedTeam.members > 0 : !anyEmpty);
+  const joiningFounded = !preSeat && isTeam && (pickedTeam ? pickedTeam.members > 0 : !anyEmpty);
   const needFirmPick = joiningFounded && !teamId; // which founded firm? must be explicit
   const seatTaken = (id: string) => (pickedTeam?.roles ?? []).includes(id);
-  const canJoin = !busy && !!name.trim()
+  const canJoin = !busy && (!!name.trim() || !!preSeat)
     && (!isTeam || joiningFounded || !!firmName.trim()) // founders name the brewery
-    && (!isTeam || (!!role && !seatTaken(role))) // and everyone takes a free chair
+    && (!isTeam || !!preSeat || (!!role && !seatTaken(role))) // and everyone takes a free chair
     && !needFirmPick;
   return (
     <div className="mx-auto flex min-h-screen max-w-lg flex-col justify-center px-6 py-12">
       <div className="rise">
         <div className="eyebrow">Join a game · {code.trim().toUpperCase()}</div>
-        <h1 className="display mt-2 text-4xl font-semibold">{joiningFounded ? "Take your seat" : isTeam ? "Found your team" : "Name your brewery"}</h1>
-        <div className="mt-1 text-sm text-inksoft">{joiningFounded ? "Join your teammates' firm — pick your C-suite seat; each seat owns one desk of the decision." : "Your colour & mark are how the class reads you on the board all season."}</div>
+        <h1 className="display mt-2 text-4xl font-semibold">{preSeat ? "Name your brewery" : joiningFounded ? "Take your seat" : isTeam ? "Found your team" : "Name your brewery"}</h1>
+        <div className="mt-1 text-sm text-inksoft">{preSeat ? `You're seated as CEO of “${preSeat.team}” — give the firm its real name (teammates see it) and pick your house colour & mark.` : joiningFounded ? "Join your teammates' firm — pick your C-suite seat; each seat owns one desk of the decision." : "Your colour & mark are how the class reads you on the board all season."}</div>
 
         {/* game context from the peek */}
         <div className="mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-line2 bg-panel px-3 py-2 text-[0.72rem] text-inksoft">
@@ -152,7 +180,7 @@ export function Join({ onJoined, onBack }: { onJoined: (c: StudentClient) => voi
           )}
           <label className="grid gap-1"><span className="text-sm text-inksoft">{isTeam ? "Your name" : "Brewery name"} {isTeam && <span className="text-[0.7rem]">· how teammates see your seat</span>}</span><input value={name} onChange={(e) => setName(e.target.value)} maxLength={40} placeholder={isTeam ? "e.g. Sam" : "e.g. Sediment Co."} autoFocus={!isTeam || joiningFounded} /></label>
 
-          {isTeam && (peek?.teams?.length ?? 0) > 0 && (() => {
+          {isTeam && !preSeat && (peek?.teams?.length ?? 0) > 0 && (() => {
             const picked = peek!.teams!.find((t) => t.teamId === teamId);
             return (
               <div>
@@ -181,7 +209,7 @@ export function Join({ onJoined, onBack }: { onJoined: (c: StudentClient) => voi
             );
           })()}
 
-          {isTeam && (
+          {isTeam && !preSeat && (
             <div>
               <div className="mb-2 font-mono text-[0.6rem] uppercase tracking-[0.12em] text-copperdeep">Your seat <span className="text-[0.7rem] lowercase tracking-normal text-inksoft">{joiningFounded ? "· required — each seat owns one desk of the firm's decision" : "· the CEO runs every desk until teammates take theirs"}</span></div>
               <div className="flex flex-wrap gap-1.5">
@@ -225,7 +253,7 @@ export function Join({ onJoined, onBack }: { onJoined: (c: StudentClient) => voi
           </div></>}
           {err && <div className="text-sm text-brick">{err}</div>}
           <div className="flex gap-2">
-            <Button variant="go" onClick={join} disabled={!canJoin}>{busy ? "Joining…" : joiningFounded ? "Take your seat →" : "Join the game →"}</Button>
+            <Button variant="go" onClick={join} disabled={!canJoin}>{busy ? "Joining…" : preSeat ? "Open the brewery →" : joiningFounded ? "Take your seat →" : "Join the game →"}</Button>
             <Button variant="ghost" onClick={() => { setStep("enter"); setErr(null); }}>← Different code</Button>
           </div>
         </div>

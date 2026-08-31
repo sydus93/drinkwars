@@ -96,7 +96,8 @@ async function viewFor(gameId: string, teamId: string, userId?: string) {
   const ownResult = own && lastFull ? (lastFull.result.firm_results.find((f: any) => f.firm_id === own.id) ?? null) : null;
   // Presentation names: firm ids in display text read as brewery names.
   const names: Record<string, string> = {};
-  for (const t of await store.getTeams(gameId)) names[t.firm_id] = t.name;
+  const styles: Record<string, { color: string | null; emblem: string | null }> = {}; // DW-051 house colour/mark per firm
+  for (const t of await store.getTeams(gameId)) { names[t.firm_id] = t.name; if (t.color || t.emblem) styles[t.firm_id] = { color: t.color ?? null, emblem: t.emblem ?? null }; }
   const nameOf = (id: string) => names[id] ?? id;
   // MOD-B05 briefings + MOD-B02 FX + MOD-A05/A06 alliances + MOD-A09 lobbying + MOD-B01 city
   // view + research-gated rival snapshots + shocks + history + MOD-B12 hiring pool.
@@ -112,6 +113,9 @@ async function viewFor(gameId: string, teamId: string, userId?: string) {
   // Team firms: the live plan — each seat's submitted slice + the composed decision (same-firm eyes only).
   const teamPlan = own && game?.firm_mode === "team" && userId ? await orch.getTeamPlan(gameId, teamId, userId) : undefined;
   const history = own ? projectHistory(allResults, own.id) : []; // own trend + public field aggregate
+  // DW-048 draft seeds (twin of transport.ts): standing plan + this round's own solo decision.
+  const standing = own ? await orch.getStandingDecision(gameId, teamId) : null;
+  const draft = own && game?.firm_mode !== "team" && decision?.submitted ? decision.decision : null;
   if (own) {
     const ws = await store.getLatestWorldState(gameId);
     if (ws && config?.modules?.teamRoles?.enabled) briefings = roleBriefings(ws.state, config, own.id) as never;
@@ -130,9 +134,10 @@ async function viewFor(gameId: string, teamId: string, userId?: string) {
   }
   return {
     round: pub.round, lifecycle: pub.lifecycle, nRounds: game?.n_rounds, complete: pub.lifecycle === "complete",
-    segments: pub.segments, own, ownResult, unitCostEst, fx, names, agreements, lobbyInitiatives,
+    segments: pub.segments, own, ownResult, unitCostEst, fx, names, styles, agreements, lobbyInitiatives,
     markets, firms, shocks, history, hiringMarket, seats,
     ...(teamPlan ? { teamPlan } : {}),
+    standing, draft, infoActive: !!decision?.decision?.buy_info, deadlineAt: game?.deadline_at ?? null,
     briefings: briefings.map((b) => ({ ...b, lines: b.lines.map((l: string) => renameFirms(l, names)) })),
     standings: (last?.standings ?? []).map((s: any) => ({ ...s, name: names[s.firm_id] ?? s.firm_id })),
     events: (last?.events ?? []).map((e: string) => renameFirms(e, names)),
@@ -163,6 +168,9 @@ Deno.serve(async (req: Request) => {
       const game = code ? await store.getGameByCode(code) : null;
       if (!game) return json(404, { error: "no game found for that code" });
       const teams = await store.getTeams(game.id);
+      // DW-050: pre-seated / returning claim holder learns their chair (twin of transport.ts).
+      const claimU = u.searchParams.get("claim") ? await store.getUserByClaim(String(u.searchParams.get("claim"))) : null;
+      const yourSeat = claimU ? await orch.seatOf(game.id, claimU.id) : null;
       // Team mode: expose the firm roster (name + seat occupancy, no member identities)
       // so a joiner can pick WHICH firm to sit down at.
       const teamList = (game.firm_mode ?? "solo") === "team"
@@ -176,12 +184,13 @@ Deno.serve(async (req: Request) => {
         round: game.current_round, lifecycle: game.lifecycle,
         slotsTotal: teams.length, slotsOpen: teams.filter((t: any) => t.member_user_ids.length === 0).length,
         ...(teamList ? { teams: teamList } : {}),
+        ...(yourSeat ? { yourSeat, yourName: claimU?.display_name ?? null } : {}),
       });
     }
 
     // ---- student ----
     if (method === "POST" && path === "/join") {
-      const { code, name, claim, teamId, role, teamName } = body;
+      const { code, name, claim, teamId, role, teamName, color, emblem } = body;
       if (!code) return json(400, { error: "code required" });
       const codeUp = String(code).toUpperCase();
       // Validate BEFORE creating an auth user, so a bad/typo code leaves no orphan.
@@ -202,7 +211,7 @@ Deno.serve(async (req: Request) => {
         if (created.error || !created.data.user) return json(500, { error: `auth: ${created.error?.message ?? "could not create player"}` });
         userId = created.data.user.id;
       }
-      const joined = await orch.joinGame(codeUp, displayName, userId, { teamId, role, teamName: teamName ? String(teamName).slice(0, 40) : undefined });
+      const joined = await orch.joinGame(codeUp, displayName, userId, { teamId, role, teamName: teamName ? String(teamName).slice(0, 40) : undefined, style: color || emblem ? { color, emblem } : undefined });
       const token = await mintToken({ gameId: joined.gameId, teamId: joined.teamId, userId, role: joined.role });
       return json(200, { token, gameId: joined.gameId, teamId: joined.teamId, firmId: joined.firmId, nRounds: game.n_rounds, config: game.config, firmMode: game.firm_mode ?? "solo", role: joined.role ?? null, claim: joined.claim ?? null });
     }
@@ -218,6 +227,12 @@ Deno.serve(async (req: Request) => {
       if (!s) return json(401, { error: "invalid or expired token" });
       return json(200, await viewFor(s.gameId, s.teamId, s.userId));
     }
+    // DW-050: cheap change signal (twin of transport.ts).
+    if (method === "GET" && path === "/pulse") {
+      const s = await readToken(u.searchParams.get("token") ?? "");
+      if (!s) return json(401, { error: "invalid or expired token" });
+      return json(200, await orch.pulse(s.gameId, s.teamId));
+    }
     if (method === "POST" && path === "/submit") {
       const s = await readToken(body.token);
       if (!s) return json(401, { error: "invalid or expired token" });
@@ -232,6 +247,8 @@ Deno.serve(async (req: Request) => {
     if (path.startsWith("/instructor")) {
       if (!validInstructorPass(req.headers.get("x-instructor-pass"))) return json(401, { error: "bad instructor passcode" });
       const tier = instructorTier(req.headers.get("x-instructor-pass"));
+      // DW-049: the instructor's own games (twin of transport.ts).
+      if (method === "GET" && path === "/instructor/games") return json(200, { games: await orch.listGames((g: any) => ownsGame(tier, g)) });
       if (method === "POST" && path === "/instructor/games") {
         const nFirms = Number(body.nFirms ?? 6);
         const nRounds = Number(body.nRounds ?? 16);
@@ -331,22 +348,47 @@ Deno.serve(async (req: Request) => {
         }
       }
 
-      const m = path.match(/^\/instructor\/games\/([^/]+)\/(status|lock|resolve|advance|dashboard)$/);
+      // DW-048: per-chair roster + member remove/move + round deadline (twin of transport.ts).
+      const rm = path.match(/^\/instructor\/games\/([^/]+)\/(roster|members|deadline|seats)$/);
+      if (rm) {
+        const [, gameId, what] = rm;
+        if (what === "roster" && method === "GET") return json(200, { teams: await orch.getRoster(gameId) });
+        if (what === "members" && method === "POST") {
+          if (body.op === "remove") { await orch.removeMember(gameId, String(body.teamId ?? ""), String(body.userId ?? "")); return json(200, { ok: true }); }
+          if (body.op === "move") { await orch.moveMember(gameId, String(body.userId ?? ""), String(body.toTeamId ?? ""), String(body.role ?? "")); return json(200, { ok: true }); }
+          return json(400, { error: "op must be remove | move" });
+        }
+        if (what === "deadline" && method === "POST") {
+          await orch.setDeadline(gameId, body.deadlineAt == null ? null : Number(body.deadlineAt));
+          return json(200, { ok: true });
+        }
+        if (what === "seats" && method === "POST") { // DW-050 pre-seating
+          if (!Array.isArray(body.plan) || !body.plan.length) return json(400, { error: "plan array required" });
+          return json(200, await orch.applySeatPlan(gameId, body.plan));
+        }
+      }
+
+      const m = path.match(/^\/instructor\/games\/([^/]+)\/(status|lock|unlock|resolve|advance|dashboard|end|title)$/);
       if (m) {
         const [, gameId, action] = m;
         if (action === "dashboard" && method === "GET") return json(200, await buildInstructorDashboard(store, gameId, { noShowPolicy: ORCH_OPTS.noShowPolicy }));
         if (action === "status" && method === "GET") {
           const status = await orch.getStatus(gameId);
           const game = await store.getGame(gameId);
-          const teams = await store.getTeams(gameId);
+          const roster = await orch.getRoster(gameId);
           return json(200, {
+            ...(await orch.describeGame(gameId)), // DW-049
             ...status,
             joinCode: game?.join_code,
             nRounds: game?.n_rounds,
-            teams: teams.map((t: any) => ({ teamId: t.id, firmId: t.firm_id, name: t.name, joined: t.member_user_ids.length > 0 })),
+            firmMode: game?.firm_mode ?? "solo",
+            teams: roster.map((t: any) => ({ teamId: t.teamId, firmId: t.firmId, name: t.name, joined: t.members.length > 0, members: t.members })),
           });
         }
         if (action === "lock" && method === "POST") return json(200, { nonSubmitters: await orch.lockRound(gameId) });
+        if (action === "unlock" && method === "POST") { await orch.unlockRound(gameId); return json(200, { ok: true }); }
+        if (action === "end" && method === "POST") { await orch.endGame(gameId); return json(200, { ok: true }); } // DW-049
+        if (action === "title" && method === "POST") { await orch.renameGame(gameId, body?.title ?? null); return json(200, { ok: true }); } // DW-049
         if (action === "resolve" && method === "POST") {
           const r = await orch.resolveRound(gameId, { force: !!body?.force });
           if (r.lifecycle === "published") await orch.advanceRound(gameId);

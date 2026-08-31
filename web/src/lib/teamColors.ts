@@ -54,7 +54,15 @@ let playerEmblemOverride: string | null = null;
 export const setPlayerEmblem = (e: string | null): void => { playerEmblemOverride = e; };
 export const playerEmblem = (): string | null => playerEmblemOverride;
 
+/** DW-051: house styles as the SERVER knows them (multiplayer) — the founder's colour/mark
+ *  reach every teammate and rival, not just the browser that picked them. */
+let firmStyles: Record<string, { color: string | null; emblem: string | null }> = {};
+export const setFirmStyles = (s: Record<string, { color: string | null; emblem: string | null }> | undefined): void => { firmStyles = s ?? {}; };
+export const firmEmblem = (firmId: string): string | null => firmStyles[firmId]?.emblem ?? (firmId === selfFirmId ? playerEmblemOverride : null);
+
 export const firmColor = (firmId: string): string => {
+  const srv = firmStyles[firmId]?.color;
+  if (srv) return srv;
   if (playerColorOverride && firmId === selfFirmId) return playerColorOverride;
   const n = parseInt(String(firmId).replace(/^\D+/, ""), 10);
   return teamColor(Number.isFinite(n) ? n - 1 : 0);

@@ -31,6 +31,8 @@ export interface TeamRecord {
   firm_id: FirmId; // v1: one team per firm
   name: string;
   member_user_ids: string[];
+  color?: string | null; // DW-051 house colour (hex) picked at founding
+  emblem?: string | null; // DW-051 house mark id
 }
 
 export interface GameRecord {
@@ -43,6 +45,7 @@ export interface GameRecord {
   owner_tag: string | null; // instructor passcode tier that created it ("primary"|"test"); null = legacy/primary-owned
   firm_mode?: FirmMode; // "solo" (one player/firm, default) | "team" (C-suite seats, merged at lock)
   title?: string | null; // optional human title for a player's game list
+  deadline_at?: number | null; // DW-048: instructor-announced submission deadline for the current round (ms epoch); display-only, lock is still manual
   created_at: number;
 }
 
@@ -182,6 +185,9 @@ export interface StorageAdapter {
   getGame(id: string): Promise<GameRecord | null>;
   getGameByCode(code: string): Promise<GameRecord | null>;
   setGameLifecycle(id: string, lifecycle: Lifecycle, currentRound: number): Promise<void>;
+  setGameDeadline(id: string, deadlineAt: number | null): Promise<void>; // DW-048 (games.deadline_at, migration 0006)
+  setGameTitle(id: string, title: string | null): Promise<void>; // DW-049 rename
+  listGames(): Promise<GameRecord[]>; // DW-049 instructor game list, newest first
 
   // Users & teams
   createUser(u: UserRecord): Promise<void>;
@@ -194,13 +200,16 @@ export interface StorageAdapter {
   getTeam(id: string): Promise<TeamRecord | null>;
   getTeamsForUser(userId: string): Promise<TeamRecord[]>; // "my games" / return-to-game
   addTeamMember(teamId: string, userId: string): Promise<void>;
+  removeTeamMember(teamId: string, userId: string): Promise<void>; // DW-048: instructor drops/moves a chair
   setTeamName(teamId: string, name: string): Promise<void>;
+  setTeamStyle(teamId: string, style: { color?: string | null; emblem?: string | null }): Promise<void>; // DW-051
   setMemberRole(teamId: string, userId: string, role: string | null): Promise<void>; // C-suite seat (team_members.role)
   getMemberRole(teamId: string, userId: string): Promise<string | null>;
 
   // Member (per-seat) decisions — firm_mode="team" multi-seat composition (mutable until lock)
   upsertMemberDecision(rec: MemberDecisionRecord): Promise<void>;
   getMemberDecisions(gameId: string, round: number, teamId: string): Promise<MemberDecisionRecord[]>;
+  deleteMemberDecision(gameId: string, round: number, userId: string): Promise<void>; // DW-048: a removed chair's slice must not compose
 
   // World states (append-only)
   appendWorldState(rec: WorldStateRecord): Promise<void>;
@@ -215,7 +224,9 @@ export interface StorageAdapter {
   upsertDecision(rec: DecisionRecord): Promise<void>;
   getDecision(gameId: string, round: number, teamId: string): Promise<DecisionRecord | null>;
   getDecisions(gameId: string, round: number): Promise<DecisionRecord[]>;
+  deleteDecision(gameId: string, round: number, teamId: string): Promise<void>; // DW-048: an orphaned (all-members-removed) record must not exist — resolve treats "no record" as NPC/carry
   lockDecisions(gameId: string, round: number): Promise<void>;
+  unlockDecisions(gameId: string, round: number): Promise<void>; // DW-048: re-open a locked round
 
   // Results + research (append-only, except agreements upsert)
   appendRoundResult(rec: RoundResultRecord): Promise<void>;

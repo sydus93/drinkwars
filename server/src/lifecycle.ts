@@ -39,6 +39,21 @@ export interface RosterEntry { external_id: string; name: string; email?: string
 /** What provisioning returns per student — the durable claim_code is the credential to distribute. */
 export interface ProvisionedStudent { external_id: string; name: string; claim_code: string; user_id: string; existing: boolean }
 /** A game in a player's "my games" / return-to-game list, with their latest standing. */
+/** DW-050 pre-seating: one row of the instructor's seat plan (NetID → firm → chair). */
+export interface SeatPlanRow { external_id: string; team: string; role: string }
+export interface SeatPlanResult { seated: { external_id: string; name: string; team: string; role: string; moved: boolean }[]; errors: { external_id: string; error: string }[] }
+/** DW-050 pulse: the cheap "did anything change for my firm?" signal the student client polls
+ *  between full views. `stamp` changes whenever the view would. */
+export interface Pulse { round: number; lifecycle: GameRecord["lifecycle"]; deadlineAt: number | null; stamp: string }
+
+/** One row of the instructor's game list (DW-049). */
+export interface GameSummary { gameId: string; title: string | null; joinCode: string | null; round: number; nRounds: number; lifecycle: GameRecord["lifecycle"]; firmMode: FirmMode; nFirms: number; joined: number; players: number; createdAt: number; ownerTag: string | null; modules: string[]; practiceRounds: number }
+
+/** DW-051: sanitise a founder's house style — a hex colour and a short mark id, nothing else. */
+const styleOf = (s: { color?: string | null; emblem?: string | null }) => ({
+  color: typeof s.color === "string" && /^#[0-9a-fA-F]{6}$/.test(s.color) ? s.color : null,
+  emblem: typeof s.emblem === "string" && /^[a-z0-9_-]{1,24}$/i.test(s.emblem) ? s.emblem : null,
+});
 export interface MyGame { gameId: string; title: string | null; joinCode: string | null; firmId: FirmId; teamName: string; round: number; lifecycle: GameRecord["lifecycle"]; nRounds: number; rank: number | null; score: number | null; status: string | null; complete: boolean }
 /** A seat at one firm (team mode): who holds it, which desk, and whether they've submitted. */
 export interface TeamSeat { name: string; role: string | null; desk: string | null; submitted: boolean }
@@ -143,7 +158,7 @@ export class GameOrchestrator {
    * student from reading the join code or another team. `userId` is the caller's
    * resolved identity (a roster user via claim_code, or an ephemeral anon user).
    */
-  async joinGame(code: string, displayName: string, userId: string, opts: { teamId?: string; role?: string; teamName?: string } = {}): Promise<{ gameId: string; teamId: string; firmId: FirmId; role?: string; claim?: string }> {
+  async joinGame(code: string, displayName: string, userId: string, opts: { teamId?: string; role?: string; teamName?: string; style?: { color?: string | null; emblem?: string | null } } = {}): Promise<{ gameId: string; teamId: string; firmId: FirmId; role?: string; claim?: string }> {
     const game = await this.store.getGameByCode(code);
     if (!game) throw new LifecycleError(`no game found for join code "${code}"`);
     const teams = await this.store.getTeams(game.id);
@@ -156,6 +171,10 @@ export class GameOrchestrator {
         await this.store.setMemberRole(mine.id, userId, opts.role);
       }
       const role = opts.role ?? (await this.store.getMemberRole(mine.id, userId)) ?? undefined;
+      // DW-050: a pre-seated CEO still gets the founding moment — naming the brewery on first
+      // arrival (the seat plan only gave the firm a working label). Only the CEO's chair renames.
+      if (opts.teamName?.trim() && role === "ceo" && game.firm_mode === "team") await this.store.setTeamName(mine.id, opts.teamName.trim().slice(0, 40));
+      if (opts.style && (role === "ceo" || game.firm_mode !== "team")) await this.store.setTeamStyle(mine.id, styleOf(opts.style));
       return { gameId: game.id, teamId: mine.id, firmId: mine.firm_id, role, claim: await this.ensureClaimCode(userId) };
     }
     if (!(await this.store.getUser(userId))) {
@@ -200,6 +219,7 @@ export class GameOrchestrator {
     // teammate reads "Sam" in the seat list and "Sediment Co." on the board — not one name
     // doing both jobs (DW-039).
     if (wasEmpty) await this.store.setTeamName(target.id, opts.teamName?.trim() || displayName);
+    if (wasEmpty && opts.style) await this.store.setTeamStyle(target.id, styleOf(opts.style)); // DW-051: the founder's colour/mark are the firm's
     return { gameId: game.id, teamId: target.id, firmId: target.firm_id, role: seat, claim: await this.ensureClaimCode(userId) };
   }
 
@@ -331,7 +351,7 @@ export class GameOrchestrator {
     const seats = await this.store.getMemberDecisions(gameId, round, teamId);
     const ws = (await this.store.getWorldState(gameId, round)) ?? (await this.store.getLatestWorldState(gameId));
     const base = await this.standingDecision(gameId, round, teamId, team.firm_id, ws?.state ?? null, game.config);
-    const merged = mergeMemberDecisions(base, seats.map((s) => ({ desk: (s.desk as never) ?? "all", partial: s.partial })));
+    const merged = mergeMemberDecisions(base, seats.map((s) => ({ desk: (s.desk as never) ?? "all", partial: s.partial, updated_at: s.updated_at })));
     const existing = await this.store.getDecision(gameId, round, teamId);
     if (existing?.locked) throw new LifecycleError("decision is locked");
     await this.store.upsertDecision({
@@ -347,11 +367,18 @@ export class GameOrchestrator {
     const ws = (await this.store.getWorldState(gameId, round)) ?? (await this.store.getLatestWorldState(gameId));
     for (const team of await this.store.getTeams(gameId)) {
       const seats = await this.store.getMemberDecisions(gameId, round, team.id);
-      if (!seats.length) continue;
       const existing = await this.store.getDecision(gameId, round, team.id);
       if (existing?.locked) continue;
+      if (!seats.length) {
+        // No slices left this round. A record can only exist here because a member who HAD
+        // submitted was removed (DW-048) — drop it, so nothing of theirs still trades. The
+        // invariant "a decision record exists iff someone submitted" holds again: at resolve
+        // the firm gets the NPC / standing-plan fill like any other non-submitter.
+        if (existing) await this.store.deleteDecision(gameId, round, team.id);
+        continue;
+      }
       const base = await this.standingDecision(gameId, round, team.id, team.firm_id, ws?.state ?? null, game.config);
-      const merged = mergeMemberDecisions(base, seats.map((s) => ({ desk: (s.desk as never) ?? "all", partial: s.partial })));
+      const merged = mergeMemberDecisions(base, seats.map((s) => ({ desk: (s.desk as never) ?? "all", partial: s.partial, updated_at: s.updated_at })));
       await this.store.upsertDecision({
         game_id: gameId, round, team_id: team.id, firm_id: team.firm_id, decision: merged,
         submitted: seats.some((s) => s.submitted), locked: false,
@@ -424,7 +451,7 @@ export class GameOrchestrator {
   }
 
   /** Submission status for the instructor, including non-submitters (§5 Locked). */
-  async getStatus(gameId: string): Promise<{ lifecycle: GameRecord["lifecycle"]; round: number; submissions: { team_id: string; firm_id: FirmId; submitted: boolean; locked: boolean }[]; nonSubmitters: string[] }> {
+  async getStatus(gameId: string): Promise<{ lifecycle: GameRecord["lifecycle"]; round: number; submissions: { team_id: string; firm_id: FirmId; submitted: boolean; locked: boolean }[]; nonSubmitters: string[]; deadlineAt: number | null }> {
     const game = await this.requireGame(gameId);
     const teams = await this.store.getTeams(gameId);
     const decisions = await this.store.getDecisions(gameId, game.current_round);
@@ -433,7 +460,7 @@ export class GameOrchestrator {
     const activeFirms = new Set(world.firms.filter((f) => f.status === "active").map((f) => f.id));
     const submissions = teams.map((t) => ({ team_id: t.id, firm_id: t.firm_id, submitted: byTeam.get(t.id)?.submitted ?? false, locked: byTeam.get(t.id)?.locked ?? false }));
     const nonSubmitters = teams.filter((t) => activeFirms.has(t.firm_id) && !byTeam.get(t.id)?.submitted).map((t) => t.id);
-    return { lifecycle: game.lifecycle, round: game.current_round, submissions, nonSubmitters };
+    return { lifecycle: game.lifecycle, round: game.current_round, submissions, nonSubmitters, deadlineAt: game.deadline_at ?? null };
   }
 
   // ───────────────────────── Gamemaster (DW-037): the instructor's forward schedule ─────────────────────────
@@ -539,6 +566,249 @@ export class GameOrchestrator {
     return nonSubmitters;
   }
 
+  /** Re-open a locked round (DW-048): a mis-click on Lock, or a late team that deserves
+   *  the window back. Only "locked" reverts — a resolve in flight or published is final. */
+  /** Pre-seat provisioned students (DW-050): "NetID → firm name → chair", applied before the
+   *  students ever open the app. A firm named in the plan is matched by name (case-insensitive)
+   *  or claims the next EMPTY firm and takes the plan's name. A student already seated in
+   *  this game is re-seated (same-firm chair change or a move, slices dropped as in
+   *  moveMember). When the student then enters the join code with their claim code, joinGame's
+   *  returning-player path lands them in this chair with nothing to pick. Row-level errors are
+   *  returned, not thrown — the rest of the plan applies. Idempotent: re-applying the same plan
+   *  is a no-op. */
+  async applySeatPlan(gameId: string, rows: SeatPlanRow[]): Promise<SeatPlanResult> {
+    const game = await this.requireGame(gameId);
+    if (game.firm_mode !== "team") throw new LifecycleError("a seat plan applies to team games (solo players each found their own firm)");
+    if (game.lifecycle === "complete") throw new LifecycleError("game is complete");
+    const out: SeatPlanResult = { seated: [], errors: [] };
+    let teams = await this.store.getTeams(gameId);
+    const norm = (s: string) => s.trim().toLowerCase();
+    // 1. resolve each plan firm to a team: by name first (an explicit existing firm always
+    //    wins), else where the group's members ALREADY sit (a CEO may have renamed the firm on
+    //    arrival — re-pasting the plan must not move everyone to a fresh firm), else claim an
+    //    empty one and name it.
+    const byPlanName = new Map<string, TeamRecord>();
+    const claimed = new Set<string>();
+    for (const r of rows) {
+      const key = norm(r.team ?? "");
+      if (!key || byPlanName.has(key)) continue;
+      let t: TeamRecord | undefined = teams.find((x) => norm(x.name) === key && !claimed.has(x.id));
+      for (const rr of rows) {
+        if (t) break;
+        if (norm(rr.team ?? "") !== key) continue;
+        const ext = String(rr.external_id ?? "").trim();
+        const u = ext ? (await this.store.getUserByExternalId(ext)) ?? (await this.store.getUserByExternalId(ext.toLowerCase())) : null;
+        const sits = u ? teams.find((x) => x.member_user_ids.includes(u.id) && !claimed.has(x.id)) : undefined;
+        if (sits) { t = sits; break; }
+      }
+      if (!t) {
+        t = teams.find((x) => x.member_user_ids.length === 0 && !claimed.has(x.id) && ![...byPlanName.values()].some((b) => b.id === x.id));
+        if (t) { await this.store.setTeamName(t.id, r.team.trim().slice(0, 40)); t = { ...t, name: r.team.trim().slice(0, 40) }; }
+      }
+      if (!t) { continue; }
+      claimed.add(t.id);
+      byPlanName.set(key, t);
+    }
+    // 2. seat each student
+    for (const r of rows) {
+      const ext = String(r.external_id ?? "").trim();
+      const role = String(r.role ?? "").trim().toLowerCase();
+      const fail = (error: string) => out.errors.push({ external_id: ext || "(blank)", error });
+      if (!ext) { fail("blank NetID"); continue; }
+      if (!r.team.trim()) { fail("blank Firm — use any working label (e.g. Group 1); the CEO names the brewery on arrival"); continue; }
+      const t = byPlanName.get(norm(r.team ?? ""));
+      if (!t) { fail(`no firm available for "${r.team}" — every firm is named or occupied; raise Firms or fix the name`); continue; }
+      if (!TEAM_ROLES.has(role)) { fail(`unknown chair "${r.role}" (ceo, cfo, cmo, coo, chro)`); continue; }
+      const u = (await this.store.getUserByExternalId(ext)) ?? (await this.store.getUserByExternalId(ext.toLowerCase())) ?? (await this.store.getUserByExternalId(ext.toUpperCase()));
+      if (!u) { fail("not on the roster — provision this NetID first"); continue; }
+      teams = await this.store.getTeams(gameId); // fresh occupancy after each seat
+      const cur = teams.find((x) => x.member_user_ids.includes(u.id));
+      const target = teams.find((x) => x.id === t.id)!;
+      try {
+        if (cur && cur.id === target.id) {
+          if ((await this.store.getMemberRole(target.id, u.id)) !== role) { await this.assertSeatFree(target, role, u.id); await this.store.setMemberRole(target.id, u.id, role); }
+          out.seated.push({ external_id: ext, name: u.display_name ?? ext, team: target.name, role, moved: false });
+        } else if (cur) {
+          await this.moveMember(gameId, u.id, target.id, role);
+          out.seated.push({ external_id: ext, name: u.display_name ?? ext, team: target.name, role, moved: true });
+        } else {
+          if (target.member_user_ids.length >= MAX_SEATS_PER_FIRM) throw new LifecycleError(`"${target.name}" is full — all ${MAX_SEATS_PER_FIRM} C-suite seats are taken`);
+          await this.assertSeatFree(target, role, u.id);
+          await this.store.addTeamMember(target.id, u.id);
+          await this.store.setMemberRole(target.id, u.id, role);
+          out.seated.push({ external_id: ext, name: u.display_name ?? ext, team: target.name, role, moved: false });
+        }
+      } catch (e) { fail(e instanceof Error ? e.message : String(e)); }
+    }
+    return out;
+  }
+
+  /** Where a (claim-identified) student already sits in this game, if anywhere (DW-050):
+   *  the Join screen skips the firm/chair picker for a pre-seated or returning player. */
+  async seatOf(gameId: string, userId: string): Promise<{ teamId: string; team: string; role: string | null } | null> {
+    const t = (await this.store.getTeams(gameId)).find((x) => x.member_user_ids.includes(userId));
+    return t ? { teamId: t.id, team: t.name, role: await this.store.getMemberRole(t.id, userId) } : null;
+  }
+
+  /** Cheap change signal for one firm (DW-050): 2–3 reads instead of the ~30 a full view
+   *  costs. The stamp folds in everything that would change the student's view — round,
+   *  lifecycle, deadline, the firm's roster, and every seat's last write. */
+  async pulse(gameId: string, teamId: string): Promise<Pulse> {
+    const game = await this.requireGame(gameId);
+    const team = await this.store.getTeam(teamId);
+    const round = game.current_round;
+    const rec = await this.store.getDecision(gameId, round, teamId);
+    const mds = game.firm_mode === "team" ? await this.store.getMemberDecisions(gameId, round, teamId) : [];
+    const writes = Math.max(rec?.submitted_at ?? 0, ...mds.map((m) => m.updated_at ?? 0));
+    const stamp = [round, game.lifecycle, game.deadline_at ?? 0, (team?.member_user_ids ?? []).join(","), writes, rec?.revision_count ?? -1, rec?.locked ? 1 : 0].join("|");
+    return { round, lifecycle: game.lifecycle, deadlineAt: game.deadline_at ?? null, stamp };
+  }
+
+  /** End a game early (DW-049): the season completes at the current round — students see
+   *  "Season complete", no further submissions are accepted, the dashboard/export keep every
+   *  resolved round. A round mid-resolve must finish (Retry resolve) first. Idempotent. */
+  async endGame(gameId: string): Promise<void> {
+    const game = await this.requireGame(gameId);
+    if (game.lifecycle === "complete") return;
+    if (game.lifecycle === "resolving") throw new LifecycleError("cannot end while a round is resolving — retry resolve first");
+    if (game.deadline_at != null) await this.store.setGameDeadline(gameId, null);
+    await this.store.setGameLifecycle(gameId, "complete", game.current_round);
+  }
+
+  /** Rename (or clear the title of) a game (DW-049). Titles are labels for the instructor's list. */
+  async renameGame(gameId: string, title: string | null): Promise<void> {
+    await this.requireGame(gameId);
+    const t = title == null ? null : String(title).trim().slice(0, 60) || null;
+    await this.store.setGameTitle(gameId, t);
+  }
+
+  /** The instructor's games, newest first (DW-049) — enough per row to pick one to resume or
+   *  export. `filter` scopes by ownership (the transport applies its passcode tier). */
+  async listGames(filter: (g: GameRecord) => boolean = () => true): Promise<GameSummary[]> {
+    const out: GameSummary[] = [];
+    for (const g of await this.store.listGames()) if (filter(g)) out.push(await this.summarize(g));
+    return out;
+  }
+
+  /** One game's set-up as the console shows it (DW-049): title, size, mode, enabled modules. */
+  async describeGame(gameId: string): Promise<GameSummary> {
+    return this.summarize(await this.requireGame(gameId));
+  }
+
+  private async summarize(g: GameRecord): Promise<GameSummary> {
+    const teams = await this.store.getTeams(g.id);
+    const mods = (g.config.modules ?? {}) as Record<string, { enabled?: boolean } | undefined>;
+    const scoring = (g.config as { scoring?: { accumulation_window?: { drop_first?: number } } }).scoring;
+    return {
+      gameId: g.id, title: g.title ?? null, joinCode: g.join_code, round: g.current_round, nRounds: g.n_rounds, lifecycle: g.lifecycle,
+      firmMode: g.firm_mode ?? "solo", nFirms: teams.length, joined: teams.filter((t) => t.member_user_ids.length > 0).length,
+      players: teams.reduce((n, t) => n + t.member_user_ids.length, 0), createdAt: g.created_at, ownerTag: g.owner_tag,
+      modules: Object.entries(mods).filter(([, m]) => !!m?.enabled).map(([id]) => id),
+      practiceRounds: scoring?.accumulation_window?.drop_first ?? 0,
+    };
+  }
+
+  async unlockRound(gameId: string): Promise<void> {
+    const game = await this.requireGame(gameId);
+    if (game.lifecycle !== "locked") throw new LifecycleError(`cannot unlock: round is "${game.lifecycle}", not locked`);
+    await this.store.unlockDecisions(gameId, game.current_round);
+    await this.store.setGameLifecycle(gameId, "open", game.current_round);
+  }
+
+  /** Announce (or clear) a submission deadline for the current round (DW-048). Display-only:
+   *  students see a countdown; the instructor still locks by hand. Cleared on advance. */
+  async setDeadline(gameId: string, deadlineAt: number | null): Promise<void> {
+    await this.requireGame(gameId);
+    if (deadlineAt != null && !(Number.isFinite(deadlineAt) && deadlineAt > 0)) throw new LifecycleError("deadline must be a timestamp (ms) or null");
+    await this.store.setGameDeadline(gameId, deadlineAt);
+  }
+
+  /** The firm's standing plan for the current round, as the client's draft seed (DW-048):
+   *  a reload no longer falls back to house defaults — it picks up what the firm is
+   *  actually trading on. Same record the merge base + no-show carry use. */
+  async getStandingDecision(gameId: string, teamId: string): Promise<FirmDecision | null> {
+    const game = await this.requireGame(gameId);
+    const team = await this.store.getTeam(teamId);
+    if (!team || team.game_id !== gameId) return null;
+    const round = game.current_round;
+    const ws = (await this.store.getWorldState(gameId, round)) ?? (await this.store.getLatestWorldState(gameId));
+    return this.standingDecision(gameId, round, teamId, team.firm_id, ws?.state ?? null, game.config);
+  }
+
+  /** Instructor roster view (DW-048): every chair on every firm with its live submit state,
+   *  keyed by user id so the console can remove or move a member. */
+  async getRoster(gameId: string): Promise<{ teamId: string; firmId: FirmId; name: string; members: { userId: string; name: string; externalId: string | null; claim: string | null; role: string | null; submitted: boolean; updatedAt: number | null }[] }[]> {
+    const game = await this.requireGame(gameId);
+    const out = [];
+    for (const team of await this.store.getTeams(gameId)) {
+      const mds = await this.store.getMemberDecisions(gameId, game.current_round, team.id);
+      const solo = game.firm_mode !== "team" ? await this.store.getDecision(gameId, game.current_round, team.id) : null;
+      const members = [];
+      for (const uid of team.member_user_ids) {
+        const u = await this.store.getUser(uid);
+        const md = mds.find((m) => m.user_id === uid);
+        members.push({
+          userId: uid, name: u?.display_name ?? "Player", externalId: u?.external_id ?? null,
+          claim: u?.claim_code ?? null, // DW-049: instructor-only — so the console can re-issue a lost return code
+          role: await this.store.getMemberRole(team.id, uid),
+          submitted: game.firm_mode === "team" ? (md?.submitted ?? false) : (solo?.submitted ?? false),
+          updatedAt: game.firm_mode === "team" ? (md?.updated_at ?? null) : (solo?.submitted_at ?? null),
+        });
+      }
+      out.push({ teamId: team.id, firmId: team.firm_id, name: team.name, members });
+    }
+    return out;
+  }
+
+  /** Drop a member from their firm (DW-048): wrong-firm joins and dropped students used to be
+   *  permanent — the chair stayed taken and the firm counted as "joined" forever. The member's
+   *  slice for the open round is deleted and the firm's plan re-composed so nothing of theirs
+   *  still trades. An emptied firm reverts to an NPC at the next lock (botFillEmptySlots). */
+  async removeMember(gameId: string, teamId: string, userId: string): Promise<void> {
+    const game = await this.requireGame(gameId);
+    const team = await this.store.getTeam(teamId);
+    if (!team || team.game_id !== gameId) throw new LifecycleError(`no team ${teamId} in game ${gameId}`);
+    if (!team.member_user_ids.includes(userId)) throw new LifecycleError("that player is not on this firm");
+    await this.store.removeTeamMember(teamId, userId);
+    await this.store.deleteMemberDecision(gameId, game.current_round, userId);
+    if (game.lifecycle === "open") {
+      if (game.firm_mode === "team") await this.recomposeTeamDecisions(gameId, game);
+      else {
+        // Solo firm: the departing player's decision goes with them — the slot reads as
+        // waiting (a new claimant submits fresh; otherwise NPC/carry fill at resolve).
+        const existing = await this.store.getDecision(gameId, game.current_round, teamId);
+        if (existing && !existing.locked) await this.store.deleteDecision(gameId, game.current_round, teamId);
+      }
+    }
+  }
+
+  /** Move a member to another firm's free chair (DW-048) — remove + seat, with the same
+   *  guards a fresh join gets (cap, distinct chair). Team games only. */
+  async moveMember(gameId: string, userId: string, toTeamId: string, role: string): Promise<void> {
+    const game = await this.requireGame(gameId);
+    if (game.firm_mode !== "team") throw new LifecycleError("move applies to team games (solo players re-join with their claim code)");
+    if (!TEAM_ROLES.has(role)) throw new LifecycleError(`unknown seat "${role}"`);
+    const teams = await this.store.getTeams(gameId);
+    const from = teams.find((t) => t.member_user_ids.includes(userId));
+    if (!from) throw new LifecycleError("that player is not in this game");
+    const to = teams.find((t) => t.id === toTeamId);
+    if (!to) throw new LifecycleError(`no team ${toTeamId} in game ${gameId}`);
+    if (to.id === from.id) {
+      await this.assertSeatFree(to, role, userId);
+      await this.store.setMemberRole(to.id, userId, role);
+    } else {
+      if (to.member_user_ids.length >= MAX_SEATS_PER_FIRM) throw new LifecycleError(`"${to.name}" is full — all ${MAX_SEATS_PER_FIRM} C-suite seats are taken`);
+      await this.assertSeatFree(to, role, userId);
+      await this.removeMember(gameId, from.id, userId);
+      await this.store.addTeamMember(to.id, userId);
+      await this.store.setMemberRole(to.id, userId, role);
+      if (to.member_user_ids.length === 0) await this.store.setTeamName(to.id, to.name); // keep the board name
+    }
+    // The seat's slice was deleted with the move; the old desk's levers no longer apply.
+    await this.store.deleteMemberDecision(gameId, game.current_round, userId);
+    if (game.lifecycle === "open") await this.recomposeTeamDecisions(gameId, game);
+  }
+
   /**
    * Resolve the round (§5 Resolve): run the engine once over the full decision
    * set, append the new world state + results, write the research tables, advance
@@ -642,6 +912,8 @@ export class GameOrchestrator {
     if (game.lifecycle !== "published") throw new LifecycleError(`cannot advance: round is "${game.lifecycle}"`);
     if (game.current_round >= game.n_rounds) await this.store.setGameLifecycle(gameId, "complete", game.current_round);
     else await this.store.setGameLifecycle(gameId, "open", game.current_round);
+    // A deadline belongs to one round (DW-048).
+    if (game.deadline_at != null) await this.store.setGameDeadline(gameId, null);
   }
 
   private async persistResearchRows(

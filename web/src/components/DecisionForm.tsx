@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Facility, FirmDecision, PrPlayType, SegmentId } from "drinkwars-engine";
+import { DESK_LEVERS, ROLE_DESK } from "drinkwars-engine";
 import type { GameView } from "../game/controller.js";
 import { mergeDecision, type CityActions } from "../game/cityActions.js";
 import { SEG_LABEL, SEG_TAG, STOCK_LABEL, fmt, toDisplayMoney, toEngineMoney } from "../labels.js";
@@ -120,6 +121,27 @@ export function DecisionForm({
   // Projected-cash spend is computed from THIS, so market entry / siting done on the City View
   // tab is reflected in the Decide tab's forecast (not just merged silently at submit).
   const effective = mergeDecision(view, d, cityActions, externalPoaches);
+  // DW-052: the projection prices the MERGE OUTCOME, not just this form — each seated
+  // teammate's submitted desk slice overlays `effective` (their desk is theirs at lock),
+  // so every seat's commit dial shows the same number and the CEO watches costs land as
+  // teammates submit. `proj` feeds the spend lines below; `d` keeps driving the inputs.
+  const proj = (() => {
+    const seats = view.teamPlan?.seats ?? [];
+    let out = effective as unknown as Record<string, unknown>;
+    let copied = false;
+    for (const st of seats) {
+      if (st.me || !st.partial || !st.role) continue;
+      const dk = ROLE_DESK[st.role] ?? "all";
+      if (dk === "all") continue;
+      for (const f of DESK_LEVERS[dk]) {
+        const v = (st.partial as Record<string, unknown>)[f as string];
+        if (v === undefined) continue;
+        if (!copied) { out = { ...out }; copied = true; }
+        out[f as string] = v;
+      }
+    }
+    return out as unknown as FirmDecision;
+  })();
 
   const cash = view.own.cash;
   // Production / inventory mode (only when the game was created with it on).
@@ -130,7 +152,7 @@ export function DecisionForm({
   const produced = runRate * cap;
   const sellable = stock + produced;
   const lastSold = view.ownResult?.inventory?.sold ?? null;
-  const brewSpend = invOn ? produced * view.unitCostEst : 0; // cash out to brew this round
+  const brewSpend = invOn ? (proj.run_rate ?? runRate) * cap * view.unitCostEst : 0; // cash out to brew this round
 
   // Expansion-module decision controls (gated on what the instructor enabled).
   const mods = view.modules;
@@ -140,13 +162,13 @@ export function DecisionForm({
   const prCost = mods?.prEvents?.cost ?? 0;
   const prCooldownUntil = view.own.pr_cooldown_until ?? null;
   const prOnCooldown = prCooldownUntil != null && view.round < prCooldownUntil;
-  const prSpend = prOn && d?.pr_action && !prOnCooldown ? prCost : 0;
-  const waterSpend = sustOn ? Math.max(0, d?.invest_water_efficiency ?? 0) : 0;
+  const prSpend = prOn && proj?.pr_action && !prOnCooldown ? prCost : 0;
+  const waterSpend = sustOn ? Math.max(0, proj?.invest_water_efficiency ?? 0) : 0;
   const goods = mods?.publicGoods?.goods ?? [];
   const contribs = d?.public_good_contributions ?? {};
   const pgSpend = pgOn ? Object.values(contribs).reduce((a, b) => a + Math.max(0, b), 0) : 0;
   const rndOn = !!mods?.rndRace?.enabled;
-  const rndSpend = rndOn ? Math.max(0, d?.invest_rnd ?? 0) : 0;
+  const rndSpend = rndOn ? Math.max(0, proj?.invest_rnd ?? 0) : 0;
   const frontierActive = view.segments.some((s) => s.id === "frontier" && s.active);
 
   // MOD-B06 vertical assets · MOD-B03 key hires · MOD-B08 instruments · MOD-B07 M&A
@@ -154,7 +176,8 @@ export function DecisionForm({
   const vertAssets = mods?.verticalIntegration?.assets ?? [];
   const owned = new Set((view.own.vertical_assets ?? []).map((a) => a.id));
   const buying = new Set(d?.buy_vertical ?? []);
-  const vertSpend = vertOn ? vertAssets.filter((a) => buying.has(a.id) && !owned.has(a.id)).reduce((s, a) => s + a.cost, 0) : 0;
+  const buyingP = new Set(proj?.buy_vertical ?? []);
+  const vertSpend = vertOn ? vertAssets.filter((a) => buyingP.has(a.id) && !owned.has(a.id)).reduce((s, a) => s + a.cost, 0) : 0;
   const toggleBuy = (id: string) => {
     const next = new Set(buying);
     next.has(id) ? next.delete(id) : next.add(id);
@@ -175,7 +198,8 @@ export function DecisionForm({
   const onStaff = new Set((view.own.key_hires ?? []).map((h) => h.role));
   const hiring = new Set(d?.hire_roles ?? []);
   const firing = new Set(d?.fire_roles ?? []);
-  const hireSpend = labOn ? labRoles.filter((r) => hiring.has(r.id) && !onStaff.has(r.id)).reduce((s, r) => s + r.signing_bonus + r.salary, 0) : 0;
+  const hiringP = new Set(proj?.hire_roles ?? []);
+  const hireSpend = labOn ? labRoles.filter((r) => hiringP.has(r.id) && !onStaff.has(r.id)).reduce((s, r) => s + r.signing_bonus + r.salary, 0) : 0;
   const toggleHire = (id: string) => {
     const next = new Set(hiring);
     next.has(id) ? next.delete(id) : next.add(id);
@@ -190,7 +214,7 @@ export function DecisionForm({
   const fiCfg = mods?.financialInstruments;
   const noteOut = view.own.convertible_note ?? null;
   const rbfOut = Math.max(0, view.own.rbf_outstanding ?? 0);
-  const instrDraws = fiOn ? Math.max(0, d?.draw_convertible ?? 0) + Math.max(0, d?.draw_rbf ?? 0) : 0;
+  const instrDraws = fiOn ? Math.max(0, proj?.draw_convertible ?? 0) + Math.max(0, proj?.draw_rbf ?? 0) : 0;
   const maOn = !!mods?.ma?.enabled;
   const rivals = view.standings.filter((s) => !s.isYou && s.status === "active");
   const bid = d?.acquisition_bid ?? null;
@@ -207,7 +231,7 @@ export function DecisionForm({
   const entered = view.own.markets_entered ?? ["home"];
   const marketWeights = d?.market_presence ?? { home: 1 };
   const setWeight = (id: string, v: number) => set({ market_presence: { ...marketWeights, [id]: Math.max(0, v) } });
-  const effWeights = effective.market_presence ?? { home: 1 };
+  const effWeights = proj.market_presence ?? { home: 1 };
   const geoEntrySpend = geoOn ? markets.filter((m) => m.kind !== "home" && (effWeights[m.id] ?? 0) > 0 && !entered.includes(m.id)).reduce((a, m) => a + m.entry_cost, 0) : 0;
 
   // MOD-A09 lobbying · MOD-A05/A06 alliances
@@ -236,8 +260,8 @@ export function DecisionForm({
   const freactivate = new Set(d?.reactivate_facilities ?? []);
   const facIsActive = (fac: Facility) => (freactivate.has(fac.id) ? true : fmothball.has(fac.id) ? false : fac.active);
   // Costs reflect the merged decision (form builds + City View builds), so the forecast is whole.
-  const effBuilds = effective.build_facilities ?? [];
-  const effMaint = effective.maintain_facilities ?? {};
+  const effBuilds = proj.build_facilities ?? [];
+  const effMaint = proj.maintain_facilities ?? {};
   const buildCost = facOn ? effBuilds.reduce((s, b) => s + (facTypes.find((t) => t.id === b.type)?.base_cost ?? 0), 0) : 0;
   const maintCost = facOn ? Object.values(effMaint).reduce((s: number, v) => s + Math.max(0, v), 0) : 0;
   const facSpend = buildCost + maintCost;
@@ -267,8 +291,11 @@ export function DecisionForm({
   const ebids = d?.hire_bids ?? {};
   // Hire cost = salary + any signing bonus (the bonus only actually lands if the hire
   // is contested and you win, but budget for the full commitment).
-  const hireCost = empOn ? candidates.filter((cnd) => ehiring.has(cnd.id)).reduce((s, cnd) => s + cnd.salary + Math.max(0, ebids[cnd.id] ?? 0), 0) : 0;
-  const raiseCost = empOn ? employees.reduce((s: number, e) => s + Math.max(0, (eraises[e.id] ?? e.salary) - e.salary), 0) : 0;
+  const ehiringP = new Set(proj?.hire_employees ?? []);
+  const ebidsP = proj?.hire_bids ?? {};
+  const hireCost = empOn ? candidates.filter((cnd) => ehiringP.has(cnd.id)).reduce((s, cnd) => s + cnd.salary + Math.max(0, ebidsP[cnd.id] ?? 0), 0) : 0;
+  const eraisesP = proj?.raise_employees ?? {};
+  const raiseCost = empOn ? employees.reduce((s: number, e) => s + Math.max(0, (eraisesP[e.id] ?? e.salary) - e.salary), 0) : 0;
   // Talent raids: use the lifted list when provided (poaching happens in rival dossiers),
   // otherwise manage them locally. Either way they're injected into the decision at submit.
   const setPoach = onPoach ?? ((firm: string, employee: string, offer: number) => {
@@ -276,7 +303,7 @@ export function DecisionForm({
     set({ poach_employees: offer > 0 ? [...rest, { firm, employee, offer }] : rest });
   });
   const poaches = externalPoaches ?? (d?.poach_employees ?? []);
-  const poachSpend = empOn ? poaches.reduce((s: number, x) => s + Math.max(0, x.offer), 0) : 0;
+  const poachSpend = empOn ? (proj?.poach_employees ?? []).reduce((s: number, x) => s + Math.max(0, x.offer), 0) : 0;
   const empSpend = hireCost + raiseCost + poachSpend;
   const toggleHireEmp = (id: string) => {
     const n = new Set(ehiring);
@@ -304,10 +331,10 @@ export function DecisionForm({
     : null;
   const onPrChoose = (cid: string) => { set({ pr_action: cid === "none" ? null : (cid as PrPlayType) }); setPrModal(false); };
 
-  const investSpend = d.invest_cap + d.invest_Q + d.invest_B + d.invest_process + d.invest_T_emp + d.invest_T_inv + d.invest_T_gov;
-  const infoSpend = d.buy_info ? infoCost : 0;
-  const financeOut = d.debt_repay + d.dividend;
-  const financeIn = d.debt_draw + d.equity_raise;
+  const investSpend = proj.invest_cap + proj.invest_Q + proj.invest_B + proj.invest_process + proj.invest_T_emp + proj.invest_T_inv + proj.invest_T_gov;
+  const infoSpend = proj.buy_info ? infoCost : 0;
+  const financeOut = proj.debt_repay + proj.dividend;
+  const financeIn = proj.debt_draw + proj.equity_raise;
   const netFinancing = financeIn - financeOut;
   const projectedCash = cash - investSpend - infoSpend - brewSpend - moduleSpend + netFinancing + instrDraws; // before this round's sales
   const overcommit = projectedCash < 0;

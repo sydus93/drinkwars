@@ -172,6 +172,7 @@ export interface GameView {
   firms: FirmSnapshot[]; // all firms' latest snapshot (incl. you) — for benchmarks/strategy map
   infoActive: boolean; // did you buy market research for the most recent decision?
   names: Record<string, string>; // firm_id → display name (events/briefings arrive pre-renamed)
+  styles?: Record<string, { color: string | null; emblem: string | null }>; // DW-051 house colour/mark per firm (multiplayer)
   inventoryEnabled: boolean; // production/inventory mode on for this game?
   modules?: ModulesConfig; // resolved expansion-module config (gates the module decision controls)
   scoring?: Config["scoring"]; // scorecard config (weights, benchmark bands, accumulation window) — DW-045 panel inputs

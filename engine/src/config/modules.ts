@@ -158,10 +158,12 @@ export const defaultModules: ModulesConfig = {
   // Conquest guards (tuned on the all-modules sweep): a target must be deeply
   // distressed, the floor price is near fair value, and one firm can't roll up
   // the whole industry. min_distress_rounds 2→4 (DW-041): at 2, acquirers hoovered
-  // up firms in a transient dip (32 acquisitions vs 13 bankruptcies across 16 runs)
-  // — M&A should be the rescue of a firm already on the covenant runway (runway = 3
-  // rounds), not the punishment for two bad quarters.
-  ma: { enabled: false, integration_discount: 0.6, min_price_fraction: 0.75, min_distress_rounds: 4, max_acquisitions: 2 },
+  // up firms in a transient dip (32 acquisitions vs 13 bankruptcies across 16 runs).
+  // DW-051: 4 was UNREACHABLE on a steady slide — the covenant fires at runway (was 3)
+  // and the M&A pass reads the counter as of the previous round-end, so a target
+  // could never show 4. Now 3 with runway 5: a firm is acquirable in its 4th and 5th
+  // distressed rounds — a rescue window that exists — before the covenant forces exit.
+  ma: { enabled: false, integration_discount: 0.6, min_price_fraction: 0.75, min_distress_rounds: 3, max_acquisitions: 2 },
   financialInstruments: {
     enabled: false,
     convertible: { rate: 0.02, term: 4, max_equity_fraction: 1.0 }, // 8% APR note

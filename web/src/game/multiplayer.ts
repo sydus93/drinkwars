@@ -6,7 +6,7 @@
  * the passcode-gated create / lock / resolve endpoints.
  */
 import type { AllianceSummary, Config, ConfigOverride, FirmDecision, FirmId, FirmRoundResult, FirmState, LobbySummary, RoleBriefing, ScheduledShock, SegmentId } from "drinkwars-engine";
-import { inventoryEnabled } from "drinkwars-engine";
+import { inventoryEnabled, DESK_LEVERS, ROLE_DESK } from "drinkwars-engine";
 
 /** The instructor gamemaster payload (GET /instructor/games/:id/timeline). */
 export interface GameTimeline {
@@ -32,6 +32,8 @@ export interface TeamPlanSeat {
 export interface TeamPlan { seats: TeamPlanSeat[]; composed: FirmDecision | null; locked: boolean }
 import type { InstructorDashboard } from "drinkwars-server";
 import type { GameView, Standing } from "./controller.js";
+import { setFirmStyles } from "../lib/teamColors.js";
+import { same } from "../lib/reconcile.js";
 
 export const TRANSPORT_URL: string =
   (import.meta as any).env?.VITE_TRANSPORT_URL ?? "http://localhost:8787";
@@ -59,6 +61,7 @@ export interface RawView {
   agreements?: AllianceSummary[]; // MOD-A05/A06
   lobbyInitiatives?: LobbySummary[]; // MOD-A09
   names?: Record<string, string>; // firm_id → brewery name
+  styles?: Record<string, { color: string | null; emblem: string | null }>; // DW-051 house colour/mark per firm
   markets?: GameView["markets"]; // MOD-B01 per-team city view (projected server-side)
   seats?: GameView["seats"]; // team firms: this firm's C-suite seats + submit status
   teamPlan?: TeamPlan; // team firms: each seat's slice + the composed decision (same-firm only)
@@ -66,6 +69,10 @@ export interface RawView {
   shocks?: GameView["shocks"]; // active + telegraphed shocks
   history?: GameView["history"]; // own trend + public field aggregate
   hiringMarket?: GameView["hiringMarket"]; // MOD-B12 candidate pool (shared/public)
+  infoActive?: boolean; // DW-051: the firm composed plan buys research this round (server truth)
+  standing?: FirmDecision | null; // DW-048: the firm's standing plan (server carry-forward) — the draft seed after a reload
+  draft?: FirmDecision | null; // DW-048: solo firms — this round's own submitted decision (resume exactly)
+  deadlineAt?: number | null; // DW-048: instructor-announced submission deadline for this round (ms epoch)
 }
 
 async function api(base: string, path: string, opts: RequestInit = {}): Promise<any> {
@@ -74,7 +81,7 @@ async function api(base: string, path: string, opts: RequestInit = {}): Promise<
     headers: { "content-type": "application/json", ...(opts.headers ?? {}) },
   });
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body?.error || `request failed (${res.status})`);
+  if (!res.ok) { const e = new Error(body?.error || `request failed (${res.status})`) as Error & { status?: number }; e.status = res.status; throw e; }
   return body;
 }
 
@@ -102,11 +109,13 @@ export async function fetchMyGames(claim: string, base: string = TRANSPORT_URL):
 export interface GamePeek {
   firmMode: "solo" | "team"; title: string | null; nRounds: number; round: number; lifecycle: string; slotsTotal: number; slotsOpen: number;
   teams?: { teamId: string; name: string; members: number; roles: string[] }[];
+  yourSeat?: { teamId: string; team: string; role: string | null }; // DW-050: pre-seated / returning claim holder
+  yourName?: string | null;
 }
 
 /** Validate a join code + learn the game's shape before a student founds a team. */
-export async function peekGame(code: string, base: string = TRANSPORT_URL): Promise<GamePeek> {
-  const res = await fetch(`${base}/game?code=${encodeURIComponent(code.trim().toUpperCase())}`);
+export async function peekGame(code: string, claim?: string, base: string = TRANSPORT_URL): Promise<GamePeek> {
+  const res = await fetch(`${base}/game?code=${encodeURIComponent(code.trim().toUpperCase())}${claim ? `&claim=${encodeURIComponent(claim.trim().toUpperCase())}` : ""}`);
   if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || "no game found for that code");
   return res.json();
 }
@@ -119,6 +128,10 @@ export class StudentClient {
   config!: Config;
   nRounds = 0;
   firmMode: "solo" | "team" = "solo"; // team ⇒ this client submits its SEAT's slice
+  /** off-desk values this seat sent this round (DW-052) — re-sent on later submits while
+   *  the composed plan still carries them, since the server replaces the whole partial */
+  private sentCovers: Record<string, unknown> = {};
+  private sentCoversRound = -1;
   role: string | null = null; // the player's C-suite seat in a team firm (null = solo controller)
   claim = ""; // this player's durable return code (roster-provided OR auto-issued on join)
   claimIssued = false; // true when the server AUTO-issued the code this join (no claim entered) → worth surfacing
@@ -128,10 +141,10 @@ export class StudentClient {
   /** Join by code. Roster students pass their `claim` code (persistent identity); team
    *  games take a `role` (C-suite seat) and optional `teamId` (which firm to join). An
    *  anonymous joiner gets a claim code auto-issued (returned as `claim`). */
-  async join(code: string, name: string, opts: { claim?: string; teamId?: string; role?: string; teamName?: string } = {}): Promise<void> {
+  async join(code: string, name: string, opts: { claim?: string; teamId?: string; role?: string; teamName?: string; color?: string; emblem?: string } = {}): Promise<void> {
     // `name` is the PERSON; `teamName` the brewery (team games only — a founder names it,
     // a joiner inherits it). Solo games keep the one-field behaviour: name = brewery.
-    const r = await api(this.base, "/join", { method: "POST", body: JSON.stringify({ code, name, claim: opts.claim, teamId: opts.teamId, role: opts.role, teamName: opts.teamName }) });
+    const r = await api(this.base, "/join", { method: "POST", body: JSON.stringify({ code, name, claim: opts.claim, teamId: opts.teamId, role: opts.role, teamName: opts.teamName, color: opts.color, emblem: opts.emblem }) });
     this.token = r.token;
     this.gameId = r.gameId;
     this.firmId = r.firmId;
@@ -182,6 +195,10 @@ export class StudentClient {
     this.last = await api(this.base, `/view?token=${encodeURIComponent(this.token)}`);
     return this.last!;
   }
+  /** DW-050: the cheap change signal — poll this; fetch the full view only when `stamp` moves. */
+  fetchPulse(): Promise<{ round: number; lifecycle: string; deadlineAt: number | null; stamp: string }> {
+    return api(this.base, `/pulse?token=${encodeURIComponent(this.token)}`);
+  }
 
   raw(): RawView | null {
     return this.last;
@@ -193,6 +210,7 @@ export class StudentClient {
 
   /** Map the transport view onto the GameView the existing components expect. */
   toGameView(v: RawView): GameView {
+    setFirmStyles(v.styles); // DW-051: board colours/marks as the server knows them
     const standings: Standing[] = v.standings.map((s) => ({
       firm_id: s.firm_id,
       name: s.name ?? labelFor(s.firm_id),
@@ -216,8 +234,9 @@ export class StudentClient {
       events: v.events,
       history: v.history ?? [],
       firms: v.firms ?? [],
-      infoActive: !!this.lastDecision?.buy_info,
+      infoActive: v.infoActive ?? !!this.lastDecision?.buy_info,
       names: v.names ?? {},
+      styles: v.styles ?? {},
       inventoryEnabled: this.config ? inventoryEnabled(this.config) : false,
       modules: this.config?.modules,
       scoring: this.config?.scoring,
@@ -237,6 +256,23 @@ export class StudentClient {
   /** Carry standing levers forward; reset one-shot transactions (mirrors single-player). */
   async defaultDecision(): Promise<FirmDecision> {
     const v = this.last ?? (await this.fetchView());
+    const d = await this.seedDecision(v);
+    return this.mirrorFirm(d, v);
+  }
+  /** DW-050: a specialist's form shows the FIRM's values on every desk that isn't theirs —
+   *  the composed plan once anyone has submitted, else the standing plan the server would
+   *  trade on. Their own desk is never touched. Without this a fresh round seeded zeros on
+   *  the other desks and Reconcile flagged them all as "not your desk" edits. */
+  mirrorFirm(d: FirmDecision, v: RawView = this.last!): FirmDecision {
+    const desk = this.role ? (ROLE_DESK[this.role] ?? "all") : "all";
+    const firm = (v.teamPlan?.composed ?? v.standing) as FirmDecision | null | undefined;
+    if (this.firmMode !== "team" || desk === "all" || !firm) return d;
+    const own = new Set<string>(DESK_LEVERS[desk] as string[]);
+    const out = { ...d } as unknown as Record<string, unknown>;
+    for (const k of Object.keys(firm)) if (!own.has(k) && k !== "firm_id" && k in out) out[k] = (firm as unknown as Record<string, unknown>)[k];
+    return out as unknown as FirmDecision;
+  }
+  private async seedDecision(v: RawView): Promise<FirmDecision> {
     const own = v.own;
     const unit = v.unitCostEst || 3;
     const active = v.segments.filter((s) => s.active).map((s) => s.id);
@@ -247,8 +283,39 @@ export class StudentClient {
     // teamPlan is always the CURRENT round, so a fresh round naturally skips this.
     const mine = v.teamPlan?.seats.find((s) => s.me && s.partial);
     if (mine?.partial && !this.lastDecision) {
+      // (other desks are mirrored from the firm's plan by mirrorFirm, after seeding)
       this.lastDecision = { ...(mine.partial as FirmDecision), firm_id: this.firmId };
+      // A reload must not forget the covers this seat already sent (DW-052) — they're the
+      // off-desk keys present in our stored slice.
+      const desk = this.role ? (ROLE_DESK[this.role] ?? "all") : "all";
+      if (this.firmMode === "team" && desk !== "all") {
+        const own = new Set<string>(DESK_LEVERS[desk] as string[]);
+        this.sentCovers = {}; this.sentCoversRound = v.round;
+        for (const [k, val] of Object.entries(mine.partial as Record<string, unknown>)) if (!own.has(k) && k !== "firm_id" && val !== undefined) this.sentCovers[k] = val;
+      }
       return { ...this.lastDecision };
+    }
+    // Solo firms: this round's own submitted decision survives a reload verbatim (DW-048).
+    if (!this.lastDecision && v.draft && this.firmMode !== "team") {
+      this.lastDecision = { ...v.draft, firm_id: this.firmId };
+      return { ...this.lastDecision };
+    }
+    // Nothing in memory (fresh tab, new device, reload on a new round): seed from the firm's
+    // STANDING plan — the same carry-forward the server trades on if this seat says nothing
+    // — never the house defaults, which silently re-priced the firm at 1.8× cost and put it
+    // back in every segment the moment an inattentive teammate hit Submit (DW-048).
+    if (!this.lastDecision && v.standing) {
+      const s = v.standing;
+      return {
+        ...s, firm_id: this.firmId,
+        debt_draw: 0, debt_repay: 0, equity_raise: 0, dividend: 0, buy_info: false, beliefs: {}, reflection: "",
+        agreement_actions: [], exit_action: null,
+        pr_action: null, invest_water_efficiency: 0, public_good_contributions: {},
+        invest_rnd: 0, buy_vertical: [], hire_roles: [], fire_roles: [],
+        draw_convertible: 0, draw_rbf: 0, acquisition_bid: null,
+        build_facilities: [], maintain_facilities: {}, mothball_facilities: [], reactivate_facilities: [], divest_facilities: [],
+        hire_employees: [], hire_bids: {}, fire_employees: [], raise_employees: {}, poach_employees: [],
+      } as FirmDecision;
     }
 
     if (this.lastDecision) {
@@ -294,19 +361,61 @@ export class StudentClient {
     };
   }
 
-  async submit(decision: FirmDecision): Promise<void> {
+  async submit(decision: FirmDecision, covers?: Set<string>): Promise<void> {
     this.lastDecision = { ...decision, firm_id: this.firmId };
-    await api(this.base, "/submit", { method: "POST", body: JSON.stringify({ token: this.token, decision: this.lastDecision }) });
+    let slice: Partial<FirmDecision> = this.lastDecision;
+    const desk = this.role ? (ROLE_DESK[this.role] ?? "all") : "all";
+    if (this.firmMode === "team" && desk !== "all") {
+      // DW-051: send ONLY this desk's levers plus deliberate covers — off-desk values that differ
+      // from the firm's plan as of RIGHT NOW (fresh fetch, so a mirror a few seconds stale can't
+      // re-assert e.g. buy_info:false over the CEO's purchase under "later word wins"). Mirrored
+      // values equal to the plan are dropped: they'd read as covers on the CEO's card.
+      const v = await this.fetchView();
+      const plan = (v.teamPlan?.composed ?? v.standing ?? null) as unknown as Record<string, unknown> | null;
+      const own = new Set<string>(DESK_LEVERS[desk] as string[]);
+      const out: Record<string, unknown> = { firm_id: this.firmId };
+      const src = this.lastDecision as unknown as Record<string, unknown>;
+      // DW-052: the server REPLACES this seat's partial on every submit, so a cover sent
+      // earlier this round (a research buy, a hire for an empty chair) must be RE-SENT or
+      // it silently drops out of the composed plan when this player tweaks their own desk.
+      // Remembered covers are re-sent only while the plan still equals what we sent — if
+      // the plan moved (someone overruled us), we let their later word stand and forget.
+      if (this.sentCoversRound !== v.round) { this.sentCovers = {}; this.sentCoversRound = v.round; }
+      for (const k of Object.keys(src)) {
+        if (k === "firm_id") continue;
+        if (own.has(k)) { out[k] = src[k]; continue; }
+        const deliberate = covers ? covers.has(k) : true; // the form says which off-desk values the player actually changed
+        if (deliberate && (!plan || !(k in plan) || !same(src[k], plan[k]))) { out[k] = src[k]; this.sentCovers[k] = src[k]; continue; }
+        if (k in this.sentCovers) {
+          if (plan && same(plan[k], this.sentCovers[k])) out[k] = this.sentCovers[k];
+          else delete this.sentCovers[k];
+        }
+      }
+      slice = out as Partial<FirmDecision>;
+    }
+    await api(this.base, "/submit", { method: "POST", body: JSON.stringify({ token: this.token, decision: slice }) });
   }
 }
 
+/** One chair on a firm, as the instructor sees it (DW-048): who, which seat, submitted? */
+export interface RosterMember { userId: string; name: string; externalId: string | null; claim: string | null; role: string | null; submitted: boolean; updatedAt: number | null }
+/** One row of the instructor's game list (DW-049). */
+export interface GameSummary { gameId: string; title: string | null; joinCode: string | null; round: number; nRounds: number; lifecycle: string; firmMode: "solo" | "team"; nFirms: number; joined: number; players: number; createdAt: number; modules: string[]; practiceRounds: number }
 export interface InstructorStatus {
   lifecycle: string;
   round: number;
   joinCode: string;
   nRounds: number;
+  firmMode?: "solo" | "team";
+  deadlineAt?: number | null; // DW-048
+  // DW-049 set-up card
+  title?: string | null;
+  nFirms?: number;
+  modules?: string[];
+  practiceRounds?: number;
+  createdAt?: number;
   nonSubmitters: string[];
-  teams: { teamId: string; firmId: FirmId; name: string; joined: boolean }[];
+  teams: { teamId: string; firmId: FirmId; name: string; joined: boolean; members?: RosterMember[] }[];
 }
 
 export class InstructorClient {
@@ -330,6 +439,38 @@ export class InstructorClient {
   }
   lock(gameId: string): Promise<{ nonSubmitters: string[] }> {
     return api(this.base, `/instructor/games/${gameId}/lock`, { method: "POST", headers: this.headers() });
+  }
+  /** Re-open a locked round (DW-048) — a mis-click, or a late team that gets the window back. */
+  unlock(gameId: string): Promise<{ ok: boolean }> {
+    return api(this.base, `/instructor/games/${gameId}/unlock`, { method: "POST", headers: this.headers() });
+  }
+  /** Drop a member from their firm (wrong-firm join, dropped student). Their slice is removed. */
+  removeMember(gameId: string, teamId: string, userId: string): Promise<{ ok: boolean }> {
+    return api(this.base, `/instructor/games/${gameId}/members`, { method: "POST", headers: this.headers(), body: JSON.stringify({ op: "remove", teamId, userId }) });
+  }
+  /** Move a member to another firm's free chair (team games). */
+  moveMember(gameId: string, userId: string, toTeamId: string, role: string): Promise<{ ok: boolean }> {
+    return api(this.base, `/instructor/games/${gameId}/members`, { method: "POST", headers: this.headers(), body: JSON.stringify({ op: "move", userId, toTeamId, role }) });
+  }
+  /** Announce (ms epoch) or clear (null) this round's submission deadline — display-only. */
+  /** DW-050: pre-seat provisioned students (NetID → firm → chair). Row errors come back, not thrown. */
+  applySeatPlan(gameId: string, plan: { external_id: string; team: string; role: string }[]): Promise<{ seated: { external_id: string; name: string; team: string; role: string; moved: boolean }[]; errors: { external_id: string; error: string }[] }> {
+    return api(this.base, `/instructor/games/${gameId}/seats`, { method: "POST", headers: this.headers(), body: JSON.stringify({ plan }) });
+  }
+  /** DW-049: the instructor's own games, newest first. */
+  listGames(): Promise<{ games: GameSummary[] }> {
+    return api(this.base, "/instructor/games", { headers: this.headers() });
+  }
+  /** DW-049: end the season at the current round (irreversible). */
+  endGame(gameId: string): Promise<{ ok: boolean }> {
+    return api(this.base, `/instructor/games/${gameId}/end`, { method: "POST", headers: this.headers() });
+  }
+  /** DW-049: rename (null clears). */
+  rename(gameId: string, title: string | null): Promise<{ ok: boolean }> {
+    return api(this.base, `/instructor/games/${gameId}/title`, { method: "POST", headers: this.headers(), body: JSON.stringify({ title }) });
+  }
+  setDeadline(gameId: string, deadlineAt: number | null): Promise<{ ok: boolean }> {
+    return api(this.base, `/instructor/games/${gameId}/deadline`, { method: "POST", headers: this.headers(), body: JSON.stringify({ deadlineAt }) });
   }
   /** `force` re-runs a resolve that died mid-way (game stuck in "resolving"); the server
    *  makes the re-run idempotent. */
