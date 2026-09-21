@@ -18,7 +18,7 @@ function cockpitChart(desk: CockpitDesk, view: import("../game/controller.js").G
   const r = view.ownResult;
   if (!r) return null;
   if (desk === "operations") return { label: "Capacity vs demand", el: <CapacityVsDemand result={r} cap={view.own.cap} /> };
-  if (desk === "finance") return { label: "Cost-of-capital cockpit", el: <CostOfCapitalCockpit coc={r.cost_of_capital} /> };
+  if (desk === "finance") return { label: "Cost-of-capital cockpit", el: <CostOfCapitalCockpit coc={r.cost_of_capital} finance={view.finance} /> };
   if (desk === "all" || desk === "strategy") return { label: "Balanced scorecard", el: <ScorecardRadar you={r.scorecard_norm} /> };
   return null;
 }

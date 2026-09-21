@@ -94,7 +94,7 @@ export function RoundReport({
                       {s.items.map((e) => (
                         <li key={e.id} className={`flex gap-2 rounded-[3px] py-0.5 pr-1 text-sm leading-snug ${e.you ? "border-l-2 border-copper bg-copper/[0.06] pl-2" : "pl-1"}`}>
                           <div className="min-w-0">
-                            <span className="font-semibold text-ink">{e.title}.</span>{" "}
+                            {e.title && <><span className="font-semibold text-ink">{e.title}.</span>{" "}</>}
                             <span className="text-inksoft">{e.body}</span>
                           </div>
                         </li>

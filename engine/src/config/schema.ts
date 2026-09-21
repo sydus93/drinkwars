@@ -91,6 +91,27 @@ export function validateConfig(c: Config): Config {
   pos(c.finance?.max_leverage, "finance.max_leverage");
   rate(c.finance?.equity_issue_cost_base, "finance.equity_issue_cost_base");
   rate(c.finance?.dividend_max_fraction, "finance.dividend_max_fraction");
+  if (c.finance?.min_spread != null) nonneg(c.finance.min_spread, "finance.min_spread");
+  // Silent-typo guard: finance.ts tests `=== "graduated"`, so "Graduated" or "step " would
+  // quietly fall back to the step cliff with no error anywhere.
+  req(
+    c.finance?.coverage_penalty_mode == null || ["step", "graduated"].includes(c.finance.coverage_penalty_mode),
+    'finance.coverage_penalty_mode must be "step" or "graduated"',
+  );
+
+  // Benchmark bands are display-only, but an inverted one silently mis-tiers a student's
+  // gauge (a firm below `weak` reading "strong"), so the ordering is checked here rather
+  // than trusted. Equal values are legal: that is how the schedule says "no band yet".
+  const checkBand = (b: { weak: number; sound: number; strong: number } | undefined, where: string) => {
+    if (!b) return;
+    req(isNum(b.weak) && isNum(b.sound) && isNum(b.strong), `${where} must be numeric`);
+    req(b.weak <= b.sound && b.sound <= b.strong, `${where} must satisfy weak <= sound <= strong`);
+  };
+  for (const [k, b] of Object.entries(c.scoring?.benchmark_bands ?? {})) checkBand(b, `scoring.benchmark_bands.${k}`);
+  for (const [i, entry] of (c.scoring?.benchmark_bands_by_round ?? []).entries()) {
+    req(isNum(entry?.from_round) && entry.from_round >= 0, `scoring.benchmark_bands_by_round[${i}].from_round must be >= 0`);
+    for (const [k, b] of Object.entries(entry?.bands ?? {})) checkBand(b, `scoring.benchmark_bands_by_round[${i}].bands.${k}`);
+  }
 
   // shocks
   req(Array.isArray(c.shocks?.types), "shocks.types must be an array");

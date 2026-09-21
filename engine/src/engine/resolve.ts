@@ -6,7 +6,7 @@
  * it clones the input world and never mutates it.
  */
 import type {
-  Config, FirmDecision, FirmId, FirmRoundResult, RoundResult, SegmentId, SegmentResult, WorldState,
+  Config, CostBuildup, FirmDecision, FirmId, FirmRoundResult, RoundResult, SegmentId, SegmentResult, WorldState,
 } from "../types.js";
 import { advancePipeline, updateStock } from "./stocks.js";
 import { computeUnitCost } from "./cost.js";
@@ -63,7 +63,6 @@ export function resolveRound(prevWorld: WorldState, decisionList: FirmDecision[]
     }
   }
 
-  const activeSegmentIds = w.segments.filter((s) => s.active).map((s) => s.id);
   const allSegmentIds = w.segments.map((s) => s.id);
   const participants = w.firms.filter((f) => f.status === "active").map((f) => f.id);
 
@@ -181,6 +180,14 @@ export function resolveRound(prevWorld: WorldState, decisionList: FirmDecision[]
       }
     }
   }
+  // Captured HERE, after Step 5 opens any newly-emerging segment — not at the top of the
+  // round. Demand resolves over `w.segments` as it stands now, so a segment that emerges
+  // this round does trade; taking the list before emergence meant the per-firm `segments`
+  // record (and the strategy vector) silently omitted it for exactly one round — the round
+  // it opens, which is the marquee teaching moment. On the default config that left the
+  // Statements page's category table 45% short of the P&L sitting beside it.
+  const activeSegmentIds = w.segments.filter((s) => s.active).map((s) => s.id);
+
   const agEff = computeAgreementEffects(w, c, round);
   const shock = computeShockEffects(w, c, agEff.coordinationUnits + assetsRes.antitrustUnits, pgRes.waterMitigation);
   events.push(...shock.events);
@@ -205,13 +212,16 @@ export function resolveRound(prevWorld: WorldState, decisionList: FirmDecision[]
     if (m.beta_b_delta) betaBModDelta.set(m.segment, (betaBModDelta.get(m.segment) ?? 0) + m.beta_b_delta);
   }
 
-  // Step 6: unit cost per firm (supply-share + shock multipliers).
+  // Step 6: unit cost per firm (supply-share + shock multipliers). The build-up is kept from
+  // THIS call so the diagnostic rows are the factors that produced the cost actually charged.
+  const costBuildupByFirm = new Map<FirmId, CostBuildup>();
   for (const f of w.firms) {
     if (f.status !== "active") continue;
     // Supply-share agreements + integrated upstream assets both cut the input bill.
     const costReduction = Math.min(0.5, (agEff.unitCostReduction.get(f.id) ?? 0) + verticalCostReduction(f, c, round));
-    const { unitCost } = computeUnitCost(f, c, costReduction, shock.perFirm.get(f.id)?.cost_multiplier ?? 1);
+    const { unitCost, buildup } = computeUnitCost(f, c, costReduction, shock.perFirm.get(f.id)?.cost_multiplier ?? 1);
     f.unit_cost = unitCost;
+    costBuildupByFirm.set(f.id, buildup);
   }
 
   // Step 6.5: production. Effective capacity (after shocks + coordination restraint)
@@ -452,11 +462,16 @@ export function resolveRound(prevWorld: WorldState, decisionList: FirmDecision[]
       };
     }
     const sc = scores.get(id)!;
-    const cb = computeUnitCost(f, c, 0, 1).buildup; // structural buildup (pre-shock) for diagnostics
+    // The build-up that produced this round's unit_cost. It used to be recomputed HERE, after
+    // the round had moved cumulative output, process, quality and trust — so the rows described
+    // next quarter's cost structure, never multiplied out to `unit_cost`, and dropped the
+    // vertical-integration saving from supply_share. (An inactive firm has none; recompute.)
+    const cb = costBuildupByFirm.get(id) ?? computeUnitCost(f, c, 0, 1).buildup;
     return {
       firm_id: id, round, status: f.status, segments,
       unit_cost: f.unit_cost,
-      cost_buildup: { ...cb, shock: shock.perFirm.get(id)?.cost_multiplier ?? 1, supply_share: 1 - (agEff.unitCostReduction.get(id) ?? 0) },
+      cost_buildup: cb,
+      effective_cap: effectiveCap(id),
       pnl: fin.pnl, balance_sheet: fin.balance_sheet, cash_flow: fin.cash_flow, cost_of_capital: fin.cost_of_capital,
       state: { cash: f.cash, cap: f.cap, Q: f.Q, B: f.B, T_emp: f.T_emp, T_inv: f.T_inv, T_gov: f.T_gov, process: f.process, cum_output: f.cum_output, debt: f.debt, equity: fin.balance_sheet.equity, inventory_units: f.inventory_units, reputation: f.reputation ?? 0, water_efficiency: f.water_efficiency ?? 0, rnd_progress: f.rnd_progress ?? 0 },
       scorecard_raw: sc.raw, scorecard_norm: sc.norm, scorecard_cumulative: sc.cumulative,
@@ -475,8 +490,12 @@ export function resolveRound(prevWorld: WorldState, decisionList: FirmDecision[]
 
   // Demand reported next to units sold is the total across every open market (home only
   // when geography is off) — see segmentDemandTotals. Note w.round is still this round here.
+  // It is the EFFECTIVE demand firms actually sold into (demand.ts `Deff`): the same shock ×
+  // public-good multiplier the allocation used. Reporting the raw stock instead made sales
+  // exceed published demand whenever that multiplier ran above 1 (the regional-marketing
+  // fund, a planted craft_wave) and overstated demand through every negative shock.
   const demandTotals = segmentDemandTotals({ ...w, round }, c);
-  const market = w.segments.map((s) => ({ segment: s.id, D: demandTotals.get(s.id) ?? s.D, total_q: segTotals.get(s.id) ?? 0, active: s.active }));
+  const market = w.segments.map((s) => ({ segment: s.id, D: (demandTotals.get(s.id) ?? s.D) * mods.segmentDemandMultiplier(s.id), total_q: segTotals.get(s.id) ?? 0, active: s.active }));
 
   // Grow active-segment demand for the next round; advance the clock.
   for (const sw of w.segments) {

@@ -229,6 +229,23 @@ const RULES: Rule[] = [
     kind: "shock", title: "An alliance breaks",
     body: (_r, m) => `${m[1]} walked away from its ${m[2]} agreement.`,
   },
+  // Lost bids. The engine emits one of these per losing house and the line names no firm,
+  // so a contested hire used to print the same sentence six times; parseEvents collapses them.
+  {
+    test: /^CANDIDATE LOST:\s*(.+?)\s+took a rival's otherwise-equal offer on a tie-break/i,
+    kind: "info", title: "Bidding war, lost on a tie-break",
+    body: (_r, m) => `${m[1]} took a rival's otherwise-equal offer. A signing bonus would have won them outright.`,
+  },
+  {
+    test: /^CANDIDATE LOST:\s*(.+)$/i,
+    kind: "info", title: "Bidding war lost",
+    body: (_r, m) => m[1].charAt(0).toUpperCase() + m[1].slice(1) + (/[.!?]$/.test(m[1]) ? "" : "."),
+  },
+  {
+    test: /^PARCEL LOST:\s*(.+?)\s+lost a contested parcel in\s+(.+?)\s+on a tie-break/i,
+    kind: "info", title: "Contested parcel lost",
+    body: (_r, m) => `${m[1]} lost a contested parcel in ${m[2]} on a tie-break. Neither side offered a bid premium; a premium wins it outright.`,
+  },
   // Shocks (no firm named). Parse the structured "SHOCK fired: <type> (<kind>, mag
   // <m>, <signaling>)" / "SHOCK live-triggered: <type>" forms into prose; the raw
   // type/kind/magnitude ids must never reach the player.
@@ -254,7 +271,7 @@ function classify(raw: string): { kind: EventKind; title: string; body: string }
       return { kind: r.kind, title, body: r.body ? r.body(raw, m) : stripPrefix(raw) };
     }
   }
-  return { kind: "info", title: "Dispatch", body: stripPrefix(raw) };
+  return { kind: "info", title: "", body: stripPrefix(raw) };
 }
 
 /** Whole-word/phrase match so a short brewery name ("ya") doesn't false-match
@@ -265,20 +282,84 @@ function mentionsName(text: string, name: string): boolean {
   return new RegExp(`(^|[^\\p{L}])${esc}([^\\p{L}]|$)`, "u").test(text);
 }
 
+/** "Copper & Cask breaks ground" → "You break ground". The engine writes a firm's own moves
+ *  in the third-person singular; swapping the name for "You" leaves the verb conjugated for
+ *  "it" ("You breaks ground", "You brings on Hana B."). Re-conjugate the first word. */
+const IRREGULAR_2P: Record<string, string> = { is: "are", was: "were", has: "have", does: "do", goes: "go", focuses: "focus" };
+function secondPerson(rest: string): string {
+  return rest.replace(/^(\s+)([A-Za-z]+)/, (_all, sp: string, w: string) => {
+    const lw = w.toLowerCase();
+    if (IRREGULAR_2P[lw]) return sp + IRREGULAR_2P[lw];
+    if (!lw.endsWith("s") || /(ss|us|is)$/.test(lw)) return sp + w; // past tense, "was" handled above, nouns like "bonus"
+    if (lw.endsWith("ies")) return sp + w.slice(0, -3) + "y";
+    if (/(sses|shes|ches|xes|zes)$/.test(lw)) return sp + w.slice(0, -2);
+    return sp + w.slice(0, -1);
+  });
+}
+
+/** Routine operating moves every house makes most rounds. One line per event made round 1 a
+ *  wall of near-identical notices; these roll up into ONE line per house so the column reads
+ *  at a glance ("who staffed up, who built"). Written in the past tense, which also reads
+ *  correctly for "You". */
+const ROLLUPS: { test: RegExp; verb: "hired" | "built"; what: (m: RegExpMatchArray) => string }[] = [
+  // "HIRE: <house> brings on Hana B., a head brewer" → "Hana B. (head brewer)"; the labor-market
+  // form "brings on a head brewer" stays as written.
+  { test: /^HIRE:\s*(.+?)\s+brings on\s+(.+)$/i, verb: "hired", what: (m) => m[2].replace(/^(.+?),\s+an?\s+(.+)$/i, "$1 ($2)") },
+  { test: /^FACILITY BUILT:\s*(.+?)\s+breaks ground on\s+(.+)$/i, verb: "built", what: (m) => m[2] },
+];
+const listOf = (xs: string[]): string => (xs.length <= 1 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);
+
 /**
  * Parse engine event strings into framed dispatches. `youName` (the player's
  * brewery name, already substituted into the strings upstream) flags which
  * dispatches actually involve the player and rewrites a leading self-reference
  * to "You" so the player's own moves read in first person.
+ *
+ * Two passes keep the page glanceable: routine hires and builds roll up into one line per
+ * house, and any dispatches that still read identically collapse into one with a `count`.
  */
 export function parseEvents(events: string[], youName = ""): GameEvent[] {
-  return events.map((raw, i) => {
+  const out: GameEvent[] = [];
+  const houses = new Map<string, { hired: string[]; built: string[]; at: number }>();
+
+  events.forEach((raw, i) => {
+    for (const r of ROLLUPS) {
+      const m = raw.match(r.test);
+      if (!m) continue;
+      const h = houses.get(m[1]) ?? { hired: [], built: [], at: out.length };
+      if (!houses.has(m[1])) { houses.set(m[1], h); out.push({ id: `house:${m[1]}`, kind: "info", title: m[1], body: "" }); }
+      h[r.verb].push(r.what(m));
+      return;
+    }
     const { kind, title, body } = classify(raw);
     const mine = mentionsName(raw, youName);
     // "Copper & Cask ran …" → "You ran …" when it's the player's own dispatch.
     const text = mine && youName && body.startsWith(youName + " ")
-      ? "You" + body.slice(youName.length)
+      ? "You" + secondPerson(body.slice(youName.length))
       : body;
-    return { id: `${i}:${raw}`, kind, title, body: text, mine };
+    out.push({ id: `${i}:${raw}`, kind, title, body: text, mine });
   });
+
+  for (const [name, h] of houses) {
+    const mine = !!youName && name === youName;
+    const parts = [h.hired.length ? `brought on ${listOf(h.hired)}` : "", h.built.length ? `broke ground on ${listOf(h.built)}` : ""].filter(Boolean);
+    const sentence = parts.join("; ") + ".";
+    out[h.at] = { ...out[h.at], title: mine ? "Your house" : name, body: mine ? `You ${sentence}` : sentence.charAt(0).toUpperCase() + sentence.slice(1), mine };
+  }
+
+  // Collapse dispatches that read identically (a lost tie-break prints once per losing house).
+  const seen = new Map<string, GameEvent>();
+  for (const e of out) {
+    const key = `${e.kind}|${e.title}|${String(e.body)}`;
+    const first = seen.get(key);
+    if (first) {
+      first.count = (first.count ?? 1) + 1;
+      // Keep the "you" flag if ANY copy was the player's. It used to be inherited from
+      // whichever copy happened to come first, so a rival's identically-worded dispatch
+      // arriving earlier stripped the copper rail off the player's own line and dropped it
+      // from the Dispatch count badge.
+      first.mine = first.mine || e.mine;
+    } else seen.set(key, e);
+  }
+  return [...seen.values()];
 }

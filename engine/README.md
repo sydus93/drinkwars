@@ -73,32 +73,35 @@ test/engine.test.ts   Unit tests.
 
 ## Balance status (24-seed baseline + adaptive cross-check)
 
-Run `npm run balance` for the live report. As of the last tuning pass:
+Run `npm run balance` for the live report — it is the source of truth and this table
+goes stale. Last refreshed 2026-09-20 (DW-056), base config:
 
 | Gate (§16) | Fixed sweep | Adaptive cross-check |
 |---|---|---|
 | Finance invariants (§7.2) | PASS — held every firm-round | — |
-| Runaway leader | PASS — HHI ≈ 0.20 | PASS — HHI ≈ 0.16 |
-| Memoryless flailing | PASS — autocorr ≈ 0.82 | — |
+| Runaway leader | PASS — HHI 0.158 | PASS — HHI 0.171 |
+| Memoryless flailing | PASS — autocorr 0.711 | — |
 | First-round lottery | PASS — shocks mid/late | — |
 | Degenerate cooperation | PASS — antitrust fires on the cartel | — |
-| Death spiral / no agency | WARN — bankruptcy ≈ 34%; 0 comebacks among *fixed* archetypes (expected — they never reposition; validate with adaptive play) | bankruptcy ≈ 1.3/8 (best-responders survive) |
-| Thin-segment monopoly | PASS — no segment > 70% sustained | WARN — frontier ≈ 83% (quality agent owns the new category) |
-| **Dominant strategy** | **FAIL — niche focus wins, split niche_specialist 67% / differentiator 33%** | **FAIL — `ad_quality` wins 100%** |
+| Death spiral / no agency | WARN — bankruptcy 5%; 0/96 behind-at-midpoint firms recovered (expected of *fixed* archetypes — they never reposition) | — |
+| Thin-segment monopoly | PASS — no segment > 70% sustained | **FAIL — 87% in `frontier`** |
+| Dominant strategy | WARN — balanced 46% / differentiator 38% / brand_builder 8% / niche_specialist 8% | **FAIL — `ad_quality` 79%, `ad_brand` 21%** |
 
-**Open question for review (the one FAIL).** Demand-shifting intangible investment
-(Q/B) is the strongest lever: whichever archetype maxes the highest-β intangible
-wins. The engine responds correctly and legibly to every knob — moving `beta_q`/
-`beta_b` shifts the dominant lever exactly as expected — so this is **config parity**,
-not an engine defect. Tuning improved it a lot (the fixed sweep's single-archetype
-dominance fell from 100% to a healthy 67/33 split with a near-tied top of table), but
-a quality lean still edges the field, and the adaptive best-responders make it 100%
-because near-deterministic agents sweep on a tiny payoff edge. Driving win-share below
-60% needs near-exact strategy parity that real (noisy, human) play loosens anyway.
-This is exactly the iterative work the instructor config editor (app-spec §7.4) and
-the live playtest (§9 step 8) exist for. Levers: bring `beta_q`/`beta_b` to parity and
-down; raise price elasticity/volume; sharpen differential shock exposure for the
-unprepared (premium leans skip resilience).
+**Verdict: 6 PASS / 2 WARN / 0 FAIL on the fixed sweep; the two FAILs are both in the
+adaptive cross-check.** Under the classroom preset
+(`DW_MODULES=laborMarket,sustainability`) the fixed sweep is 7 PASS / 1 WARN / 0 FAIL.
+
+**The open question.** Demand-shifting intangible investment (Q/B) is the strongest
+lever: whichever agent maxes the highest-β intangible wins. The engine responds
+correctly and legibly to every knob — moving `beta_q`/`beta_b` shifts the dominant lever
+exactly as expected — so this is **config parity**, not an engine defect. The fixed sweep
+has come a long way (single-archetype dominance fell from 100% to a 46/38 top-two split
+with `balanced` and `differentiator` nearly tied), but the adaptive best-responders still
+converge on quality, because near-deterministic agents sweep on a tiny payoff edge that
+real, noisy, human play loosens. Driving adaptive win-share below 60% needs near-exact
+strategy parity. Levers: bring `beta_q`/`beta_b` to parity and down; raise price
+elasticity/volume; sharpen differential shock exposure for the unprepared (premium leans
+skip resilience).
 
 > The adaptive cross-check (`harness/adaptive.ts`) is a best-response agent that
 > reprices, reallocates capacity by forecasted profit, and reads shock signals. It

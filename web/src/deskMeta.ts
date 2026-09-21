@@ -106,7 +106,7 @@ export function cockpitSignals(desk: CockpitDesk, view: GameView): Signal[] {
       const { coverage, leverage, credit_rationed } = r.cost_of_capital;
       const covTone: Tone = coverage >= 3 ? "good" : coverage >= 1.5 ? "watch" : "risk";
       out.push({ label: "Interest coverage", value: `${coverage.toFixed(1)}×`, tone: covTone,
-        read: covTone === "risk" ? "Thin — a bad round or a rate shock can trip the credit cliff. De-lever or hold cash." : "EBIT ÷ interest. Comfortable room to service debt." });
+        read: covTone === "risk" ? "Thin. Under 1.5× the bank moves you onto the penalty grid and the spread widens the further cover falls. De-lever or earn back the cover." : "EBIT ÷ interest. Comfortable room to service debt." });
       const levMed = fieldMed(view, (f) => f.leverage);
       out.push({ label: "Leverage vs field", value: `${leverage.toFixed(2)}×`, tone: cmpTone(leverage, levMed, false, 0.2),
         read: `Field runs ≈${levMed.toFixed(2)}×. ${leverage > levMed * 1.2 ? "You're the stretched one at the table — borrowing gets pricier." : "You have borrowing headroom the field doesn't."}` });
@@ -221,7 +221,24 @@ export function cockpitMetrics(desk: CockpitDesk, view: GameView): Metric[] {
     const util = view.own.cap > 0 ? sold / view.own.cap : 0;
     if (r) out.push({ label: "Utilization", value: fmt.pct(util), tone: util >= 0.95 ? "watch" : util >= 0.7 ? "good" : "risk", hint: "Units sold ÷ capacity. Near 100% = lost sales; low = idle upkeep." });
     out.push({ label: "Unit cost", value: fmt.price(view.own.unit_cost), field: `field ${fmt.price(fieldMed(view, (f) => f.unitCost))}`, tone: cmpTone(view.own.unit_cost, fieldMed(view, (f) => f.unitCost), false, 0.08), hint: "All-in cost per drink. Learning + process + scale drive it down." });
-    if (r) { const cb = r.cost_buildup; out.push({ label: "Learning + process", value: `−${(cb.learning + cb.process).toFixed(2)}`, tone: "good", hint: "Cost taken out by experience and process investment — path-dependent, compounds." }); }
+    // learning and process are MULTIPLIERS on c_base (1.00 = no saving yet), so adding them and
+    // printing the sum as a negative was arithmetic nonsense — a firm with no experience and no
+    // process investment read "−2.00". The honest figure is the $/drink the two take out of the
+    // cost actually charged: unit_cost / (learning·process) is what the drink would have cost
+    // without them, so the difference is the saving. (DW-056)
+    if (r) {
+      const cb = r.cost_buildup;
+      const combined = cb.learning * cb.process;
+      const saved = combined > 0 ? r.unit_cost / combined - r.unit_cost : 0;
+      out.push({
+        label: "Learning + process",
+        value: saved > 0.005 ? `−${fmt.price(saved)}` : "—",
+        tone: saved > 0.005 ? "good" : "neutral",
+        hint: saved > 0.005
+          ? `Experience and process investment take ${fmt.price(saved)} out of every drink (${fmt.pct(1 - combined)} off the recipe cost) — path-dependent, compounds.`
+          : "Nothing yet. Experience accumulates with every drink brewed; process investment compounds on top of it.",
+      });
+    }
     out.push({ label: "Capacity", value: fmt.int(view.own.cap), field: `field ${fmt.int(fieldMed(view, (f) => f.cap))}`, tone: "neutral", hint: "Your ceiling on units this round. Builds take a round to come online." });
     if (view.inventoryEnabled && r?.inventory) out.push({ label: "Inventory turns", value: `${r.inventory.turnover.toFixed(1)}×`, tone: r.inventory.turnover < 1 ? "watch" : "good", hint: "Higher = less cash frozen in stock and less spoilage." });
   }

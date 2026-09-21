@@ -32,7 +32,7 @@ Context is craft beverage. The "designed-for-not-built" multi-industry convergen
 | Segment | Referent | Coefficient tilt |
 |---|---|---|
 | Mass | Approachable lagers / light | Price-sensitive, high volume (high `βp`, low `βq`). |
-| Niche | Craft premium — IPAs, specialty | Quality- and brand-sensitive (low `βp`, high `βq`, high `βb`). |
+| Niche | Craft premium — IPAs, specialty | Quality- and brand-sensitive (high `βq`, high `βb`) — and the *most* price-sensitive segment of the three (`βp` 0.40 vs mass's 0.37). Premium buyers have the most substitutes; the premium is earned on quality, not tolerated on price. |
 | Frontier (emergent) | Non-alcoholic / functional | Opens at the timed emergence event ("a new category takes off"); seeds the v2 convergence path. |
 
 **Shocks (§9):**
@@ -178,7 +178,7 @@ Within-segment share against an outside option `U0_s`:
 σ_{i,s} = exp(U_{i,s}) / ( Σ_j exp(U_{j,s}) + exp(U0_s) )
 ```
 
-Segment-specific coefficient vectors (`βp_s, βq_s, βb_s`) define positioning: a price-sensitive mass segment (high `βp`, low `βq`), a quality-sensitive niche (low `βp`, high `βq`), and an emergent frontier segment (§10.3). This delivers focus-vs-breadth and defensible-niche-survival strategies with no new machinery.
+Segment-specific coefficient vectors (`βp_s, βq_s, βb_s`) define positioning: a volume mass segment (high `βp`, low `βq`), a quality-sensitive niche (high `βq`/`βb`, and `βp` marginally higher still than mass's — see §10.1), and an emergent frontier segment (§10.3). This delivers focus-vs-breadth and defensible-niche-survival strategies with no new machinery.
 
 The outside option is the collective-feedback mechanism: when the whole industry over-prices or under-invests, `Σ exp(U)` falls relative to `exp(U0)`, total served demand contracts, and the entire industry is punished. This is the deliberate-vs-emergent lesson built into the math.
 

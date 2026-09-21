@@ -136,3 +136,55 @@ test("non-submission is zero-filled, not a crash", () => {
   assert.equal(out.result.firm_results.length, c.game.n_firms);
   assert.ok(out.result.firm_results.every((f) => Number.isFinite(f.pnl.net_income)));
 });
+
+test("cost build-up rows multiply out to the unit cost actually charged", () => {
+  // Regression (2026-09-18): the diagnostic build-up was recomputed at the END of the round,
+  // after cumulative output / process / quality / trust had moved, so its rows described next
+  // quarter and never reproduced `unit_cost` (round 1 showed an experience-curve saving on a
+  // firm with no experience yet). The panel a student reads has to foot.
+  const c = loadConfig();
+  let w = initGame(c);
+  const provider = makeProvider(BASELINE_ASSIGNMENT);
+  for (let r = 0; r < 4; r++) {
+    const out = resolveRound(w, provider(w, c), c);
+    for (const f of out.result.firm_results) {
+      if (f.status !== "active") continue;
+      const b = f.cost_buildup;
+      const product = b.c_base * b.learning * b.process * b.quality_premium * b.location / b.productivity * b.supply_share * b.shock;
+      assert.ok(Math.abs(product - f.unit_cost) < 1e-9, `round ${r} ${f.firm_id}: rows give ${product.toFixed(4)}, charged ${f.unit_cost.toFixed(4)}`);
+    }
+    w = out.world;
+  }
+  const first = resolveRound(initGame(c), provider(initGame(c), c), c).result.firm_results[0];
+  assert.equal(first.cost_buildup.learning, 1, "no experience-curve saving before a single drink has been brewed");
+});
+
+test("a segment that emerges mid-game appears in the firm record for the round it opens", () => {
+  // Regression (2026-09-20): `activeSegmentIds` was captured at the top of the round, before
+  // Step 5 opens a newly-emerging segment. Demand then resolved over the post-emergence
+  // segment list, so the new category traded — but the per-firm `segments` record looped
+  // over the stale list and dropped it for exactly one round. The Statements page shows that
+  // record as a category table directly under the P&L, where the gap reads as missing money.
+  const c = loadConfig();
+  let w = initGame(c);
+  const provider = makeProvider(BASELINE_ASSIGNMENT);
+  const frontier = c.segments.find((s) => s.emerge_round !== null);
+  assert.ok(frontier, "config has a late-emerging segment to test");
+  let sawEmergence = false;
+  for (let r = 0; r <= (frontier!.emerge_round ?? 0) + 1; r++) {
+    const out = resolveRound(w, provider(w, c), c);
+    // The round the market row FIRST reports it open is the round the old code dropped it.
+    // Nobody has to have sold there: every active segment is meant to get a row, and the bug
+    // was a missing key, not a zero.
+    if (out.result.market.some((m) => m.segment === frontier!.id && m.active)) {
+      sawEmergence = true;
+      for (const f of out.result.firm_results) {
+        if (f.status !== "active") continue;
+        assert.ok(frontier!.id in f.segments, `round ${r}: "${frontier!.id}" is open but ${f.firm_id}'s record omits it`);
+      }
+      break;
+    }
+    w = out.world;
+  }
+  assert.ok(sawEmergence, "the late segment never opened — test never exercised the fix");
+});

@@ -122,12 +122,19 @@ export const defaultModules: ModulesConfig = {
     // over-builder out-earned its disciplined twin by ~$1M (measured, 8 seeds). Domestic
     // expansion is now worth ~+60% of home, exports ~+50% more once they open — enough to
     // make "go regional/global" a real strategy, small enough that capacity can be stranded.
+    // demand_growth is PER ROUND and compounds (geography.ts). These four were still carrying
+    // their annual-era magnitudes: DW-042 rescaled the segment growth rates for exactly this
+    // reason ("the old 8%/yr encoded the 2010s craft boom; BA 2024-25 has craft volume flat to
+    // declining") and edited these same lines for demand_mult without revisiting growth. At
+    // 0.03-0.06/qtr they implied +12.6%/yr heartland to +26.2%/yr Asia — Asia compounding 2.54x
+    // over a 16-round game, on top of segment growth. Rescaled ÷4 (DW-056) to the annual story
+    // the rest of the config tells: +3% / -2% / +4% / +6% a year.
     markets: [
       { id: "home", label: "Home region", kind: "home", population: 180_000, demand_mult: 1.0, beta_p_mult: 1.0, beta_q_mult: 1.0, beta_b_mult: 1.0, brand_transfer: 1.0, entry_cost: 0, distribution_cost_per_unit: 0, tariff_rate: 0, fx_volatility: 0, lots: SITE_LOTS, geo: [-105.3, 39.7], demand_growth: 0 },
-      { id: "heartland", label: "Heartland", kind: "domestic", population: 235_000, demand_mult: 0.35, beta_p_mult: 1.3, beta_q_mult: 0.7, beta_b_mult: 0.8, brand_transfer: 0.7, entry_cost: 80_000, distribution_cost_per_unit: 0.4, tariff_rate: 0, fx_volatility: 0, lots: SITE_LOTS, geo: [-92.5, 41.6], demand_growth: 0.03 },
-      { id: "coastal", label: "Coastal cities", kind: "domestic", population: 135_000, demand_mult: 0.25, beta_p_mult: 0.7, beta_q_mult: 1.3, beta_b_mult: 1.15, brand_transfer: 0.7, entry_cost: 120_000, distribution_cost_per_unit: 0.5, tariff_rate: 0, fx_volatility: 0, lots: SITE_LOTS, geo: [-74.0, 40.6], demand_growth: -0.02 },
-      { id: "export_eu", label: "European export", kind: "export", population: 160_000, demand_mult: 0.2, beta_p_mult: 0.8, beta_q_mult: 1.2, beta_b_mult: 1.1, brand_transfer: 0.4, entry_cost: 160_000, distribution_cost_per_unit: 0.6, tariff_rate: 0.12, fx_volatility: 0.05, lots: SITE_LOTS, geo: [-0.1, 51.5], demand_growth: 0.04 },
-      { id: "export_asia", label: "Asia-Pacific export", kind: "export", population: 215_000, demand_mult: 0.3, beta_p_mult: 1.1, beta_q_mult: 1.0, beta_b_mult: 1.2, brand_transfer: 0.4, entry_cost: 180_000, distribution_cost_per_unit: 0.7, tariff_rate: 0.08, fx_volatility: 0.08, lots: SITE_LOTS, geo: [121.5, 31.2], demand_growth: 0.06 },
+      { id: "heartland", label: "Heartland", kind: "domestic", population: 235_000, demand_mult: 0.35, beta_p_mult: 1.3, beta_q_mult: 0.7, beta_b_mult: 0.8, brand_transfer: 0.7, entry_cost: 80_000, distribution_cost_per_unit: 0.4, tariff_rate: 0, fx_volatility: 0, lots: SITE_LOTS, geo: [-92.5, 41.6], demand_growth: 0.0075 },
+      { id: "coastal", label: "Coastal cities", kind: "domestic", population: 135_000, demand_mult: 0.25, beta_p_mult: 0.7, beta_q_mult: 1.3, beta_b_mult: 1.15, brand_transfer: 0.7, entry_cost: 120_000, distribution_cost_per_unit: 0.5, tariff_rate: 0, fx_volatility: 0, lots: SITE_LOTS, geo: [-74.0, 40.6], demand_growth: -0.005 },
+      { id: "export_eu", label: "European export", kind: "export", population: 160_000, demand_mult: 0.2, beta_p_mult: 0.8, beta_q_mult: 1.2, beta_b_mult: 1.1, brand_transfer: 0.4, entry_cost: 160_000, distribution_cost_per_unit: 0.6, tariff_rate: 0.12, fx_volatility: 0.05, lots: SITE_LOTS, geo: [-0.1, 51.5], demand_growth: 0.01 },
+      { id: "export_asia", label: "Asia-Pacific export", kind: "export", population: 215_000, demand_mult: 0.3, beta_p_mult: 1.1, beta_q_mult: 1.0, beta_b_mult: 1.2, brand_transfer: 0.4, entry_cost: 180_000, distribution_cost_per_unit: 0.7, tariff_rate: 0.08, fx_volatility: 0.08, lots: SITE_LOTS, geo: [121.5, 31.2], demand_growth: 0.015 },
     ],
     // Phase 3: per-unit, per-geo-distance shipping when you sell far from where you produce.
     // Domestic lanes are cheap (~0.05/u); home→Asia is steep (~0.9/u) — a reason to PRODUCE there.
@@ -174,7 +181,7 @@ export const defaultModules: ModulesConfig = {
   // with play-test data, not guessed. Pre-modules games (no block) run the legacy
   // working-capital-zero path. See engine/inventory.ts.
   inventory: { enabled: false, spoilage_rate: 0.1, max_run_rate: 1.0, holding_cost_per_unit: 0 },
-  reputation: { enabled: false, gain_honor: 0.6, loss_defect: 4, depreciation: 0.05, halfsat: 6, spread_reduction_max: 0.02 },
+  reputation: { enabled: false, gain_honor: 0.6, loss_defect: 4, depreciation: 0.05, halfsat: 6, spread_reduction_max: 0.004 },
   // MOD-B11 — named physical capacity assets. OFF by default (additive: no facilities
   // ⇒ identical to the pre-module game). Capacity contribution adds to effective cap;
   // build cost capitalizes into PP&E; fixed cost + maintenance are opex. Tunable with

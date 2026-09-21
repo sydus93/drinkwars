@@ -78,8 +78,12 @@ export const defaultConfig: Config = {
     {
       // Niche — craft premium (IPAs, specialty): quality/brand-sensitive.
       // U0/βp raised and βq trimmed so niche is a real contest, not a safe rent.
-      // βp at 0.3 (still < mass's 0.33) makes monopoly pricing cost real share, so
-      // premium focus is a strong play, not a free lunch.
+      // NOTE the direction, because it is counter-intuitive and the spec used to get it
+      // wrong: βp 0.40 is the HIGHEST in the game, above mass's 0.37. Craft-premium buyers
+      // punish a price rise harder than lager buyers do — they have the most substitutes and
+      // the most attention. What makes niche premium is βq/βb (0.16 vs mass's 0.05), not
+      // price tolerance. A differentiation play earns its margin by being genuinely better,
+      // not by charging more for the same drink.
       id: "niche",
       alpha: 2.5,
       beta_p: 0.4,
@@ -175,17 +179,60 @@ export const defaultConfig: Config = {
   },
 
   finance: {
-    // Quarterly rates (round = quarter). Base borrowing ≈ 2.5%/qtr ≈ 10% APR —
-    // benchmark SBA 7(a) 9–11.5% APR (2025–26). Leverage/coverage penalties still
-    // push a stretched firm's rate well past 20% APR.
+    // Quarterly rates (round = quarter). Base borrowing ≈ 2.5%/qtr ≈ 10.4% APR —
+    // benchmark SBA 7(a) 9–11.5% APR (2025–26), and the simulated median now lands at 10.7%.
+    // The three pricing terms below were retuned together in DW-056 (2026-09-20); each had
+    // kept its annual-era magnitude through DW-029's year→quarter change, and because two of
+    // them SUBTRACT they had quietly made credit free for half the field. They are deliberately
+    // ordered by force: covenant breach (0 → 5%/qtr) > leverage (0 → 1.5%/qtr across the
+    // choosable range) > investor relations (≈ ±0.6%/qtr), with min_spread under all of it.
+    // A firm at the 3× leverage cap AND in full breach pays ≈41% APR; that is the ceiling.
     r_f: 0.015,
     base_spread: 0.01,
-    spread_leverage_k: 0.05,
+    min_spread: 0.005, // best-case 8.2% APR — a secured equipment loan to a trusted borrower
+    // Leverage pricing grid (retuned 2026-09-20, DW-056). Like coverage_penalty_spread
+    // below, this coefficient was written when a round was a YEAR and DW-029 never
+    // rescaled it: at 0.05/qtr each extra turn of leverage added ~21.6 points of APR, so
+    // the 3.0× borrowing cap priced at 60.2% APR and the 10× clamp (equity wiped out) at
+    // 373% — 458% with a covenant breach on top. The harness never caught it because the
+    // archetype bots' debt draws are hardcoded constants and the adaptive agents never
+    // borrow at all, so simulated leverage sits at 0.06× and the term is dead code in a
+    // sweep. Students are not bots; a finance major who levers to 2× would have met a
+    // 33.5% APR. Now anchored where a firm can actually choose to sit: nothing below
+    // leverage_ref, 13.6% APR at 2×, 17.0% at the 3.0× max_leverage cap (small-business
+    // alternative-lending territory), 42.6% at the 10× clamp. The span over the choosable
+    // range (2 × 0.0075 = 0.015) is deliberately ~30% of the covenant penalty: choosing
+    // leverage should cost less than failing to cover your interest.
+    spread_leverage_k: 0.0075,
     leverage_ref: 1.0,
-    spread_tinv_k: 0.0015,
+    // Investor-relations discount (retuned 2026-09-20, DW-056). Same unrescaled-annual class
+    // as the two coefficients above, and the most damaging of the three because it is
+    // SUBTRACTED: at 0.0015/qtr a firm at T_inv 30 earned a 3.00%/qtr discount against a
+    // base_spread of 1.00%/qtr, so the spread clamped to zero in 48.6% of firm-rounds under
+    // the class preset and half the field borrowed at the risk-free rate. It also inverted
+    // the leverage grid — T_inv 26 at the 3.0x leverage cap priced at 6.6% APR against 10.4%
+    // for a debt-free firm with neutral investor relations. Now a relationship discount
+    // sized like a real one: ~0.8pp of APR per 10 points of T_inv, spanning roughly 11.1%
+    // APR (nobody trusts you) to 8.0% APR (everybody does) across the observed range, and
+    // never enough to erase base_spread on its own. min_spread backstops the stack.
+    spread_tinv_k: 0.0002,
     tinv_ref: 10,
     coverage_threshold: 1.5,
-    coverage_penalty_spread: 0.1,
+    // Covenant pricing (retuned 2026-09-18). This coefficient and spread_leverage_k below were
+    // written when a round was a YEAR; DW-029 made the round a fiscal quarter and rescaled r_f
+    // (0.05→0.015) and base_spread (0.02→0.01) but not these, so a breach repriced a healthy
+    // 10.4% APR loan to 60.2% APR — a merchant cash advance, not a bank, and it caught 67% of
+    // firms in a 5-round classroom sprint. Now a PRICING GRID, the instrument real credit
+    // agreements use: the spread widens with how thin coverage actually is, from nothing at the
+    // threshold to the full 0.05/qtr at zero operating income (10.4% → 33.5% APR). A firm that
+    // misses by a hair pays a hair; a firm earning nothing pays distressed non-bank rates.
+    // Failure stays reachable. Reproduce with the CLASS preset, which is what gets played:
+    //   DW_MODULES=laborMarket,sustainability npm run balance    -> 7 PASS / 1 WARN / 0 FAIL
+    //   DW_MODULES=laborMarket,sustainability npm run calibrate  -> exit 2.1%/yr PASS, survival 91.7% PASS
+    // Pure base is a gentler economy and still WARNs on exit rate (0.7%) — that predates this
+    // change and is about how little the harness bots risk, not about credit pricing.
+    coverage_penalty_spread: 0.05,
+    coverage_penalty_mode: "graduated",
     max_leverage: 3.0,
     equity_issue_cost_base: 0.05,
     equity_issue_cost_tinv_k: 0.002,
@@ -403,5 +450,32 @@ export const defaultConfig: Config = {
       intangible_index: { weak: 18, sound: 32, strong: 47 },
       stakeholder_mean: { weak: 10.5, sound: 18, strong: 28 },
     },
+    // Round-indexed schedule (DW-057, measured 2026-09-21 on the classroom preset:
+    // `DW_MODULES=laborMarket,sustainability DW_BANDS_SCHEDULE=1 npm run bands`).
+    // The flat bands above describe a 16-round steady state, which made four of the five
+    // gauges useless in a short game: over rounds 2-5 every team read "strong" on interest
+    // cover and "sound" on intangibles, nobody could reach "strong" on share, and the MEDIAN
+    // team read "weak" on standing — because the stocks simply have not compounded yet.
+    // Keyed on the round, so one schedule covers the 4-round sprint, an 8-12 round season and
+    // the 16-round tournament without anybody choosing a mode. The first four rounds get a
+    // bucket each: that stretch is both the most volatile (a founding loss in r0, then r1
+    // reaps the capacity r0 paid for) and the one a classroom sprint actually plays.
+    // interest_cover is deliberately absent — it saturates at the coverage cap, so its
+    // empirical cut is noise and the textbook 1.5/3/6 above stays in force at every round.
+    // Round 0 is degenerate for ALL FOUR on purpose (see bandIsMeaningful): the founding
+    // quarter has not differentiated anybody. Measured over 192 firm-rounds it produces three
+    // distinct intangible values and six distinct share values, because every firm starts the
+    // same and its one quarter of investment has not landed yet. A percentile cut on that put
+    // 0% of the field in "weak" against its own P30. The relative reading ("ahead of the
+    // field") still works in round 0; the absolute one cannot, and the UI says so.
+    benchmark_bands_by_round: [
+      { from_round: 0, bands: { roic: { weak: -0.051, sound: -0.051, strong: -0.051 }, segment_share: { weak: 0.239, sound: 0.239, strong: 0.239 }, intangible_index: { weak: 20.6, sound: 20.6, strong: 20.6 }, stakeholder_mean: { weak: 9.000, sound: 9.000, strong: 9.000 } } },
+      { from_round: 1, bands: { roic: { weak: 0.000, sound: 0.125, strong: 0.163 }, segment_share: { weak: 0.198, sound: 0.233, strong: 0.269 }, intangible_index: { weak: 24.6, sound: 25.4, strong: 26.4 }, stakeholder_mean: { weak: 9.591, sound: 11.8, strong: 12.5 } } },
+      { from_round: 2, bands: { roic: { weak: 0.000, sound: 0.038, strong: 0.089 }, segment_share: { weak: 0.174, sound: 0.220, strong: 0.283 }, intangible_index: { weak: 23.2, sound: 26.4, strong: 30.6 }, stakeholder_mean: { weak: 10.1, sound: 13.2, strong: 13.9 } } },
+      { from_round: 3, bands: { roic: { weak: 0.000, sound: 0.065, strong: 0.078 }, segment_share: { weak: 0.171, sound: 0.235, strong: 0.295 }, intangible_index: { weak: 26.2, sound: 30.5, strong: 35.7 }, stakeholder_mean: { weak: 10.6, sound: 15.7, strong: 16.8 } } },
+      { from_round: 4, bands: { roic: { weak: 0.000, sound: 0.038, strong: 0.066 }, segment_share: { weak: 0.142, sound: 0.230, strong: 0.308 }, intangible_index: { weak: 26.7, sound: 33.7, strong: 39.1 }, stakeholder_mean: { weak: 11.0, sound: 18.4, strong: 21.0 } } },
+      { from_round: 6, bands: { roic: { weak: 0.000, sound: 0.019, strong: 0.053 }, segment_share: { weak: 0.116, sound: 0.202, strong: 0.333 }, intangible_index: { weak: 25.3, sound: 34.9, strong: 45.4 }, stakeholder_mean: { weak: 11.8, sound: 23.3, strong: 28.4 } } },
+      { from_round: 10, bands: { roic: { weak: 0.000, sound: 0.024, strong: 0.063 }, segment_share: { weak: 0.100, sound: 0.263, strong: 0.624 }, intangible_index: { weak: 20.6, sound: 41.8, strong: 53.4 }, stakeholder_mean: { weak: 10.3, sound: 29.8, strong: 35.8 } } },
+    ],
   },
 };

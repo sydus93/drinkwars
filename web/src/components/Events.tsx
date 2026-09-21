@@ -22,7 +22,8 @@ export function Events({ events }: { events: GameEvent[] }) {
           <li key={e.id} className="flex gap-2 text-sm">
             <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: KIND_TONE[e.kind] ?? "var(--color-inksoft)" }} />
             <span>
-              <span className="font-semibold text-ink">{e.title}.</span> <span className="text-inksoft">{e.body}</span>
+              {e.title && <><span className="font-semibold text-ink">{e.title}.</span>{" "}</>}<span className="text-inksoft">{e.body}</span>
+              {(e.count ?? 1) > 1 && <span className="ml-1.5 font-mono text-[0.6rem] font-bold text-inksoft">×{e.count}</span>}
             </span>
           </li>
         ))}

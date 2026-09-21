@@ -15,7 +15,7 @@ import { loadConfig } from "../src/config/load.js";
 import { ConfigError } from "../src/config/schema.js";
 import { initGame, resolveRound } from "../src/index.js";
 import { scoreRound, type ScoreSnapshot } from "../src/engine/scoring.js";
-import type { Config, FirmDecision, RoundResult, SegmentId, WorldState } from "../src/types.js";
+import { bandIsMeaningful, bandsForRound, type Config, type FirmDecision, type RoundResult, type SegmentId, type WorldState } from "../src/types.js";
 
 // A plain, deterministic decision for every active firm: mid price, even presence,
 // modest investment — enough to trade every round without any module surface.
@@ -163,5 +163,60 @@ test("gate 6 — benchmark bands are display-only: mutating them changes nothing
     a.map((rr) => rr.firm_results.map((f) => [f.scorecard_cumulative, f.scorecard_norm, f.valuation])),
     b.map((rr) => rr.firm_results.map((f) => [f.scorecard_cumulative, f.scorecard_norm, f.valuation])),
     "bands must never enter the score",
+  );
+});
+
+// ── 7. Round-indexed benchmark bands (DW-057) ────────────────────────────────
+
+test("bands resolve by round, merge over the flat map, and stay display-only", () => {
+  const c = loadConfig();
+  const sched = c.scoring.benchmark_bands_by_round;
+  assert.ok(sched && sched.length > 0, "shipped config carries a band schedule");
+
+  // The bucket boundaries are the contract the UI relies on: the LAST entry at or below the
+  // round wins, never the first match.
+  const r0 = bandsForRound(c.scoring, 0);
+  const r3 = bandsForRound(c.scoring, 3);
+  const r15 = bandsForRound(c.scoring, 15);
+  assert.ok(r3.stakeholder_mean.sound > r0.stakeholder_mean.sound, "standing bar rises off round 0");
+  assert.ok(r15.stakeholder_mean.sound > r3.stakeholder_mean.sound, "and keeps rising into a full season");
+  assert.ok(r15.intangible_index.strong > r3.intangible_index.strong, "so does preparedness");
+
+  // A metric left out of the schedule keeps its flat band at every round — interest_cover's
+  // textbook 1.5/3/6 must survive, since its empirical cut is saturation noise.
+  for (const round of [0, 1, 5, 9, 15]) {
+    assert.deepEqual(
+      bandsForRound(c.scoring, round).interest_cover,
+      c.scoring.benchmark_bands!.interest_cover,
+      `interest_cover stays textbook at round ${round}`,
+    );
+  }
+
+  // Every shipped band is ordered. An inverted one would tier a firm below `weak` as "strong".
+  for (const [i, entry] of sched!.entries()) {
+    for (const [k, b] of Object.entries(entry.bands)) {
+      assert.ok(b.weak <= b.sound && b.sound <= b.strong, `schedule[${i}].${k} ordered (${b.weak}/${b.sound}/${b.strong})`);
+    }
+  }
+
+  // The founding quarter grades nothing: every firm starts identical and its one quarter of
+  // investment has not landed, so the field carries only a handful of distinct values and any
+  // absolute tier would be invented. The relative reading still works there.
+  for (const k of ["roic", "segment_share", "intangible_index", "stakeholder_mean"]) {
+    assert.equal(bandIsMeaningful(r0[k]), false, `${k} must not be graded in the founding quarter`);
+  }
+  // …and every one of them is gradable again as soon as the season is actually running.
+  for (const k of ["roic", "segment_share", "intangible_index", "stakeholder_mean"]) {
+    assert.equal(bandIsMeaningful(r3[k]), true, `${k} must be gradable by round 3`);
+    assert.equal(bandIsMeaningful(r15[k]), true, `${k} must be gradable in a full season`);
+  }
+
+  // Gate §8.6 extends to the schedule: rewriting it must not move a single score.
+  const a = playGame(loadConfig(SHORT));
+  const b = playGame(loadConfig({ ...SHORT, scoring: { benchmark_bands_by_round: [{ from_round: 0, bands: { roic: { weak: -9, sound: 0, strong: 9 } } }] } } as never));
+  assert.deepEqual(
+    a.map((rr) => rr.firm_results.map((f) => [f.scorecard_cumulative, f.scorecard_norm, f.valuation])),
+    b.map((rr) => rr.firm_results.map((f) => [f.scorecard_cumulative, f.scorecard_norm, f.valuation])),
+    "the band schedule must never enter the score either",
   );
 });

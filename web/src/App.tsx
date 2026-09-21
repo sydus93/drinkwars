@@ -11,6 +11,7 @@ import { PlayerHome } from "./screens/PlayerHome.js";
 import { MultiplayerPlay } from "./screens/MultiplayerPlay.js";
 import { Instructor } from "./screens/Instructor.js";
 import { MP_ENABLED, StudentClient } from "./game/multiplayer.js";
+import { ErrorBoundary } from "./components/ErrorBoundary.js";
 
 type Mode = "foolscap" | "sectional";
 
@@ -23,6 +24,7 @@ function ModeToggle() {
   const toggle = () => {
     const next: Mode = dark ? "foolscap" : "sectional";
     document.documentElement.setAttribute("data-mode", next);
+    try { localStorage.setItem("dw-mode", next); } catch { /* private window — the choice just won't persist */ }
     setMode(next);
   };
   return (
@@ -96,7 +98,9 @@ export function App() {
   const [screen, setScreen] = useState<Screen>(() => (student ? "join" : "lobby"));
 
   return (
-    <>
+    // Backstop boundary: keyed on `screen`, so leaving a broken screen clears the error.
+    // The finer-grained one lives around each Review panel in Play.tsx.
+    <ErrorBoundary scope="app" resetKey={screen}>
       {screen === "lobby" && <Lobby onPick={setScreen} />}
       {screen === "solo" && <Solo />}
       {screen === "scenario" && <Scenarios onExit={() => setScreen("lobby")} />}
@@ -114,6 +118,6 @@ export function App() {
         ))}
       {screen === "instructor" && MP_ENABLED && <Instructor onExit={() => setScreen("lobby")} />}
       <ModeToggle />
-    </>
+    </ErrorBoundary>
   );
 }

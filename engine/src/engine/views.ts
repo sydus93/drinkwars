@@ -7,7 +7,7 @@
  * so the engine stays free of presentation strings.
  */
 import type {
-  AgreementTerms, ClauseAction, ClauseCondition, Config, FirmId, FirmRoundResult, FirmState, GovernanceForm, MarketKind, RegulationType, RoundResult, SegmentId, TemplateId, WorldState,
+  AgreementTerms, BalanceSheet, CashFlow, ClauseAction, ClauseCondition, Config, FirmId, FirmRoundResult, FirmState, GovernanceForm, MarketKind, PnL, RegulationType, RoundResult, SegmentId, TemplateId, WorldState,
 } from "../types.js";
 import { activeMarkets, marketDemandScale } from "./geography.js";
 import { firmValuation } from "./finance.js";
@@ -233,6 +233,18 @@ export interface OwnTrendView {
   scoreBridge: { financial: number; market: number; intangible: number; stakeholder: number; terminal: number } | null;
   scored: boolean;
   coverage: number; T_emp: number; T_inv: number; T_gov: number;
+  // Statements & Ratios page (2026-09-18): the viewer's OWN three statements per resolved
+  // quarter, plus the sales detail an analyst reads beside the P&L. The ratio inputs above are
+  // a lossy summary — they cannot split opex from depreciation, carry no PP&E or cash-flow
+  // lines, and nothing per category — so multi-quarter statements need the real thing.
+  // Optional on the wire for two reasons: a view served by an older build lacks them, and so
+  // does any round the viewer did not trade in — `firm_results` only carries firms active at the
+  // START of the round, so a firm that exits at r5 of 16 has no statements for r6…r15 (and a
+  // rebuilt firm leaves a hole in the middle). Consumers must not assume contiguity.
+  pnl?: PnL; balance?: BalanceSheet; cashFlow?: CashFlow;
+  unitCost?: number; // cost to brew one drink this quarter
+  capacity?: number; // tank capacity available to brew into this quarter, facilities included
+  categories?: Record<SegmentId, { price: number; sold: number; wanted: number; revenue: number; share: number }>;
 }
 export interface FieldTrendView { round: number; topScore: number; medianScore: number; totalQ: number; activeFirms: number }
 const median = (xs: number[]): number => { if (!xs.length) return 0; const s = [...xs].sort((a, b) => a - b); const m = Math.floor(s.length / 2); return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
@@ -250,6 +262,11 @@ export function projectHistory(records: { round: number; result: RoundResult }[]
         scoreNorm: ownFr?.scorecard_norm ?? null, scoreRaw: ownFr?.scorecard_raw ?? null,
         scoreBridge: ownFr?.scorecard_bridge ?? null, scored: ownFr?.scored ?? true,
         coverage: ownFr?.cost_of_capital.coverage ?? 0, T_emp: ownFr?.state.T_emp ?? 0, T_inv: ownFr?.state.T_inv ?? 0, T_gov: ownFr?.state.T_gov ?? 0,
+        ...(ownFr ? {
+          pnl: ownFr.pnl, balance: ownFr.balance_sheet, cashFlow: ownFr.cash_flow,
+          unitCost: ownFr.unit_cost, capacity: ownFr.effective_cap ?? ownFr.state.cap,
+          categories: Object.fromEntries(Object.entries(ownFr.segments).map(([id, g]) => [id, { price: g.price, sold: g.q_sold, wanted: g.q_desired, revenue: g.revenue, share: g.share }])),
+        } : {}),
       },
       field: { round: rr.round, topScore: Math.max(...scores, 0), medianScore: median(scores), totalQ: rr.result.market.reduce((a, m) => a + m.total_q, 0), activeFirms: rr.result.firm_results.filter((f) => f.status === "active").length },
     };

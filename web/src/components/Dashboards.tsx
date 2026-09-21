@@ -13,12 +13,13 @@
  */
 import { useId } from "react";
 import type { ReactNode } from "react";
-import type { PnL, CostBuildup, CashFlow, FirmRoundResult } from "drinkwars-engine";
+import type { Config, PnL, CashFlow, FirmRoundResult } from "drinkwars-engine";
 import type { GameView, FirmSnapshot, Standing } from "../game/controller.js";
 import { fmt, MONEY_DISPLAY, STOCK_LABEL } from "../labels.js";
 import { RadialScore, Legend } from "./charts.js";
 import { Sparkline } from "./Sparkline.js";
 import { Tag } from "./ui.js";
+import { InfoDot } from "./InfoDot.js";
 
 // ── palette shorthands (theme css vars — light/dark aware) ──────────────────
 const INK = "var(--color-ink)";
@@ -167,42 +168,6 @@ export function PnLBridge({ pnl }: { pnl: PnL }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 2 · Unit-cost build-up
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** Multiplicative cost build-up rendered as $ deltas on the base cost:
- *  c_base × learning × process × location ÷ crew productivity × premium recipe
- *  (× co-pack share, × shock) → effective cost per drink. Reductions green, additions red. */
-export function UnitCostBridge({ buildup }: { buildup: CostBuildup }) {
-  if (!buildup || !Number.isFinite(buildup.c_base)) return <Pending />;
-  const b = buildup;
-  const factors: { label: string; f: number; title: string }[] = [
-    { label: "Learn", f: fin(b.learning, 1), title: `Experience curve ×${fin(b.learning, 1).toFixed(3)}` },
-    { label: "Process", f: fin(b.process, 1), title: `Operations (1 − effect) ×${fin(b.process, 1).toFixed(3)}` },
-    { label: "Locale", f: fin(b.location, 1), title: `Location factor ×${fin(b.location, 1).toFixed(3)}` },
-    { label: "Crew", f: 1 / Math.max(fin(b.productivity, 1), 1e-6), title: `Crew productivity ÷${fin(b.productivity, 1).toFixed(2)}` },
-    { label: "Premium", f: fin(b.quality_premium, 1), title: `Premium recipe ×${fin(b.quality_premium, 1).toFixed(3)}` },
-    ...(fin(b.supply_share, 1) < 0.999 ? [{ label: "Co-pack", f: fin(b.supply_share, 1), title: `Supply-share pact ×${fin(b.supply_share, 1).toFixed(3)}` }] : []),
-    ...(fin(b.shock, 1) > 1.001 ? [{ label: "Shock", f: fin(b.shock, 1), title: `Input shock ×${fin(b.shock, 1).toFixed(3)}` }] : []),
-  ];
-  let run = Math.max(0, fin(b.c_base));
-  const steps: BridgeStep[] = [{ label: "Base", total: run, color: COPPER, title: `Base cost ${fmt.price(run)}` }];
-  for (const { label, f, title } of factors) {
-    const next = run * f;
-    steps.push({ label, delta: next - run, title: `${title} (${priceSigned(next - run)})` });
-    run = next;
-  }
-  steps.push({ label: "= Cost", total: run, color: COPPER, title: `Effective cost/drink ${fmt.price(run)}` });
-  return (
-    <div>
-      <Bridge steps={steps} fmtDelta={priceSigned} fmtTotal={fmt.price} />
-      {legend([["makes it cheaper", HOP], ["makes it dearer", BRICK]])}
-      <Cap>Each multiplier shown as its dollar effect on the running cost per drink; crew productivity divides (hover a bar for the raw factor).</Cap>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // 3 · Cash bridge
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -256,20 +221,28 @@ export function CapacityVsDemand({ result, cap }: { result: FirmRoundResult; cap
   const w = (v: number) => (Math.min(v, max) / max) * (VW - padL - padR);
   const lost = Math.max(0, desired - sold);
   const idle = Math.max(0, capV - sold);
+  // The bar totals net spillover in one category against a shortfall in another, so the
+  // firm-wide `lost` is NOT the number any per-category line shows — the caption used to
+  // publish 2,036u beside a detail row reading 10,131 unserved, on the same screen. Sum the
+  // per-category gaps separately so the caption says the same thing the detail does.
+  const unservedGross = segs.reduce((a, x) => a + Math.max(0, fin(x?.q_desired) - fin(x?.q_sold)), 0);
+  const spillGross = segs.reduce((a, x) => a + Math.max(0, fin(x?.q_sold) - fin(x?.q_desired)), 0);
   const rowY = (i: number) => padT + rowH * i + (rowH - bh) / 2;
   const capX = padL + w(capV);
 
-  const row = (i: number, label: string, main: number, mainColor: string, hatch?: { from: number; to: number; pattern: string; tag: string; tagColor: string }) => {
+  // `solidTo` stops the solid fill short of `main`, so the hatched remainder reads as a
+  // different KIND of thing (idle tanks) rather than a faint texture over the same bar.
+  const row = (i: number, label: string, main: number, mainColor: string, hatch?: { from: number; to: number; pattern: string; tag: string; tagColor: string; outline?: string }, solidTo?: number) => {
     const y = rowY(i);
     return (
       <g key={label}>
         <title>{`${label}: ${fmt.int(main)} units`}</title>
         <T x={padL - 6} y={y + bh - 3} anchor="end" size={9} fill={SOFT}>{label}</T>
-        <rect x={padL} y={y} width={Math.max(1, w(main))} height={bh} fill={mainColor} rx={2} />
+        <rect x={padL} y={y} width={Math.max(1, w(solidTo ?? main))} height={bh} fill={mainColor} rx={2} />
         {hatch && hatch.to > hatch.from && (
           <g>
             <title>{`${hatch.tag}: ${fmt.int(hatch.to - hatch.from)} units`}</title>
-            <rect x={padL + w(hatch.from)} y={y} width={Math.max(1, w(hatch.to) - w(hatch.from))} height={bh} fill={`url(#${hatch.pattern})`} rx={2} />
+            <rect x={padL + w(hatch.from)} y={y} width={Math.max(1, w(hatch.to) - w(hatch.from))} height={bh} fill={`url(#${hatch.pattern})`} stroke={hatch.outline} strokeWidth={hatch.outline ? 1 : 0} strokeDasharray={hatch.outline ? "3 2" : undefined} rx={2} />
             {w(hatch.to) - w(hatch.from) > 52 && (
               <T x={padL + (w(hatch.from) + w(hatch.to)) / 2} y={y + bh - 4} anchor="middle" size={7.5} weight={600} fill={hatch.tagColor}>{hatch.tag}</T>
             )}
@@ -289,19 +262,29 @@ export function CapacityVsDemand({ result, cap }: { result: FirmRoundResult; cap
             <line x1="0" y1="0" x2="0" y2="5" stroke={BRICK} strokeWidth="1.4" opacity="0.8" />
           </pattern>
           <pattern id={`idle${uid}`} width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-            <rect width="5" height="5" fill={SOFT} opacity="0.08" />
-            <line x1="0" y1="0" x2="0" y2="5" stroke={SOFT} strokeWidth="1.2" opacity="0.7" />
+            <rect width="5" height="5" fill={CLAY} opacity="0.10" />
+            <line x1="0" y1="0" x2="0" y2="5" stroke={CLAY} strokeWidth="1.6" opacity="0.85" />
           </pattern>
         </defs>
-        {row(0, "Wanted", desired, AERO)}
-        {row(1, "Sold", sold, COPPER, lost > 0 ? { from: sold, to: desired, pattern: `lost${uid}`, tag: "lost sales", tagColor: BRICK } : undefined)}
-        {row(2, "Capacity", capV, CLAY, idle > 0 ? { from: sold, to: capV, pattern: `idle${uid}`, tag: "idle", tagColor: SOFT } : undefined)}
+        {row(0, "First choice", desired, AERO)}
+        {row(1, "Sold", sold, COPPER, lost > 0 ? { from: sold, to: desired, pattern: `lost${uid}`, tag: "unserved", tagColor: BRICK } : undefined)}
+        {row(2, "Capacity", capV, CLAY, idle > 0 ? { from: sold, to: capV, pattern: `idle${uid}`, tag: "idle", tagColor: INK, outline: CLAY } : undefined, Math.min(sold, capV))}
         <line x1={capX} y1={padT - 6} x2={capX} y2={VH - 2} stroke={INK} strokeWidth={1} strokeDasharray="3 2" opacity={0.6} />
         <T x={capX} y={padT - 8 + 1} anchor="middle" size={7.5} fill={SOFT}>cap</T>
       </svg>
-      {legend([["wanted", AERO], ["sold", COPPER], ["lost sales", BRICK], ["idle tanks", CLAY]])}
+      {legend([["first-choice demand", AERO], ["sold", COPPER], ["unserved (hatched)", BRICK], ["capacity in use", CLAY]])}
+      <div className="mt-0.5 text-[0.62rem] text-inksoft">Hatched, dashed outline on the Capacity row = <b>idle tanks</b>: capacity you own and pay upkeep on but did not brew into.</div>
       <Cap>
-        {lost > 0.5 ? <span className="text-brick">Lost sales {fmt.int(lost)}u — demand walked away. </span> : "No demand left on the table. "}
+        {unservedGross > 0.5 && (
+          <span className="text-brick">Unserved demand {fmt.int(unservedGross)}u — buyers who chose you and could not be served. </span>
+        )}
+        {spillGross > 0.5 && (
+          <span className="text-hop">Spillover +{fmt.int(spillGross)}u — rivals ran out and some of their buyers settled for you. </span>
+        )}
+        {unservedGross > 0.5 && spillGross > 0.5 && (
+          <span>Net, the bars are {fmt.int(Math.abs(desired - sold))}u {desired > sold ? "short" : "long"}: you turned buyers away in one category while catching a rival's overflow in another. </span>
+        )}
+        {unservedGross <= 0.5 && spillGross <= 0.5 && "Every buyer who chose you was served. "}
         {idle > 0.5 ? <span>Idle capacity {fmt.int(idle)}u paying upkeep for nothing.</span> : "Every tank earned its keep."}
       </Cap>
     </div>
@@ -316,10 +299,14 @@ export function CapacityVsDemand({ result, cap }: { result: FirmRoundResult; cap
  *  equity (the game's benchmark borrowing rate). Green above the hurdle, red
  *  below. APPROXIMATION: the round trend carries no ROIC/WACC, so this proxies
  *  EVA with an equity charge rather than a true invested-capital × spread. */
-export function EvaBars({ history }: { history: GameView["history"] }) {
+export function EvaBars({ history, finance }: { history: GameView["history"]; finance?: Config["finance"] }) {
   const rows = (history ?? []).map((h) => h.own).filter((o) => o && Number.isFinite(o.netIncome));
   if (rows.length === 0) return <Pending />;
-  const HURDLE = 0.025; // ≈ default r_f 1.5% + base spread 1% per round(quarter)
+  // The hurdle is what a well-covered borrower pays: risk-free + the base spread, per quarter.
+  // Read from config (DW-056) rather than hardcoded — it was a literal 0.025 with a comment
+  // pinning it to the then-current defaults, which is exactly the kind of constant that goes
+  // quietly wrong the next time the spreads are retuned.
+  const HURDLE = (finance?.r_f ?? 0.015) + (finance?.base_spread ?? 0.01);
   const eva = rows.map((o) => fin(o.netIncome) - HURDLE * Math.max(0, fin(o.equity)));
   const VW = 320, VH = 128, padL = 6, padT = 14, padB = 18;
   let mn = Math.min(0, ...eva), mx = Math.max(0, ...eva);
@@ -511,31 +498,59 @@ function Dial({ cx, cy, r, frac, zone, refFrac, title, value, sub, alarm }: { cx
  *  base rate, which sets r_debt. Tick marks show the default tuning (spread kicks
  *  in past 1× debt/equity; coverage under 1.5× triggers the punitive reprice;
  *  base rate 2.5%/qtr). Whole cluster turns red when the firm is credit-rationed. */
-export function CostOfCapitalCockpit({ coc }: { coc: FirmRoundResult["cost_of_capital"] }) {
+export function CostOfCapitalCockpit({ coc, finance }: { coc: FirmRoundResult["cost_of_capital"]; finance?: Config["finance"] }) {
   if (!coc || !Number.isFinite(coc.r_debt)) return <Pending />;
   const lev = Math.max(0, fin(coc.leverage));
   const cov = fin(coc.coverage);
   const rd = Math.max(0, fin(coc.r_debt));
   const rationed = !!coc.credit_rationed;
+  // Everything below reads from the config rather than hardcoded numbers, so the dials and the
+  // explainer cannot drift from the economy the way the old "risk-free 1.5% … 2.5% all-in"
+  // caption did when DW-056 retuned the spreads. Fallbacks are the shipped defaults.
+  const rf = finance?.r_f ?? 0.015;
+  const baseSpread = finance?.base_spread ?? 0.01;
+  const healthy = rf + baseSpread;                       // an unlevered, well-covered borrower
+  const levRef = finance?.leverage_ref ?? 1;
+  const levCap = finance?.max_leverage ?? 3;
+  const covThr = finance?.coverage_threshold ?? 1.5;
+  const penalty = finance?.coverage_penalty_spread ?? 0.05;
+  const graduated = finance?.coverage_penalty_mode === "graduated";
+  const apr = (q: number) => `${Math.round(((1 + q) ** 4 - 1) * 100)}%`;
+  // Dial ceiling = the practical worst case this config can produce: healthy rate, plus the
+  // leverage grid at the borrowing cap, plus the whole covenant penalty.
+  const rateMax = healthy + (finance?.spread_leverage_k ?? 0.0075) * Math.max(0, levCap - levRef) + penalty;
+  const alarmFrom = healthy * 2;                          // "meaningfully above the going rate"
   const VW = 340, VH = 100, cy = 62, R = 33;
   return (
     <div>
-      <div className="mb-1 flex items-center justify-between">
+      <div className="mb-1 flex items-center justify-between gap-2">
         <span className="tnum text-sm text-ink">
           Debt costs <span className={`font-semibold ${rationed ? "text-brick" : "text-copperdeep"}`}>{fmt.pct1(rd)}</span>/qtr
-          <span className="text-inksoft"> — risk-free 1.5% + spread {fmt.pct1(Math.max(0, rd - 0.015))} (base spread 1%; the ticks mark the 2.5% default all-in rate)</span>
+          <span className="text-inksoft"> ≈ {apr(rd)} a year — risk-free {fmt.pct1(rf)} plus a spread of {fmt.pct1(Math.max(0, rd - rf))}</span>
+          <InfoDot title="What sets the price of your debt">
+            <span className="block"><b>Leverage</b> is debt ÷ equity. It climbs when you borrow — and also when you lose money, because a loss shrinks equity even if you never touch the loan. Past {levRef.toFixed(1)}× the bank starts charging more, and at {levCap.toFixed(1)}× it stops lending: a draw that would breach the cap is cut down to what fits.</span>
+            <span className="mt-1.5 block"><b>Coverage</b> is operating income ÷ interest — how many times over this quarter's profit covers the interest bill. It is the number your lender actually watches. Below {covThr.toFixed(1)}× you are in breach of covenant; below 1× the business cannot pay its lenders out of operations at all, which is what puts you under the safety line.</span>
+            <span className="mt-1.5 block"><b>Interest rate</b> is what you were charged this quarter, and it is not fixed. It starts at the risk-free {fmt.pct1(rf)} plus a {fmt.pct1(baseSpread)} spread — about {apr(healthy)} a year. The spread widens as leverage passes {levRef.toFixed(1)}× and {graduated ? `as coverage thins below ${covThr.toFixed(1)}×, reaching its full ${fmt.pct1(penalty)} only at zero operating income` : `jumps by ${fmt.pct1(penalty)} the moment coverage falls under ${covThr.toFixed(1)}×`}. Investor relations narrow it a little. So the interest line can move in a quarter when your debt did not — that is the bank repricing you, and the cure is to repay or to earn your cover back.</span>
+          </InfoDot>
         </span>
         {rationed && <Tag tone="brick">Credit rationed</Tag>}
       </div>
       <svg width="100%" viewBox={`0 0 ${VW} ${VH}`} style={{ display: "block" }}>
-        <Dial cx={58} cy={cy} r={R} frac={lev / 4} zone={[0.75, 1]} refFrac={1 / 4} title="Leverage" value={lev >= 10 ? "10×+" : `${lev.toFixed(1)}×`} sub="debt / equity" alarm={rationed} />
-        <Dial cx={170} cy={cy} r={R} frac={Math.min(cov, 6) / 6} zone={[0, 1.5 / 6]} refFrac={1.5 / 6} title="Coverage" value={cov >= 999 ? "∞" : `${cov.toFixed(1)}×`} sub="EBIT / interest" alarm={rationed || cov < 1.5} />
-        <Dial cx={282} cy={cy} r={R} frac={rd / 0.15} zone={[0.115 / 0.15, 1]} refFrac={0.025 / 0.15} title="Rate r_debt" value={fmt.pct1(rd)} sub={`≈ ${Math.round(rd * 4 * 100)}% APR`} alarm={rationed} />
+        <Dial cx={58} cy={cy} r={R} frac={lev / (levCap + 1)} zone={[levCap / (levCap + 1), 1]} refFrac={levRef / (levCap + 1)} title="Leverage" value={lev >= 10 ? "10×+" : `${lev.toFixed(1)}×`} sub="debt ÷ equity" alarm={rationed} />
+        <Dial cx={170} cy={cy} r={R} frac={Math.min(cov, 6) / 6} zone={[0, covThr / 6]} refFrac={covThr / 6} title="Coverage" value={cov >= 999 ? "∞" : `${cov.toFixed(1)}×`} sub="profit ÷ interest" alarm={rationed || cov < covThr} />
+        {/* Dial bounds track the config (DW-056): base all-in 2.5%/qtr, +1.5 at the 3x leverage
+            cap, +5.0 at zero coverage, so ~9%/qtr is the practical ceiling. The old 15% max with
+            its alarm at 11.5% was scaled to the pre-retune penalty — the needle physically could
+            not reach red any more. APR compounds (1+r)^4, not r x 4, or a distressed rate reads
+            7 points light. */}
+        <Dial cx={282} cy={cy} r={R} frac={Math.min(1, rd / rateMax)} zone={[alarmFrom / rateMax, 1]} refFrac={healthy / rateMax} title="Interest rate" value={fmt.pct1(rd)} sub={`≈ ${apr(rd)} a year`} alarm={rationed} />
       </svg>
       <Cap>
         {rationed
-          ? "Coverage fell below the 1.5× floor — the bank repriced your debt punitively and rationed new credit."
-          : "High leverage or thin coverage widens the spread; the ticks mark the default thresholds (1× D/E, 1.5× coverage, 2.5%/qtr base)."}
+          ? cov < 1.5
+            ? "Coverage fell under the 1.5× covenant — the bank moved this firm onto the penalty grid. The spread widens with how thin the cover actually is, reaching its full 5%/qtr only at zero operating income, and new credit is rationed meanwhile."
+            : "A requested draw was capped: it would have pushed debt past 3× equity, the borrowing limit."
+          : `High leverage or thin coverage widens the spread. The ticks mark where each dial turns: ${levRef.toFixed(1)}× debt-to-equity, ${covThr.toFixed(1)}× coverage, and the ${fmt.pct1(healthy)}/qtr rate a well-covered borrower pays.`}
       </Cap>
     </div>
   );

@@ -52,6 +52,7 @@ export function DecisionForm({
   busy,
   infoCost,
   onInfoChange,
+  infoLocked = false,
   submitLabel,
   footerNote,
   poaches: externalPoaches,
@@ -67,6 +68,8 @@ export function DecisionForm({
   busy: boolean;
   infoCost: number;
   onInfoChange?: (bought: boolean) => void;
+  /** Solo: the research was revealed this round, so the purchase can no longer be unticked. */
+  infoLocked?: boolean;
   submitLabel?: string;
   footerNote?: string;
   // Talent raids, lifted to the screen so they can be made from a rival's dossier.
@@ -419,7 +422,33 @@ export function DecisionForm({
                 <span className="text-inksoft">$</span>
                 <input type="number" step="5000" min="0" value={toDisplayMoney(d.invest_cap)} onChange={(e) => set({ invest_cap: Math.max(0, toEngineMoney(+e.target.value)) })} className="w-28 text-right" />
               </div>
-              <div className="mt-1 text-[0.7rem] text-inksoft tnum">Current capacity: {fmt.int(view.own.cap)} units</div>
+              {(() => {
+                // Bridge dollars ↔ drinks. Tanks cost a flat $/unit, arrive after the build lag, and a
+                // fixed share of what you already own wears out every quarter — so part of any spend
+                // only holds you level. All three numbers come from this game's config, not constants.
+                const cc = view.capacity;
+                if (!cc || !(cc.gain > 0)) return <div className="mt-1 text-[0.7rem] text-inksoft tnum">Current capacity: {fmt.int(view.own.cap)} units</div>;
+                const perUnit = 1 / cc.gain;
+                const added = d.invest_cap * cc.gain;
+                const wear = view.own.cap * cc.depreciation;
+                const holdLevel = wear * perUnit;
+                const next = view.own.cap - wear + (cc.lag <= 1 ? added : 0);
+                const net = next - view.own.cap;
+                const when = cc.lag <= 0 ? "this round" : cc.lag === 1 ? "next round" : `in ${cc.lag} rounds`;
+                return (
+                  <div className="mt-1.5 grid gap-0.5 text-[0.7rem] text-inksoft tnum">
+                    <div>Tanks cost <b className="text-ink">{fmt.price(perUnit)}</b> per unit of quarterly capacity.</div>
+                    <div>This spend buys <b className="text-ink">+{fmt.int(added)}</b> units, online {when}.</div>
+                    <div>Wear-out this quarter: <b className="text-ink">−{fmt.int(wear)}</b> units ({Math.round(cc.depreciation * 100)}% of what you own). Holding level costs {fmt.money(holdLevel)}.</div>
+                    <div className="mt-0.5 border-t border-line pt-0.5">
+                      Capacity: {fmt.int(view.own.cap)} now →{" "}
+                      <b className={net < 0 ? "text-brick" : "text-ink"}>{fmt.int(next)}</b> next round
+                      <span className={net < 0 ? "text-brick" : "text-hop"}> ({net >= 0 ? "+" : "−"}{fmt.int(Math.abs(net))})</span>
+                    </div>
+                    <div>Every unit you own costs {fmt.price(cc.fixed_cost_per_unit)}/qtr in upkeep, brewed or idle.</div>
+                  </div>
+                );
+              })()}
             </div>
             <div>
               <label className="text-sm text-inksoft">Capacity allocation — drag the dividers</label>
@@ -477,7 +506,6 @@ export function DecisionForm({
               </div>
             ))}
           </div>
-          <div className="mt-3 text-[0.68rem] text-inksoft">More controls — financing, distributor &amp; investor relations, collaborations — unlock as the game progresses.</div>
         </Card>
 
         {/* Financing */}
@@ -486,7 +514,14 @@ export function DecisionForm({
           <div className="mb-2 flex flex-wrap gap-x-4 gap-y-0.5 text-[0.72rem] text-inksoft tnum">
             <span>debt {fmt.money(view.own.debt)}</span>
             <span>equity {fmt.money(equity)}</span>
-            <span className={leverage > 1.5 ? "text-brick" : ""}>leverage {leverage.toFixed(2)}</span>
+            <span className={leverage > (view.scoring?.healthy_leverage ?? 1.5) ? "text-brick" : ""}>
+              debt-to-equity {leverage.toFixed(2)}×
+              <InfoDot title="Debt-to-equity (leverage)">
+                Total debt ÷ book equity, where equity is the capital paid in plus the profit you have kept (retained earnings). At {leverage.toFixed(2)}× you owe {fmt.money(view.own.debt)} against {fmt.money(equity)} of equity.
+                {view.finance && <> Lenders start charging more once you pass <b>{view.finance.leverage_ref.toFixed(1)}×</b>, and will not lend at all beyond <b>{view.finance.max_leverage.toFixed(1)}×</b>.</>}
+                {" "}Above <b>{(view.scoring?.healthy_leverage ?? 1.5).toFixed(1)}×</b> the figure turns red: your scorecard reads the balance sheet as stretched. Raising equity or repaying debt lowers it; a loss lowers equity and so raises it even if you borrow nothing.
+              </InfoDot>
+            </span>
             {lastRate != null && <span>borrowing rate {(lastRate * 100).toFixed(1)}%</span>}
             {lastCov != null && <span>coverage {lastCov > 900 ? "∞" : `${lastCov.toFixed(1)}×`}</span>}
           </div>
@@ -823,7 +858,7 @@ export function DecisionForm({
           <Card className={desk === "finance" || desk === "people" ? "hidden" : ""}>
             <div className="flex items-center gap-1.5">
               <Eyebrow>Plays &amp; Programs</Eyebrow>
-              <InfoDot title="Expansion modes">These controls appear because your instructor enabled extra modes for this game. They're off in a standard game.</InfoDot>
+              <InfoDot title="Plays & programs">One-off moves and standing programs that sit on top of your core price, capacity and investment decisions. A <b>play</b> is a single-round action you choose to run or not — it costs money this round and its effect fades. A <b>program</b> is a standing commitment you fund every round and that builds up over time. Each card below says what it costs and what it moves. Which ones appear depends on how your instructor set up this game.</InfoDot>
             </div>
 
             {prOn && (
@@ -1083,11 +1118,13 @@ export function DecisionForm({
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={d.buy_info} onChange={(e) => { set({ buy_info: e.target.checked }); onInfoChange?.(e.target.checked); }} />
+                <input type="checkbox" checked={d.buy_info || infoLocked} disabled={infoLocked} onChange={(e) => { if (infoLocked) return; set({ buy_info: e.target.checked }); onInfoChange?.(e.target.checked); }} />
                 Buy market research <span className="tnum text-inksoft">({fmt.money(infoCost)})</span>
               </label>
-              <div className={`mt-0.5 text-[0.68rem] ${d.buy_info ? "text-hop" : "text-inksoft"}`}>
-                {d.buy_info ? "✓ Rivals' quality, brand, pricing & the strategy map are unlocked in the Field tab." : "Reveals rival positioning in the Field tab this round."}
+              <div className={`mt-0.5 text-[0.68rem] ${d.buy_info || infoLocked ? "text-hop" : "text-inksoft"}`}>
+                {infoLocked
+                  ? "✓ Purchased for this round — the report is already in your hands, so it can't be returned. Rivals' quality, brand, pricing & the strategy map are open in the Field tab."
+                  : d.buy_info ? "✓ Rivals' quality, brand, pricing & the strategy map are unlocked in the Field tab." : "Reveals rival positioning in the Field tab this round. Once you open the report, the purchase stands."}
               </div>
             </div>
             <label className="flex items-center gap-2 text-sm">
@@ -1109,7 +1146,7 @@ export function DecisionForm({
           submit button never scroll away while tuning levers */}
       {/* Commit panel — the design's persistent commit dial: big projected-cash readout,
           live spend breakdown, overcommit guard, and the brew action. Pinned on desktop. */}
-      <div className="grid content-start gap-3 lg:sticky lg:top-4 lg:self-start">
+      <div className="grid content-start gap-3 lg:sticky lg:top-[4.25rem] lg:self-start">
         {/* Dark-walnut commit rail (dark in both modes; metallic top glint) — the design's sticky Commit panel. */}
         <div className="overflow-hidden rounded-[15px]" style={{ background: "var(--tt-wood)", border: "1px solid rgba(0,0,0,.4)", boxShadow: "inset 0 1px 0 rgba(255,240,205,.16), 0 0 0 1px var(--metal), 0 18px 36px rgba(0,0,0,.4)" }}>
           <div className="flex items-center justify-between px-4 py-2.5" style={{ borderBottom: "1px solid rgba(0,0,0,.32)", background: "linear-gradient(rgba(255,220,150,.10), rgba(255,220,150,0))" }}>

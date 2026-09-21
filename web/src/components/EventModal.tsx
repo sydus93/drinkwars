@@ -23,6 +23,7 @@ export interface GameEvent {
   choices?: EventChoice[]; // omit ⇒ an acknowledge-only notice
   dismissable?: boolean; // allow closing without choosing (default true for notices)
   mine?: boolean; // does this dispatch involve the player's own brewery?
+  count?: number; // identical dispatches collapsed into this one (a lost tie-break prints once per losing house)
 }
 
 const KIND: Record<EventKind, { accent: string; glyph: string; label: string; ring: string }> = {

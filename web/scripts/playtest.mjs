@@ -15,6 +15,11 @@ const CHAIRS = (process.env.CHAIRS ?? "ceo,cfo").split(",").map((s) => s.trim().
 const MODE = process.env.MODE ?? "team";
 const NAMES = ["Ana Ruiz", "Ben Okafor", "Cy Lindqvist", "Dee Patel", "Eli Moreau", "Fay Chen", "Gus Ortega", "Hal Nakamura", "Ivy Brooks", "Jo Haddad", "Kai Novak", "Lou Diallo", "Mo Sato", "Nia Kowalski", "Oz Reyes", "Pia Berg"];
 const PRESET = process.env.PRESET ?? ""; // e.g. "Everything (Pro)", "Financial strategy" — a preset pill on the create form
+// Individual module toggles ON TOP of (or instead of) a preset pill, matched on the module's
+// display name, case-insensitively, by substring. The Sprint 1 classroom config is a preset
+// pill plus two of these, which PRESET alone could not express:
+//   MODULES="labor market,sustainability" npm run playtest
+const MODULES = (process.env.MODULES ?? "").split(",").map((s) => s.trim()).filter(Boolean);
 
 const browser = await puppeteer.launch({ executablePath: CHROME, headless: false, defaultViewport: null, args: ["--no-sandbox", "--window-size=1280,900"] });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -28,6 +33,41 @@ await clickText(ins, "Instructor");
 await ins.type('input[placeholder="Enter your instructor passcode"]', PASS);
 if (MODE === "team") await clickText(ins, "Team · C-suite");
 if (PRESET) { await clickText(ins, PRESET); await sleep(300); }
+if (MODULES.length) {
+  // The shelves are collapsed by default, so open every category before hunting for rows.
+  // One at a time, re-querying between clicks: React replaces the shelf nodes on each toggle,
+  // so collecting them all up front and clicking through the list hits detached elements and
+  // silently opens only the first (that bug cost me a "labor market: NOT FOUND").
+  for (let i = 0; i < 12; i++) {
+    const opened = await ins.evaluate(() => {
+      const shelf = [...document.querySelectorAll("button")].find(
+        (b) => /\d+ (on|available)$/.test(b.innerText.trim()) && !b.querySelector("span")?.className.includes("rotate-90"),
+      );
+      if (!shelf) return false;
+      shelf.click();
+      return true;
+    });
+    if (!opened) break;
+    await sleep(150);
+  }
+  await sleep(400);
+  const applied = await ins.evaluate((wanted) => {
+    const out = [];
+    for (const name of wanted) {
+      const row = [...document.querySelectorAll("div")].find((d) => {
+        const label = d.querySelector(":scope > div > div > span.font-semibold");
+        return label && label.textContent.toLowerCase().includes(name.toLowerCase()) && d.querySelector(":scope > button[aria-pressed]");
+      });
+      const btn = row?.querySelector(":scope > button[aria-pressed]");
+      if (!btn) { out.push(`${name}: NOT FOUND`); continue; }
+      if (btn.getAttribute("aria-pressed") !== "true") btn.click();
+      out.push(`${name}: on`);
+    }
+    return out;
+  }, MODULES);
+  console.log(`modules -> ${applied.join(", ")}`);
+  await sleep(300);
+}
 await clickText(ins, "Create game");
 await waitText(ins, /share this join code/);
 const code = await ins.evaluate(() => document.querySelector(".wordmark")?.textContent?.trim());

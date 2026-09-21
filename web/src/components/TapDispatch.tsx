@@ -6,7 +6,7 @@
  * are flagged and float to the top of their column. Pure presentation over the
  * already-parsed event feed — no new engine data.
  */
-import { useMemo, type ReactNode } from "react";
+import { useMemo } from "react";
 import type { GameView } from "../game/controller.js";
 import type { EventKind } from "./EventModal.js";
 import { parseEvents } from "./eventFeed.js";
@@ -28,7 +28,7 @@ const roman = (n: number): string => {
   return s || "—";
 };
 
-export function TapDispatch({ view, round, footer }: { view: GameView; round: number; footer?: ReactNode }) {
+export function TapDispatch({ view, round }: { view: GameView; round: number }) {
   const youName = view.names[view.own.id] ?? "";
   const events = useMemo(() => parseEvents(view.events, youName), [view.events, youName]);
   const lead = events.find((e) => e.kind === "shock") ?? events.find((e) => e.kind === "market") ?? events[0] ?? null;
@@ -99,7 +99,8 @@ export function TapDispatch({ view, round, footer }: { view: GameView; round: nu
               </div>
               {sec.items.map((e) => (
                 <div key={e.id} className={`mb-2.5 text-[0.8rem] leading-snug ${e.mine ? "border-l-2 border-copper pl-2" : ""}`}>
-                  <span className="font-bold text-ink">{e.title}.</span> <span className="text-ink/80">{e.body}</span>
+                  {e.title && <><span className="font-bold text-ink">{e.title}.</span>{" "}</>}<span className="text-ink/80">{e.body}</span>
+                  {(e.count ?? 1) > 1 && <span className="ml-1.5 align-middle font-mono text-[0.55rem] font-bold text-inksoft">×{e.count}</span>}
                   {e.mine && <span className="ml-1.5 rounded-full border border-copper px-1.5 align-middle font-mono text-[0.5rem] font-bold uppercase text-copperdeep">you</span>}
                 </div>
               ))}
@@ -107,8 +108,6 @@ export function TapDispatch({ view, round, footer }: { view: GameView; round: nu
           ))}
         </div>
       )}
-
-      {footer && <div className="mt-5 flex flex-wrap items-center gap-3 border-t-[3px] border-double border-ink pt-3">{footer}</div>}
     </div>
   );
 }

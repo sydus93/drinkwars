@@ -209,8 +209,19 @@ export const SCENARIOS: Scenario[] = [
       // credit cliff — + a harsher spread curve and coverage trigger,
       // + a TELEGRAPHED deterministic cost spike in round 2 (signaled_noisy: the
       // lesson is balance-sheet structure, not surprise).
+      //
+      // Retuned DW-056, and the mode is now set EXPLICITLY. Two things had gone wrong. (1) These
+      // numbers were written as multiples of the pre-DW-056 defaults, which were themselves
+      // unrescaled annual figures: 0.18 against the new base put a breached firm at 111% APR, a
+      // loan shark rather than a lesson. (2) `deepMerge` is key-wise, so with no `coverage_penalty_mode`
+      // this scenario silently inherited the new default "graduated" — a firm at 1.9× cover would
+      // have paid 0.9%/qtr instead of the full penalty, and the cliff this scenario exists to teach
+      // would have been a gentle ramp. Pinning "step" keeps the cliff, and the contrast with the
+      // default game's grid is itself the point: both are real instruments, and which one your
+      // credit agreement contains is worth knowing before you sign it.
+      // Now: ≈21% APR while stretched, ≈49% the quarter cover breaks.
       init: { starting_cash: 300_000, starting_debt: 390_000 },
-      finance: { spread_leverage_k: 0.12, coverage_threshold: 2.0, coverage_penalty_spread: 0.18 },
+      finance: { spread_leverage_k: 0.018, coverage_threshold: 2.0, coverage_penalty_spread: 0.055, coverage_penalty_mode: "step" },
       shocks: {
         types: [scheduledShock({ id: "harvest", kind: "cost_spike", round: 2, magnitude: 0.5, duration: 2, signaling: "signaled_noisy", mitigated: false })],
       },

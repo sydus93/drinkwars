@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { FirmDecision } from "drinkwars-engine";
 import type { GameView } from "../game/controller.js";
 import { SEG_TAG, SHOCK_META, fmt } from "../labels.js";
 import { Button, Card, Eyebrow, Stat, Tag } from "../components/ui.js";
 import { DecisionForm, type DeskId } from "../components/DecisionForm.js";
-import { Diagnostics } from "../components/Diagnostics.js";
+import { OperationsAndDemand } from "../components/OperationsAndDemand.js";
 import { Standings } from "../components/Standings.js";
 import { Events } from "../components/Events.js";
 import { FirmDetail } from "../components/FirmDetail.js";
@@ -12,12 +12,13 @@ import { parseEvents } from "../components/eventFeed.js";
 import { Boardroom } from "../components/Boardroom.js";
 import { DeskCockpit } from "../components/DeskCockpit.js";
 import { RoundTable } from "../components/RoundTable.js";
-import { Analysis } from "../components/Analysis.js";
+import { StatementsAndRatios } from "../components/Statements.js";
 import { Sparkline } from "../components/Sparkline.js";
 import { Trends } from "../components/Trends.js";
 import { Field } from "../components/Field.js";
 import { MarketMap } from "../components/MarketMap.js";
 import { CityView } from "../components/CityView.js";
+import { ErrorBoundary } from "../components/ErrorBoundary.js";
 import { TapDispatch } from "../components/TapDispatch.js";
 import { Emblem } from "../components/FacilityGlyph.js";
 import { firmColor, firmEmblem } from "../lib/teamColors.js";
@@ -31,7 +32,7 @@ const SEAT_LABEL: Record<string, string> = { ceo: "CEO", cfo: "CFO", cmo: "CMO",
 /** Primary destinations (design: Review · Decide · Map). Distribution is a drawer
  *  inside Map / a panel inside Decide, NOT a destination. */
 type Dest = "review" | "decide" | "map";
-type RTab = "dispatch" | "trends" | "analysis" | "field";
+type RTab = "statements" | "operations" | "dispatch" | "trends" | "field";
 
 const NAV_ICON: Record<Dest, JSX.Element> = {
   review: <path d="M4 5h13v14H5a1 1 0 0 1-1-1ZM17 8h3v9a2 2 0 0 1-2 2M7 8h7M7 11h7M7 14h4" />,
@@ -96,6 +97,15 @@ export function Play({
   // A team-firm seat opens focused on its own desk (CFO → finance, etc.); solo opens on All.
   const [desk, setDesk] = useState<DeskId>(seatRole ? ((ROLE_DESK[seatRole] as DeskId) ?? "all") : "all");
   const [infoPreview, setInfoPreview] = useState(false);
+  // Solo play reveals the research the moment it is ticked (there is no server round-trip to
+  // wait for), so an untick after reading was a free report. Once revealed, the purchase stands
+  // for the round — you can't hand back a report you've read. Multiplayer is unaffected: there
+  // the intel only unlocks when the submitted plan carries the purchase.
+  const [infoLocked, setInfoLocked] = useState(false);
+  const onInfoChange = useCallback((bought: boolean) => {
+    setInfoPreview(bought);
+    if (bought && !mp) setInfoLocked(true);
+  }, [mp]);
   const [detailFirm, setDetailFirm] = useState<string | null>(null);
   // Talent raids are lifted here so they can be made from a rival's dossier AND the
   // decision form — both write the same list, injected into the decision at submit.
@@ -121,6 +131,7 @@ export function Play({
   // Reset live intel preview + queued raids + decision draft each new round.
   useEffect(() => {
     setInfoPreview(false);
+    setInfoLocked(false);
     setPoaches([]);
     setRationale({});
     setCityActions(emptyCityActions(view));
@@ -196,7 +207,7 @@ export function Play({
     if (resolveSig !== seenRound.current) {
       seenRound.current = resolveSig;
       setDest("review");
-      setRtab("dispatch");
+      setRtab("statements"); // the sheets first; the Dispatch tab carries a count when there is news
     }
   }, [resolveSig]);
 
@@ -214,7 +225,7 @@ export function Play({
   const conflicts = mp && seatRole && view.teamPlan ? computeConflicts(view, seatRole, decision, standing) : [];
   const offDesk = mp && seatRole && view.teamPlan ? offDeskEdits(view, seatRole, decision, standing) : [];
   const handlePlay = async (d0: FirmDecision) => {
-    let d = d0;
+    let d = infoLocked && !d0.buy_info ? { ...d0, buy_info: true } : d0;
     let covers: Set<string> | undefined;
     if (mp && seatRole && view.teamPlan) {
       // A specialist's slice carries the firm's values (as mirrored in the form) on every desk
@@ -377,7 +388,7 @@ export function Play({
                   <div className="mb-3"><Reconcile view={view} conflicts={conflicts} offDesk={offDesk} seatRole={seatRole} onAdopt={(field, value) => setDecision((d) => (d ? { ...d, [field]: value } as FirmDecision : d))} /></div>
                 )}
                 {view.ownActive && !view.complete && (
-                  <DecisionForm view={view} defaultDecision={defaultDecision} onPlay={handlePlay} busy={busy} infoCost={infoCost} onInfoChange={setInfoPreview} poaches={poaches} onPoach={queuePoach} cityActions={cityActions} decision={decision} setDecision={setDecision} desk={desk} submitLabel={submitLabel} footerNote={footerNote} />
+                  <DecisionForm view={view} defaultDecision={defaultDecision} onPlay={handlePlay} busy={busy} infoCost={infoCost} onInfoChange={onInfoChange} infoLocked={infoLocked} poaches={poaches} onPoach={queuePoach} cityActions={cityActions} decision={decision} setDecision={setDecision} desk={desk} submitLabel={submitLabel} footerNote={footerNote} />
                 )}
                 {!view.ownActive && !view.complete && (
                   <Card>
@@ -397,9 +408,11 @@ export function Play({
                 )}
                 {view.complete && <SeasonOver view={view} rank={myRank} onReset={onReset} mp={mp} />}
               </div>
-              <div className="grid content-start gap-4 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:self-start lg:overflow-y-auto">
+              <div className="grid content-start gap-4 lg:sticky lg:top-[4.25rem] lg:max-h-[calc(100vh-5.25rem)] lg:self-start lg:overflow-y-auto">
                 <Standings view={view} onSelect={setDetailFirm} />
-                {view.ownActive && !view.complete && (
+                {/* The Round Table is a TEAM surface (who has submitted, the composed plan). Alone at
+                    the controls it only repeats the desk chips above the form, so solo play skips it. */}
+                {view.ownActive && !view.complete && mp && seatRole && (
                   <RoundTable view={view} rationale={rationale} seatRole={seatRole} onFocusDesk={setDesk} />
                 )}
                 {view.briefings.length > 0 && <Boardroom briefings={view.briefings} />}
@@ -419,46 +432,46 @@ export function Play({
             </div>
           )}
 
-          {dest === "review" && (
+          {dest === "review" && (() => {
+            // News worth a look before the numbers: anything that names your house, plus disruptions.
+            const news = parseEvents(view.events, view.names[view.own.id] ?? "").filter((e) => e.mine || e.kind === "shock").length;
+            const tabs: [RTab, string][] = [["statements", "Statements & Ratios"], ["operations", "Operations & Demand"], ["dispatch", "The Dispatch"], ["trends", "Trends"], ["field", "Field & Intel"]];
+            const tab: RTab = hasHistory ? rtab : "dispatch"; // nothing to account for until a round resolves
+            return (
             <div className="rounded-[14px] border border-line2 bg-panel/40">
-              <div className="sticky top-0 z-[5] flex flex-wrap items-center gap-2.5 rounded-t-[14px] border-b border-line bg-panel px-4 py-2.5">
+              {/* Sticks directly under the main tab bar (it used to slide beneath it). */}
+              <div className="sticky top-[3.25rem] z-[5] flex flex-wrap items-center gap-2.5 rounded-t-[14px] border-b border-line bg-panel px-4 py-2.5">
                 <span className="display text-lg font-bold text-ink">Review</span>
-                <div className="inline-flex gap-0.5 rounded-[9px] border border-line2 bg-panel2 p-0.5">
-                  {([["dispatch", "Dispatch"], ["trends", "Trends"], ["analysis", "Analysis"], ["field", "Field & Intel"]] as [RTab, string][]).map(([id, label]) => (
-                    <button key={id} disabled={(id !== "dispatch") && !hasHistory} onClick={() => setRtab(id)} className="rounded-[7px] px-3 py-1.5 font-mono text-[0.62rem] uppercase tracking-wide transition-colors disabled:opacity-30" style={{ background: rtab === id ? "var(--color-panel)" : "transparent", color: rtab === id ? "var(--color-copperdeep)" : "var(--color-inksoft)", fontWeight: rtab === id ? 700 : 500, boxShadow: rtab === id ? "inset 0 1px 0 rgba(255,255,255,.6),0 1px 0 var(--color-line2)" : undefined }}>{label}</button>
+                <div className="inline-flex flex-wrap gap-0.5 rounded-[9px] border border-line2 bg-panel2 p-0.5">
+                  {tabs.map(([id, label]) => (
+                    <button key={id} disabled={(id !== "dispatch") && !hasHistory} onClick={() => setRtab(id)} className="rounded-[7px] px-3 py-1.5 font-mono text-[0.62rem] uppercase tracking-wide transition-colors disabled:opacity-30" style={{ background: tab === id ? "var(--color-panel)" : "transparent", color: tab === id ? "var(--color-copperdeep)" : "var(--color-inksoft)", fontWeight: tab === id ? 700 : 500, boxShadow: tab === id ? "inset 0 1px 0 rgba(255,255,255,.6),0 1px 0 var(--color-line2)" : undefined }}>
+                      {label}
+                      {id === "dispatch" && news > 0 && tab !== "dispatch" && <span className="ml-1.5 rounded-full bg-brick px-1.5 py-px text-[0.55rem] font-bold text-paper">{news}</span>}
+                    </button>
                   ))}
                 </div>
                 <span className="flex-1" />
-                <span className="hidden font-mono text-[0.6rem] uppercase text-inksoft sm:inline">{resolved > 0 ? `After round ${resolved}` : "Season opening"}</span>
+                <span className="hidden font-mono text-[0.6rem] uppercase text-inksoft xl:inline">{resolved > 0 ? `After round ${resolved}` : "Season opening"}</span>
+                {/* The way forward is on every tab — it used to live only at the foot of the Dispatch. */}
+                {!view.complete && view.ownActive && <Button variant="go" onClick={() => setDest("decide")}>On to round {Math.min(view.round + 1, view.nRounds)} →</Button>}
               </div>
-              <div className="p-4">
-                {rtab === "dispatch" && (
-                  <div className="grid gap-5">
-                    {view.complete && <SeasonOver view={view} rank={myRank} onReset={onReset} mp={mp} />}
-                    <TapDispatch
-                      view={view}
-                      round={Math.max(resolved, 1)}
-                      footer={!view.complete && view.ownActive ? (
-                        <>
-                          <span className="font-body flex-1 text-[0.72rem] italic text-inksoft">Dispatches stay in your rail all season. The numbers behind the round are below.</span>
-                          <Button variant="go" onClick={() => setDest("decide")}>On to round {Math.min(view.round + 1, view.nRounds)} →</Button>
-                        </>
-                      ) : undefined}
-                    />
-                    {view.ownResult && (
-                      <div>
-                        <div className="mb-2 font-mono text-[0.6rem] uppercase tracking-[0.14em] text-copperdeep">The round in numbers</div>
-                        <Diagnostics result={view.ownResult} view={view} />
-                      </div>
-                    )}
-                  </div>
-                )}
-                {rtab === "trends" && (hasHistory ? <Trends view={view} /> : <Card>Trends open once a round has resolved.</Card>)}
-                {rtab === "analysis" && (hasHistory ? <Analysis view={view} /> : <Card>The analysis dashboards open once a round has resolved.</Card>)}
-                {rtab === "field" && (hasHistory ? <Field view={view} infoActive={infoActive} pending={infoPending} onInspect={setDetailFirm} /> : <Card>Field intel opens once a round has resolved.</Card>)}
+              <div className="grid gap-5 p-4">
+                {/* Season wrap belongs to the round in review, not to every lens on it — it used
+                    to repeat under all five tabs once the season closed. */}
+                {view.complete && tab === "dispatch" && <SeasonOver view={view} rank={myRank} onReset={onReset} mp={mp} />}
+                {/* One boundary per panel, keyed on the tab: a panel that throws stays broken
+                    while the other four keep working, and switching away clears it. */}
+                <ErrorBoundary resetKey={tab} label={tabs.find(([id]) => id === tab)?.[1]}>
+                  {tab === "statements" && <StatementsAndRatios view={view} />}
+                  {tab === "operations" && (view.ownResult ? <OperationsAndDemand result={view.ownResult} view={view} /> : <Card>Operations open once a round has resolved.</Card>)}
+                  {tab === "dispatch" && <TapDispatch view={view} round={Math.max(resolved, 1)} />}
+                  {tab === "trends" && <Trends view={view} />}
+                  {tab === "field" && <Field view={view} infoActive={infoActive} pending={infoPending} onInspect={setDetailFirm} />}
+                </ErrorBoundary>
               </div>
             </div>
-          )}
+            );
+          })()}
         </main>
     </div>
   );

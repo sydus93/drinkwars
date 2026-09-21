@@ -1,9 +1,14 @@
 <!doctype html>
-<html lang="en" data-mode="sectional">
+<html lang="en" data-mode="foolscap">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Drink Wars</title>
+    <!-- Light (Foolscap) is the default; a player who switches to night keeps it. Runs before
+         first paint so a returning night-mode player never sees a light flash. -->
+    <script>
+      try { if (localStorage.getItem("dw-mode") === "sectional") document.documentElement.setAttribute("data-mode", "sectional"); } catch (e) {}
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link

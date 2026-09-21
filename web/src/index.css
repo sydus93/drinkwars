@@ -11,7 +11,7 @@
    (used by CityView's trade-flow arcs + distribution drawer).
 
    Companion: the font <link> in web/index.html loads EB Garamond + IBM Plex
-   Sans; <html data-mode="sectional"> makes night the default.
+   Sans; <html data-mode="foolscap"> makes light the default (a stored night choice wins).
    ───────────────────────────────────────────────────────────────────────── */
 @theme {
   --color-paper:      #ece0c4;
@@ -23,11 +23,17 @@
   --color-copper:     #c0703a;
   --color-copperdeep: #9a5024;
   --color-gold:       #e3a52f;
-  --color-hop:        #6fa03a;
+  /* Darkened for text contrast (DW-056). The Foolscap greens/reds were chosen as FILL
+     colours; once light mode became the default, the same tokens carried the small figures
+     students actually read — a +14,258 delta at 12.8px measured 2.86:1 against the panel,
+     well under the 4.5:1 floor, and washed out entirely on a classroom projector. The two
+     places hop is a decorative FILL are pinned to the original hex below, so buttons and
+     bars look exactly as before. Reconcile with the design system when convenient. */
+  --color-hop:        #456a22; /* 5.8:1 on panel (was #6fa03a, 2.9:1) */
   --color-aero:       #1f8c93;
   --color-clay:       #b5704f;
   --color-plum:       #7c4f86;
-  --color-brick:      #c0533f;
+  --color-brick:      #a83f2c; /* 5.7:1 on panel (was #c0533f, 4.3:1) */
   --color-line:       #d8c39c;
   --color-line2:      #c2a877;
 
@@ -181,7 +187,7 @@ input[type="range"]::-webkit-slider-thumb {
 }
 .tt-btn:hover  { opacity: 0.95; }
 .tt-btn:active { transform: translateY(1px); opacity: 0.9; }
-.tt-btn--go { background: linear-gradient(#7fb343, var(--color-hop)); border-color: #4c7820; color: #142a06; box-shadow: inset 0 1px 0 rgba(214,243,163,0.6), 0 1px 2px var(--shadow); }
+.tt-btn--go { background: linear-gradient(#7fb343, #6fa03a); border-color: #4c7820; color: #142a06; box-shadow: inset 0 1px 0 rgba(214,243,163,0.6), 0 1px 2px var(--shadow); }
 
 .tt-coin {
   display: grid;
@@ -198,7 +204,7 @@ input[type="range"]::-webkit-slider-thumb {
 
 .tt-bar { height: 9px; border-radius: 6px; background: var(--color-panel2); overflow: hidden; box-shadow: inset 0 1px 2px rgba(60,40,15,0.25); }
 .tt-bar > span { display: block; height: 100%; background: linear-gradient(90deg, var(--color-gold), var(--color-copper)); }
-.tt-bar.is-craft > span  { background: linear-gradient(90deg, #8fbf4a, var(--color-hop)); }
+.tt-bar.is-craft > span  { background: linear-gradient(90deg, #8fbf4a, #6fa03a); }
 .tt-bar.is-nonalc > span { background: linear-gradient(90deg, #34c2c9, var(--color-aero)); }
 
 .tt-chip  { font-family: var(--font-mono); font-size: 11px; padding: 3px 9px; border-radius: 999px; background: var(--color-panel2); border: 1px solid var(--color-line2); color: var(--color-inksoft); }

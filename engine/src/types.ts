@@ -101,12 +101,22 @@ export interface ValuationParams {
 export interface FinanceConfig {
   r_f: number;
   base_spread: number;
+  /** Floor under the endogenous credit spread, after every discount. Nobody lends to a small
+   *  unrated brewery at the risk-free rate; without this the investor-trust and reputation
+   *  discounts (each individually larger than base_spread) drove r_debt to exactly r_f. */
+  min_spread?: number;
   spread_leverage_k: number;
   leverage_ref: number;
   spread_tinv_k: number;
   tinv_ref: number; // T_inv level treated as "neutral" for spread
   coverage_threshold: number; // below this ⇒ punitive reprice + credit rationing
   coverage_penalty_spread: number;
+  /** How the covenant penalty is priced once coverage falls under the threshold.
+   *  "step" (default, the v1 behaviour): the full spread the moment the threshold is crossed —
+   *  a real default-rate provision, and a hard cliff.
+   *  "graduated": the same spread phased in from the threshold down to zero coverage, so a firm
+   *  that just misses pays a little and only a firm earning nothing pays it all. */
+  coverage_penalty_mode?: "step" | "graduated";
   max_leverage: number; // debt capacity cap (debt / equity)
   equity_issue_cost_base: number;
   equity_issue_cost_tinv_k: number;
@@ -733,7 +743,44 @@ export interface ScoringConfig {
   penalties?: ScoringPenalty[];
   /** §5 absolute benchmark bands per raw sub-metric — DISPLAY ONLY, never scored.
    *  Mutating them must leave every score, rank and export unchanged (gate §8.6). */
-  benchmark_bands?: Record<string, { weak: number; sound: number; strong: number }>;
+  benchmark_bands?: Record<string, BenchmarkBand>;
+  /** Round-indexed overrides for the bands above (DW-057). Three of the four scored
+   *  sub-metrics are STOCKS that compound — the median firm's stakeholder mean runs 9.0 at
+   *  round 0 and 34.3 at round 15 — so one flat band cannot serve a 4-round sprint and a full
+   *  season at once. Keyed on the ROUND rather than the game's length, because that is what
+   *  actually decides where a firm should be: round 2 of a 4-round game and round 2 of a
+   *  12-round game are the same firm, so one schedule serves every length.
+   *  Entries are sorted by `from_round`; the last one whose `from_round <= round` wins, and its
+   *  bands merge OVER `benchmark_bands` key by key, so a metric left out of the schedule (e.g.
+   *  interest_cover, whose textbook 1.5/3/6 beats any empirical cut) keeps the flat band.
+   *  A degenerate triple (strong <= weak) means "no meaningful band this round" — the founding
+   *  quarter, where the field has not spread yet — and the UI shows an explanation, not a tier. */
+  benchmark_bands_by_round?: { from_round: number; bands: Record<string, BenchmarkBand> }[];
+}
+
+export interface BenchmarkBand { weak: number; sound: number; strong: number }
+
+/** The bands in force for `round`, schedule merged over the flat map. Shared by the scorecard
+ *  panel and the statements ratio rail so the two can never disagree. */
+export function bandsForRound(
+  scoring: { benchmark_bands?: Record<string, BenchmarkBand>; benchmark_bands_by_round?: { from_round: number; bands: Record<string, BenchmarkBand> }[] } | undefined,
+  round: number,
+): Record<string, BenchmarkBand> {
+  const flat = scoring?.benchmark_bands ?? {};
+  const sched = scoring?.benchmark_bands_by_round;
+  if (!sched?.length) return flat;
+  let pick: Record<string, BenchmarkBand> | null = null;
+  let best = -Infinity;
+  for (const entry of sched) {
+    if (entry.from_round <= round && entry.from_round >= best) { best = entry.from_round; pick = entry.bands; }
+  }
+  return pick ? { ...flat, ...pick } : flat;
+}
+
+/** Does this band actually discriminate? A degenerate one is the schedule's way of saying the
+ *  field has not spread yet this round — grading against it would be inventing a tier. */
+export function bandIsMeaningful(b: BenchmarkBand | undefined): b is BenchmarkBand {
+  return !!b && b.strong > b.weak;
 }
 
 export interface Config {
@@ -1108,6 +1155,11 @@ export interface FirmRoundResult {
   segments: Record<SegmentId, SegmentResult>;
   unit_cost: number;
   cost_buildup: CostBuildup;
+  /** Capacity actually available to brew into this quarter: the generic `state.cap` stock PLUS
+   *  online facilities, after shock and coordination-restraint multipliers. `state.cap` alone is
+   *  only the generic stock, so a utilization ratio built on it reads above 100% in any game with
+   *  the facilities module on. Optional so an older persisted result still parses. */
+  effective_cap?: number;
   pnl: PnL;
   balance_sheet: BalanceSheet;
   cash_flow: CashFlow;

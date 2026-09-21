@@ -156,6 +156,7 @@ export const CALIBRATION_TARGETS: CalibrationTarget[] = [
     warn: [0, 2.5],
     source: "Structural: small brewery balance sheets carry equipment debt but are not LBOs. The config caps leverage at 3.0.",
     confidence: "medium",
+    note: "READ THIS BEFORE TUNING ON IT (DW-056). This moment does not measure the economy — it measures the harness bots' financing scripts. Archetype debt_draw/debt_repay are hardcoded constants (only `aggressive` borrows, only `conservative` repays) and the adaptive best-response agents have no financing lever at all, so simulated leverage sits near 0.06x whatever debt costs. A standing WARN here is expected and is NOT evidence that debt is mispriced; conversely the sweep cannot validate leverage pricing, so spread_leverage_k has to be set against real lending benchmarks instead. Giving the adaptive agent a financing decision would make this moment informative — post-semester work.",
   },
 ];
 

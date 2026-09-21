@@ -176,12 +176,26 @@ export function buildStatements(input: FinanceInputs): FinanceOutput {
     c.finance.spread_leverage_k * Math.max(0, leverage - c.finance.leverage_ref) -
     c.finance.spread_tinv_k * (f.T_inv - c.finance.tinv_ref) -
     Math.max(0, input.spreadReduction ?? 0); // MOD-B10 reputation discount
-  spread = Math.max(0, spread);
+  // Floor, not zero (DW-056). The two discounts above are each larger than base_spread on
+  // their own, so a firm with strong investor relations — or high reputation under MOD-B10 —
+  // used to clamp the spread to 0 and borrow at the risk-free rate. Worse, it made leverage
+  // free: a well-connected firm at the 3x cap paid LESS than a debt-free one, inverting the
+  // whole lesson. A lender's floor is its own funding cost plus something; risk-free is not
+  // on the menu. Legacy configs without the field keep the old 0 clamp.
+  spread = Math.max(c.finance.min_spread ?? 0, spread);
   let rDebt = c.finance.r_f + spread;
   let interest = rDebt * debtEff + convInterest + rbfInterest;
   let coverage = interest > EPS ? ebit / interest : ebit >= 0 ? 999 : 0;
   if (coverage < c.finance.coverage_threshold) {
-    rDebt += c.finance.coverage_penalty_spread; // punitive reprice (bank debt only)
+    // Covenant breach: the bank reprices (bank debt only). "step" charges the whole spread at the
+    // threshold — a default-rate provision, and a cliff. "graduated" phases the SAME spread in
+    // between the threshold and zero coverage, so missing by a hair costs a hair. Either way the
+    // breach itself is binary: `credit_rationed` flags it and the covenant clock starts.
+    const thr = c.finance.coverage_threshold;
+    const severity = c.finance.coverage_penalty_mode === "graduated" && thr > 0
+      ? Math.min(1, (thr - Math.max(0, coverage)) / thr)
+      : 1;
+    rDebt += c.finance.coverage_penalty_spread * severity;
     interest = rDebt * debtEff + convInterest + rbfInterest;
     coverage = interest > EPS ? ebit / interest : ebit >= 0 ? 999 : 0;
     creditRationed = true;

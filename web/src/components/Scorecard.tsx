@@ -16,8 +16,12 @@
  * your relative position fell, that's rivals outrunning you — the single most common
  * misreading of a relative scorecard.
  */
+import type { ReactNode } from "react";
+import { bandIsMeaningful, bandsForRound } from "drinkwars-engine";
 import type { GameView } from "../game/controller.js";
+import { fmt } from "../labels.js";
 import { Card, Eyebrow } from "./ui.js";
+import { InfoDot } from "./InfoDot.js";
 import { Bridge, type BridgeStep } from "./Dashboards.js";
 
 const HOP = "var(--color-hop)";
@@ -31,6 +35,55 @@ const COMPONENTS: { key: CompKey; label: string; blurb: string }[] = [
   { key: "intangible", label: "Preparedness", blurb: "Quality + brand capital — the product you'll compete with next year." },
   { key: "stakeholder", label: "Standing", blurb: "Employee, investor and regulator trust." },
 ];
+
+/** What each component actually measures, what moves it, and what high and low look like.
+ *  Driven off the live scoring config so it cannot drift from the engine — and written to
+ *  close a specific gap: the Financial card shows a RETURN ON CAPITAL gauge, but return on
+ *  capital is only the smallest slice of what Financial scores. A student reading the gauge
+ *  alone would conclude the pillar is about margin when most of it is balance-sheet safety. */
+function detailOf(key: CompKey, sc: GameView["scoring"]): ReactNode {
+  const fb = sc?.financial_blend;
+  const pctOf = (x: number | undefined) => (x == null ? "—" : `${Math.round(x * 100)}%`);
+  const cover = sc?.healthy_coverage ?? 2;
+  const lev = sc?.healthy_leverage ?? 1.5;
+  const safety = sc?.cash_safety_threshold ?? 120_000;
+  switch (key) {
+    case "financial":
+      return (
+        <>
+          <span className="block"><b>Three things, blended</b> — and the gauge below shows only the first, which is the smallest slice:</span>
+          <span className="mt-1 block">· <b>Return on capital</b> ({pctOf(fb?.profitability)}): net income ÷ (debt + equity).</span>
+          <span className="block">· <b>Balance-sheet soundness</b> ({pctOf(fb?.soundness)}): how far your interest coverage clears {cover.toFixed(1)}×, less a penalty once debt-to-equity climbs past {lev.toFixed(1)}×.</span>
+          <span className="block">· <b>Cash buffer</b> ({pctOf(fb?.cash_resilience)}): cash against the {fmt.money(safety)} safety line, credited up to 3× and no further.</span>
+          <span className="mt-1.5 block"><b>High</b> is profitable, comfortably covering interest, with cash in the bank. <b>Low</b> is losing money — or profitable but stretched, because a thin cover and an empty account cost you more here ({pctOf((fb?.soundness ?? 0) + (fb?.cash_resilience ?? 0))} of the pillar) than a middling margin does.</span>
+        </>
+      );
+    case "market":
+      return (
+        <>
+          <span className="block">Your share of demand, <b>summed across every category you sell into</b>. Two categories at 20% each scores the same as one at 40% — breadth and depth are worth the same here.</span>
+          <span className="mt-1.5 block"><b>High</b> means you are a meaningful part of the categories you contest. <b>Low</b> means you are small, or spread so thin that you are nobody in any of them.</span>
+          <span className="mt-1.5 block">Moved by price, brand, which categories you choose to fight for — and by capacity, because you cannot hold share you have no tanks to brew for.</span>
+        </>
+      );
+    case "intangible":
+      return (
+        <>
+          <span className="block">Quality capital + brand capital, added together. These are <b>stocks, not spending</b>: it does not measure what you spent this quarter, it measures what you have accumulated.</span>
+          <span className="mt-1.5 block">Both lag — what you fund this quarter lands next quarter — and both decay every quarter you stop funding them.</span>
+          <span className="mt-1.5 block"><b>High</b> is sustained investment: the product and the reputation you will still be competing with a year from now. <b>Low</b> means you have been harvesting this year's profit and letting both run down. It is the pillar that punishes short-termism, which is why it is slow to build and slow to notice.</span>
+        </>
+      );
+    case "stakeholder":
+      return (
+        <>
+          <span className="block">The <b>average</b> of your three relationship stocks — employees, investors, regulators. Because it is an average, neglecting one drags the whole pillar down even when the other two are strong.</span>
+          <span className="mt-1.5 block">Each one also pays off outside the scorecard: investor trust narrows your borrowing spread and cuts the cost of issuing equity, regulator trust lowers your compliance overhead, and employee trust raises crew productivity, which lowers what every drink costs to brew.</span>
+          <span className="mt-1.5 block"><b>High</b> is all three funded steadily. <b>Low</b> is one or more ignored. Same stock behaviour as Preparedness: a quarter's lag, and decay if you stop.</span>
+        </>
+      );
+  }
+}
 
 /** Speak a within-round z as position-vs-pack (never print "z-score" at a student). */
 function positionOf(z: number): { text: string; tone: "good" | "mid" | "risk" } {
@@ -78,7 +131,10 @@ const sc = (n: number) => n.toFixed(2);
 const scd = (n: number) => `${n >= 0 ? "+" : ""}${n.toFixed(3)}`;
 
 export function ScorecardPanel({ view }: { view: GameView }) {
-  const bands = view.scoring?.benchmark_bands ?? {};
+  // Bands in force for the round being read, not the 16-round steady state (DW-057). The
+  // stocks these grade compound over a season, so a flat band cannot serve a 4-round sprint
+  // and a full tournament at once.
+  const bands = bandsForRound(view.scoring, view.ownResult?.round ?? 0);
   const w = view.scoring?.weights;
   const h = view.history ?? [];
   const cur = h.at(-1)?.own;
@@ -175,7 +231,10 @@ export function ScorecardPanel({ view }: { view: GameView }) {
           const z = cur.scoreNorm?.[c.key] ?? 0;
           const pos = positionOf(z);
           const raw = rawOf[c.key];
-          const band = raw ? bands[raw.bandKey] : undefined;
+          const rawBand = raw ? bands[raw.bandKey] : undefined;
+          // A degenerate band is the schedule saying the field has not spread yet this round —
+          // grade against it and you invent a tier out of nothing.
+          const band = bandIsMeaningful(rawBand) ? rawBand : undefined;
           const tier = raw && band ? tierOf(raw.value, band) : null;
 
           // The two-readings-disagree callout (§5): relative and absolute at odds.
@@ -198,14 +257,29 @@ export function ScorecardPanel({ view }: { view: GameView }) {
           return (
             <div key={c.key} className="rounded border border-line bg-panel2/40 p-2.5">
               <div className="flex items-baseline justify-between gap-2">
-                <div className="font-mono text-[0.66rem] font-bold uppercase tracking-[0.1em]">{c.label}</div>
+                <div className="flex items-baseline gap-1.5">
+                  <span className="font-mono text-[0.66rem] font-bold uppercase tracking-[0.1em]">{c.label}</span>
+                  {w && <span className="font-mono text-[0.58rem] text-inksoft">{Math.round(w[c.key] * 100)}%</span>}
+                  <InfoDot title={`${c.label} — what it measures`} align="right">{detailOf(c.key, view.scoring)}</InfoDot>
+                </div>
                 <div className="text-[0.68rem] font-semibold" style={{ color: TONE_COLOR[pos.tone] }}>{pos.text}</div>
               </div>
               <div className="mt-0.5 text-[0.66rem] text-inksoft">{c.blurb}</div>
               {raw && band ? (
-                <div className="mt-2"><BandGauge value={raw.value} band={band} format={raw.format} /></div>
+                <div className="mt-2">
+                  <BandGauge value={raw.value} band={band} format={raw.format} />
+                  {/* The gauge draws the zones but never named them. "Weak" and "strong" mean
+                      nothing until a student can see the number each one starts at. */}
+                  <div className="mt-1 font-mono text-[0.56rem] uppercase tracking-wide text-inksoft">
+                    weak under {raw.format(band.weak)} · median {raw.format(band.sound)} · strong from {raw.format(band.strong)}
+                  </div>
+                </div>
               ) : (
-                <div className="mt-2 text-[0.62rem] text-inksoft">No reading yet.</div>
+                <div className="mt-2 text-[0.62rem] text-inksoft">
+                  {raw
+                    ? `Too early to grade — reads ${raw.format(raw.value)}, but the field has not spread yet this quarter.`
+                    : "No reading yet."}
+                </div>
               )}
               {c.key === "financial" && coverLine && <div className="mt-1.5 text-[0.64rem] text-inksoft">{coverLine.text}</div>}
               {callout && <div className="mt-1.5 rounded border border-copper/50 bg-copper/10 px-2 py-1 text-[0.66rem] leading-snug">{callout}</div>}

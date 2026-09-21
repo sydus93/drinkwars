@@ -240,6 +240,8 @@ export class StudentClient {
       inventoryEnabled: this.config ? inventoryEnabled(this.config) : false,
       modules: this.config?.modules,
       scoring: this.config?.scoring,
+      capacity: this.config?.capacity,
+      finance: this.config?.finance,
       briefings: v.briefings ?? [],
       fx: v.fx ?? {},
       markets: v.markets ?? [], // MOD-B01 per-team city view (projected server-side)

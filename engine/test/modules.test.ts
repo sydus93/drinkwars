@@ -307,6 +307,20 @@ test("MOD-A02 public goods: contributions pool, decay, and deliver a shared bene
   assert.ok((r2.world.public_good_pools?.regional_marketing ?? 0) < (r.world.public_good_pools?.regional_marketing ?? 0), "pool decays without fresh contributions");
 });
 
+test("MOD-A02 public goods: published demand is the demand firms actually sold into", () => {
+  // Regression (2026-09-18): the market row reported the raw demand stock while the
+  // allocation used stock × (shock × public-good) multiplier, so a funded marketing pool
+  // made units sold exceed published demand — `sold_gt_demand` in the fuzzer, on any thin
+  // preset carrying this module (base and the full preset both masked it).
+  const c = loadConfig(modulesOverride(["publicGoods"]));
+  const w = initGame(c);
+  const fund = (amt: number) => w.firms.map((f) => mkDecision(f.id, w, { price: Object.fromEntries(w.segments.map((s) => [s.id, 4])), public_good_contributions: { regional_marketing: amt } }));
+  const funded = resolveRound(w, fund(400_000), c).result.market.find((m) => m.segment === "mass")!;
+  const bare = resolveRound(w, fund(0), c).result.market.find((m) => m.segment === "mass")!;
+  assert.ok(funded.D > bare.D, "a live marketing fund raises the demand the market row reports");
+  for (const m of [funded, bare]) assert.ok(m.total_q <= m.D * 1.0001 + 1, `units sold never exceed published demand (q=${m.total_q.toFixed(0)} D=${m.D.toFixed(0)})`);
+});
+
 test("MOD-B01 geography: entering a region costs entry, splits capacity, balance holds", () => {
   const c = loadConfig(modulesOverride(["geography"]));
   const w = initGame(c);

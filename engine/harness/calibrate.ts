@@ -178,15 +178,51 @@ const mixedMoments = mixedRuns.map((r) => momentsOf(r, nRounds));
 const across = (ms: Moments[], k: keyof Moments): number | null =>
   median(ms.map((m) => m[k]).filter((x): x is number => x != null && Number.isFinite(x)));
 
+/** Exit and survival are RATES, and a median across seeds is the wrong estimator for a
+ *  rate. One seed is 8 firms over 4 years, so a per-seed exit rate can only be 0%, 3.1%,
+ *  6.3%, … — and the median of 24 such values is 0% until more than half the seeds happen
+ *  to contain an exit, then jumps to 3.1%. The moment was effectively a coin-flip gate
+ *  that could not move with the parameter being tuned. Pool instead: count every distinct
+ *  forced exit across the whole sweep over every firm-year in it. Same denominator logic
+ *  for survival. Distributional moments (margins, utilization, prices) keep the median —
+ *  there the question really is "what does a typical brewery look like". */
+function pooledRates(runs: RunMetrics[], nRounds: number): { annual_exit_rate: number | null; survival_4yr: number | null } {
+  let exits = 0;
+  let survivors = 0;
+  let firms = 0;
+  for (const run of runs) {
+    const n = run.history[0]?.firm_results.length ?? 0;
+    if (!n) continue;
+    firms += n;
+    exits += new Set(run.bankruptcies.map((b) => b.firm)).size;
+    survivors += run.finalScores.filter((s) => s.status === "active" || s.status === "exited_invested").length;
+  }
+  const years = nRounds / 4;
+  // These two are NOT complements. `bankruptcies` is forced exit only, while a survivor is
+  // active-or-bought-into, so a clean voluntary exit (`exited_banked`) counts in neither — by
+  // design: the BA closing rate this is graded against counts failures, not owners who sold up
+  // and walked away happy. Do not expect exit% + survival% to reach 100.
+  return {
+    annual_exit_rate: firms > 0 && years > 0 ? (exits / firms / years) * 100 : null,
+    survival_4yr: firms > 0 ? (survivors / firms) * 100 : null,
+  };
+}
+const POOLED_IDS = new Set(["annual_exit_rate", "survival_4yr"]);
+
 bar("REPORT CARD  (graded on the MIXED population — a classroom is a mixed-ability field)");
 console.log(`  ${"Moment".padEnd(34)} ${"mixed".padStart(11)} ${"adaptive".padStart(11)} ${"fixed".padStart(11)}  ${"real-world".padStart(11)}  ${"pass band".padStart(17)}   verdict`);
 
 const TAG: Record<Verdict, string> = { PASS: "PASS", WARN: "» WARN", FAIL: "✗ FAIL", "N/A": "  n/a" };
 const rows: { t: CalibrationTarget; mixed: number | null; adaptive: number | null; fixed: number | null; verdict: Verdict }[] = [];
+const pooledMixed = pooledRates(mixedRuns, nRounds);
+const pooledAdaptive = pooledRates(adaptiveRuns, nRounds);
+const pooledFixed = pooledRates(fixedRuns, nRounds);
 for (const t of CALIBRATION_TARGETS) {
-  const m = across(mixedMoments, t.id as keyof Moments);
-  const a = across(adaptiveMoments, t.id as keyof Moments);
-  const f = across(fixedMoments, t.id as keyof Moments);
+  const pooled = POOLED_IDS.has(t.id);
+  const key = t.id as keyof Moments;
+  const m = pooled ? pooledMixed[t.id as keyof typeof pooledMixed] : across(mixedMoments, key);
+  const a = pooled ? pooledAdaptive[t.id as keyof typeof pooledAdaptive] : across(adaptiveMoments, key);
+  const f = pooled ? pooledFixed[t.id as keyof typeof pooledFixed] : across(fixedMoments, key);
   const v = verdictFor(t, m);
   rows.push({ t, mixed: m, adaptive: a, fixed: f, verdict: v });
   const real = t.target == null ? "—" : fmt(t, t.target);

@@ -7,7 +7,7 @@
 import { GameOrchestrator, InMemoryAdapter, randomBreweryNames, renameFirms } from "drinkwars-server";
 import { resolveConfig, decideAdaptive, ADAPTIVE_LEANS, inventoryEnabled, roleBriefings, summarizeAgreementsFor, summarizeLobbying, generateHiringMarket, projectMarkets, projectFirms, projectShocks, projectHistory, segmentDemandTotals } from "drinkwars-engine";
 import type { RoleBriefing, AllianceSummary, LobbySummary, Candidate } from "drinkwars-engine";
-import type { Config, ConfigOverride, FirmDecision, FirmId, FirmRoundResult, FirmState, Lean, ModulesConfig, RoundResult, SegmentId, WorldState } from "drinkwars-engine";
+import type { BalanceSheet, CashFlow, Config, ConfigOverride, FirmDecision, FirmId, FirmRoundResult, FirmState, Lean, ModulesConfig, PnL, RoundResult, SegmentId, WorldState } from "drinkwars-engine";
 import { rankDistrictsForType } from "../labels.js";
 import type { TeamPlan } from "./multiplayer.js";
 
@@ -60,6 +60,15 @@ export interface OwnTrend {
   T_emp?: number;
   T_inv?: number;
   T_gov?: number;
+  // Statements & Ratios page — the full three statements + sales detail per quarter (engine
+  // OwnTrendView). Optional: a view served by a build older than 2026-09-18 lacks them, and the
+  // page then falls back to the latest quarter from `ownResult`.
+  pnl?: PnL;
+  balance?: BalanceSheet;
+  cashFlow?: CashFlow;
+  unitCost?: number;
+  capacity?: number;
+  categories?: Record<SegmentId, { price: number; sold: number; wanted: number; revenue: number; share: number }>;
 }
 export interface FieldTrend {
   round: number;
@@ -176,6 +185,8 @@ export interface GameView {
   inventoryEnabled: boolean; // production/inventory mode on for this game?
   modules?: ModulesConfig; // resolved expansion-module config (gates the module decision controls)
   scoring?: Config["scoring"]; // scorecard config (weights, benchmark bands, accumulation window) — DW-045 panel inputs
+  capacity?: Config["capacity"]; // $→units gain, build lag, wear-out, upkeep — lets the Tanks card bridge dollars to drinks
+  finance?: Config["finance"]; // leverage reference / cap + coverage threshold — lets the Financing card state its own rules
   briefings: RoleBriefing[]; // MOD-B05 role intel (empty when off)
   fx: Record<string, number>; // MOD-B02 export exchange rates (empty when off)
   markets: MarketView[]; // MOD-B01 per-market ("city") view for the City View (empty when geography off)
@@ -306,6 +317,8 @@ export class SinglePlayerGame {
       inventoryEnabled: inventoryEnabled(this.config),
       modules: this.config.modules,
       scoring: this.config.scoring,
+      capacity: this.config.capacity,
+      finance: this.config.finance,
       briefings,
       fx: world.fx_rates ?? {},
       markets,

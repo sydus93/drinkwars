@@ -1,7 +1,9 @@
 import { useRef } from "react";
 
-// Cartographic series palette: clay / terrain-green / aero-blue / plum.
-const COLORS = ["var(--color-clay)", "var(--color-copper)", "var(--color-aero)", "var(--color-plum)"];
+// One hue per category, matching its coin in Lineup & Pricing: Lagers & Light copper, Craft
+// Premium hop-green, the new category aero-blue. (It was clay beside copper — two browns that
+// read as one bar.)
+const COLORS = ["var(--color-copper)", "var(--color-hop)", "var(--color-aero)", "var(--color-plum)"];
 
 /**
  * Unified capacity-allocation control: a single bar split across the active
