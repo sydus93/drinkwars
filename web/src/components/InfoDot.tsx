@@ -46,7 +46,7 @@ export function InfoDot({ title, children, align = "left" }: { title?: ReactNode
         type="button"
         aria-label={typeof title === "string" ? `Info: ${title}` : "More info"}
         onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpen((v) => !v); }}
-        className="flex h-[1.05rem] w-[1.05rem] items-center justify-center rounded-full border border-line2 text-[0.62rem] font-bold leading-none text-inksoft transition-colors hover:border-copper hover:text-copperdeep"
+        className="relative flex h-[1.05rem] w-[1.05rem] items-center justify-center rounded-full border border-line2 text-[0.62rem] font-bold leading-none text-inksoft transition-colors before:absolute before:-inset-3 before:content-[''] hover:border-copper hover:text-copperdeep"
       >
         ?
       </button>

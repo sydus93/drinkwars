@@ -41,12 +41,20 @@ export function AllocationBar({
       next[boundary] = hi - clamped;
       onChange(next);
     };
+    // `pointercancel` matters as much as `pointerup`, and on touch it is the NORMAL ending,
+    // not the edge case: the browser takes the gesture over for scrolling and cancels ours.
+    // Listening for pointerup alone leaked `move` onto the window permanently — after one
+    // drag on a phone, every later scroll or swipe anywhere on the page kept dragging the
+    // allocation, silently rewriting a decision the player had already set. Reproduced at
+    // 393px: one drag moved the split 50% → 56%, then an unrelated touch moved it to 60%.
     const up = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
   };
 
   return (
@@ -70,7 +78,11 @@ export function AllocationBar({
           <div
             key={b}
             onPointerDown={startDrag(b)}
-            className="absolute top-0 z-10 flex h-full w-3 -translate-x-1/2 cursor-ew-resize items-center justify-center"
+            // `touch-none` is what actually stops the browser claiming this gesture as a
+            // scroll — preventDefault() on pointerdown does not. w-11 is the finger-sized hit
+            // area (the visible rule inside stays 3px, so nothing looks different); the old
+            // 12px handle was under a third of a fingertip.
+            className="absolute top-0 z-10 flex h-full w-11 -translate-x-1/2 touch-none cursor-ew-resize items-center justify-center"
             style={{ left: `${cum[b]}%` }}
           >
             <div className="h-7 w-[3px] rounded-full bg-paper shadow-[0_0_0_1px_rgba(36,28,22,0.3)]" />

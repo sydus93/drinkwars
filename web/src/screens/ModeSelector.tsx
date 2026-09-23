@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { MODULE_CATEGORIES, MODULE_REGISTRY, PRESETS, type ModuleMeta } from "drinkwars-engine";
 import type { ModuleSelection } from "../game/multiplayer.js";
 import { InfoDot } from "../components/InfoDot.js";
@@ -31,15 +31,26 @@ export function ModeSelector({ onChange }: { onChange: (modules: ModuleSelection
     for (const id of s) m[id] = { enabled: true };
     onChange(m, s.size);
   };
+  // Every mutation reads from `selectedRef`, never from the `selected` closure, and updates it
+  // synchronously (DW-058). React batches state updates, so two toggles inside one tick both
+  // built their new Set from the SAME stale `selected` and the second silently discarded the
+  // first — a game created with "Labor market" + "Sustainability" came out with sustainability
+  // only, and nothing on screen said so. A human clicking a few hundred ms apart never saw it
+  // because a re-render refreshed the closure in between; scripted setup hit it every time.
+  const selectedRef = useRef(selected);
+  const commit = (s: Set<string>) => {
+    selectedRef.current = s;
+    setSelected(s);
+    emit(s);
+  };
   const applyPreset = (id: string) => {
     const p = PRESETS.find((x) => x.id === id);
     const s = new Set(liveOf(p?.modules ?? []));
     setPresetId(id);
-    setSelected(s);
-    emit(s);
+    commit(s);
   };
   const toggle = (id: string) => {
-    const s = new Set(selected);
+    const s = new Set(selectedRef.current);
     if (s.has(id)) {
       s.delete(id);
       // Anything that depended on this module switches off with it.
@@ -50,8 +61,7 @@ export function ModeSelector({ onChange }: { onChange: (modules: ModuleSelection
       for (const d of MODULE_REGISTRY.find((m) => m.id === id)?.deps ?? []) if (LIVE.has(d)) s.add(d);
     }
     setPresetId("custom");
-    setSelected(s);
-    emit(s);
+    commit(s);
   };
   const toggleOpen = (id: string) => {
     const s = new Set(open);

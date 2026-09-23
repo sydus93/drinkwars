@@ -51,21 +51,35 @@ if (MODULES.length) {
     await sleep(150);
   }
   await sleep(400);
-  const applied = await ins.evaluate((wanted) => {
-    const out = [];
-    for (const name of wanted) {
+  // One toggle per tick, then READ BACK the state. Two things went wrong here before: the
+  // shelves re-render on each click (so a collected list goes stale), and ModeSelector used to
+  // rebuild its selection from a closed-over value, so two toggles in one batch kept only the
+  // last. Both are fixed, but this still verifies rather than trusting the click — reporting
+  // "on" for a module that never turned on is worse than failing.
+  const applied = [];
+  for (const name of MODULES) {
+    const res = await ins.evaluate((n) => {
       const row = [...document.querySelectorAll("div")].find((d) => {
         const label = d.querySelector(":scope > div > div > span.font-semibold");
-        return label && label.textContent.toLowerCase().includes(name.toLowerCase()) && d.querySelector(":scope > button[aria-pressed]");
+        return label && label.textContent.toLowerCase().includes(n.toLowerCase()) && d.querySelector(":scope > button[aria-pressed]");
       });
       const btn = row?.querySelector(":scope > button[aria-pressed]");
-      if (!btn) { out.push(`${name}: NOT FOUND`); continue; }
+      if (!btn) return "NOT FOUND";
       if (btn.getAttribute("aria-pressed") !== "true") btn.click();
-      out.push(`${name}: on`);
-    }
-    return out;
-  }, MODULES);
+      return "clicked";
+    }, name);
+    await sleep(250);
+    const on = await ins.evaluate((n) => {
+      const row = [...document.querySelectorAll("div")].find((d) => {
+        const label = d.querySelector(":scope > div > div > span.font-semibold");
+        return label && label.textContent.toLowerCase().includes(n.toLowerCase()) && d.querySelector(":scope > button[aria-pressed]");
+      });
+      return row?.querySelector(":scope > button[aria-pressed]")?.getAttribute("aria-pressed") === "true";
+    }, name);
+    applied.push(`${name}: ${res === "NOT FOUND" ? "NOT FOUND" : on ? "on" : "FAILED TO STICK"}`);
+  }
   console.log(`modules -> ${applied.join(", ")}`);
+  if (applied.some((a) => /NOT FOUND|FAILED/.test(a))) { console.error("Aborting: the game would not have the modules you asked for."); process.exit(1); }
   await sleep(300);
 }
 await clickText(ins, "Create game");

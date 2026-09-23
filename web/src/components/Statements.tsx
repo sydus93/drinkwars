@@ -11,7 +11,7 @@
  * Deliberately plain. The bridges and radars live in Trends; this page is for learning to
  * read the sheets.
  */
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import type { BalanceSheet, CashFlow, PnL } from "drinkwars-engine";
 import type { GameView } from "../game/controller.js";
 import { SEG_LABEL, fmt } from "../labels.js";
@@ -100,11 +100,31 @@ const ratioInput = (q: Quarter): RatioInput => ({
  *  Only these get |x| in the ratio drill-down. Everything else — notably `equity`, which can
  *  genuinely be negative once losses eat the capital — must print its real sign, or the
  *  drill-down contradicts the balance sheet two inches to its left. */
+/** True on a phone-width viewport. Tracked live rather than read once, so rotating the handset
+ *  or resizing a desktop window re-flows instead of leaving a stale column count. */
+function useNarrow(): boolean {
+  const [narrow, setNarrow] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 640px)").matches);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 640px)");
+    const on = () => setNarrow(mq.matches);
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, []);
+  return narrow;
+}
+
 const NEGATED_LINES = new Set(["cogs", "opex", "spoilage", "depreciation", "interest"]);
 const LINE_BY_KEY = new Map([...PNL, ...BS, ...CF].map((l) => [l.key, l]));
 
 export function StatementsAndRatios({ view }: { view: GameView }) {
   const [full, setFull] = useState(false);
+  // How many quarters fit side by side. Four columns plus the delta need ~425px of table,
+  // which a phone does not have: the card scrolls internally, so the newest quarter — the one
+  // that matters — sits off the right edge cut mid-digit, and the squeezed label column wraps
+  // "Operating income (EBIT)" onto three lines. Two quarters fit, which also keeps the single
+  // comparison a reader actually makes (this quarter against last) fully on screen. The
+  // "full history" toggle still shows everything for anyone who wants to scroll.
+  const cols = useNarrow() ? 2 : 4;
   const [common, setCommon] = useState(false);
   const [hover, setHover] = useState<string | null>(null);
   const [pinned, setPinned] = useState<string | null>(null);
@@ -137,7 +157,7 @@ export function StatementsAndRatios({ view }: { view: GameView }) {
   const missingLabel = all.length === 1
     ? "Only this quarter has full statements — the server is running an older engine build."
     : `${view.history.length - all.length} of ${view.history.length} quarters have no statements recorded and are left out below.`;
-  const shown = full ? all : all.slice(-4);
+  const shown = full ? all : all.slice(-cols);
   const last = shown[shown.length - 1];
   const prev = shown.length > 1 ? shown[shown.length - 2] : null;
   const uses = new Set(hot ? RATIO_DEFS.find((d) => d.key === hot)?.uses ?? [] : []);
@@ -220,9 +240,9 @@ export function StatementsAndRatios({ view }: { view: GameView }) {
             <button key={label} onClick={() => setCommon(v)} className="rounded-[7px] px-2.5 py-1" style={{ background: common === v ? "var(--color-panel)" : "transparent", color: common === v ? "var(--color-copperdeep)" : "var(--color-inksoft)", fontWeight: common === v ? 700 : 500 }}>{label}</button>
           ))}
         </div>
-        {all.length > 4 && (
+        {all.length > cols && (
           <button onClick={() => setFull((f) => !f)} className="rounded-[9px] border border-line2 bg-panel2 px-2.5 py-1.5 font-mono text-[0.6rem] uppercase tracking-wide text-copperdeep">
-            {full ? "Last 4 quarters" : `Full history · ${all.length} quarters`}
+            {full ? `Last ${cols} quarters` : `Full history · ${all.length} quarters`}
           </button>
         )}
       </div>
