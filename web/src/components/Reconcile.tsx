@@ -49,7 +49,13 @@ export function Reconcile({ view, conflicts, offDesk = [], seatRole, onAdopt }: 
       </div>
       {open.length > 0 && (
         <div className="mt-1.5 grid gap-1">
-          {open.map((c) => (
+          {open.map((c) => {
+          // The lever belongs to a SEATED teammate: nothing anyone clicks here changes what
+          // resolves at lock. Offering "Take theirs / Noted" staged a decision that does not
+          // exist — it read as approve/deny and it was neither. This row is a NOTIFICATION.
+          // The way to change the value is to go and ask that officer to re-submit it.
+          const ownersCall = !c.suggestion && !c.cover && c.winner === "them";
+          return (
             <div key={c.key} className="grid gap-0.5 border-t border-line pt-1 text-[0.88rem]">
               <div className="flex flex-wrap items-center gap-x-2">
                 <span className="font-semibold text-ink">{c.label}</span>
@@ -68,12 +74,13 @@ export function Reconcile({ view, conflicts, offDesk = [], seatRole, onAdopt }: 
                     : c.cover
                       ? (c.winner === "me" ? "yours — you submitted after them" : "theirs, unless you submit again")
                       : c.winner === "me" ? "yours will be used" : "theirs will be used"}</span>
-                {!(c.cover?.ownerName) && <button onClick={() => { onAdopt(c.field, c.theirs); ackConflict(c); bump((n) => n + 1); }} className="rounded-md border border-copper px-2 py-0.5 font-mono text-[0.66rem] font-bold uppercase tracking-wide text-copperdeep hover:bg-copper/10">{c.suggestion ? "Adopt their suggestion" : c.cover ? "OK, keep theirs" : "Take theirs"}</button>}
-                <button onClick={() => { ackConflict(c); bump((n) => n + 1); }} className="rounded-md border border-line2 px-2 py-0.5 font-mono text-[0.66rem] uppercase tracking-wide text-inksoft hover:text-ink">{c.suggestion ? "Keep mine" : c.cover?.ownerName ? "Noted" : c.cover ? "Keep mine (submit to overrule)" : c.winner === "me" ? "Keep mine" : "Noted"}</button>
+                {!ownersCall && !(c.cover?.ownerName) && <button onClick={() => { onAdopt(c.field, c.theirs); ackConflict(c); bump((n) => n + 1); }} className="rounded-md border border-copper px-2 py-0.5 font-mono text-[0.66rem] font-bold uppercase tracking-wide text-copperdeep hover:bg-copper/10">{c.suggestion ? "Adopt their suggestion" : c.cover ? "OK, keep theirs" : "Take theirs"}</button>}
+                <button onClick={() => { ackConflict(c); bump((n) => n + 1); }} className="rounded-md border border-line2 px-2 py-0.5 font-mono text-[0.66rem] uppercase tracking-wide text-inksoft hover:text-ink">{ownersCall ? "Got it" : c.suggestion ? "Keep mine" : c.cover?.ownerName ? "Noted" : c.cover ? "Keep mine (submit to overrule)" : c.winner === "me" ? "Keep mine" : "Noted"}</button>
               </div>
-              <div className="text-inksoft">{c.who} set: <b className="text-ink">{t(c.field, c.theirs)}</b> · You have: <b className="text-ink">{t(c.field, c.mine)}</b></div>
+              <div className="text-inksoft">{c.who} set: <b className="text-ink">{t(c.field, c.theirs)}</b> · You have: <b className="text-ink">{t(c.field, c.mine)}</b>
+                {ownersCall && <span className="italic"> — this lever is theirs; to change it, ask {c.who} to set it and submit again.</span>}</div>
             </div>
-          ))}
+          ); })}
         </div>
       )}
       </>)}

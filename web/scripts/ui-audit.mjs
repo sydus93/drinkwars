@@ -112,11 +112,15 @@ ok(firmPrice && cfoSeatPrice != null && Math.abs(firmPrice[seg] - cfoSeatPrice) 
 await sleep(3000);
 const ceoT = await text(ceo);
 ok(/Reconcile · 2 open/i.test(ceoT) && /Dividend[\s\S]{0,160}theirs will be used/i.test(ceoT) && /Prices[\s\S]{0,120}set this for the empty CMO desk[\s\S]{0,160}theirs, unless you submit again/i.test(ceoT), "CEO with a stale form sees the CFO's dividend (their desk) AND the price cover, in plain words", ceoT.match(/Reconcile · [\s\S]{0,420}/i)?.[0]?.replace(/\n+/g, " | ").slice(0, 420));
-await clickText(ceo, "Take theirs");
+// DW-060: the dividend sits on the CFO's OWN desk, so the CEO gets a notification, not a
+// choice — "Got it" is the only control, and there is no "Take theirs" to click. The price
+// cover (empty CMO chair) is still a real decision and keeps its buttons.
+ok(!(await has(ceo, /Take theirs/)), "CEO gets NO approve/deny on a seated teammate's own lever");
+await clickText(ceo, "Got it");
 await sleep(300);
 await clickText(ceo, "OK, keep theirs");
 await sleep(300);
-ok(!(await has(ceo, /Reconcile · \d+ open/)), "CEO takes the dividend + keeps the price cover → card clears");
+ok(!(await has(ceo, /Reconcile · \d+ open/)), "CEO acknowledges the dividend + keeps the price cover → card clears");
 // ── DW-051 cover: CFO hires for the EMPTY CHRO chair + buys research, AFTER the CEO submitted ──
 const cfoView = await (await fetch(`http://localhost:8787/view?token=${cfoTok}`)).json();
 const cfoSlice = { ...(cfoView.teamPlan.seats.find((s) => s.me).partial), invest_T_emp: 21000, buy_info: true };
