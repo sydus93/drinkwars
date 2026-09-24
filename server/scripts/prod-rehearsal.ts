@@ -110,6 +110,10 @@ async function pollLoop(s: Student) {
     if (p.status === 200 && p.json?.stamp && p.json.stamp !== s.stamp) {
       s.stamp = p.json.stamp;
       s.round = p.json.round;
+      // Mirror the client's DW-064 herd jitter: everyone notices the same stamp change at
+      // once, so the real app spreads the follow-up /view. A driver without it measures a
+      // burst the deployed client no longer produces.
+      if (s.views > 0) await sleep(Math.random() * 1200);
       const v = await call("GET", "/view", { token: s.token });
       if (v.status === 200) s.views++;
       else failures.push(`${s.ext} /view after stamp change → ${v.status}`);
