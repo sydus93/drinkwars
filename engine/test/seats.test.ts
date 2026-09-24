@@ -103,3 +103,29 @@ test("DW-051 empty-chair cover: owner always wins; among CEO + covering teammate
   // a lever nobody touched keeps the base
   assert.equal(m.invest_process, base.invest_process);
 });
+
+test("DW-062: the capacity-allocation divider belongs to the COO, and a seated CMO cannot revert it", () => {
+  // `presence` renders inside the operations card (DecisionForm's deskCls("operations")), so the
+  // CMO's form — which opens on the commercial desk — never shows it. While it sat on the
+  // commercial desk the CMO still TRANSMITTED it every submit — their client always ships its own-desk levers, seeded from the
+  // standing plan — and the owner pass runs after the recency pass, so the COO's drag was
+  // discarded in BOTH submission orders and the split snapped back to last round's value.
+  assert.equal(DESK_LEVERS.operations.includes("presence"), true, "COO owns the divider");
+  assert.equal(DESK_LEVERS.commercial.includes("presence"), false, "CMO must not own a control their form never shows");
+
+  const base = fullDecision("firm_1");
+  const split = { premium: 3, mass: 1 };
+  const stale = { premium: 1, mass: 1 }; // what the CMO's client carries forward unseen
+  const coo: SeatPartial = { role: "coo", updated_at: 1000, partial: { presence: split } };
+  const cmo: SeatPartial = { role: "cmo", updated_at: 2000, partial: { price: { mass: 7 }, presence: stale } };
+
+  // COO first, CMO second — the CMO's blind carry-forward must not win
+  assert.deepEqual(mergeMemberDecisions(base, [coo, cmo]).presence, split);
+  // CMO first, COO second — owner still wins (this ordering failed too, before the fix)
+  assert.deepEqual(mergeMemberDecisions(base, [{ ...cmo, updated_at: 1000 }, { ...coo, updated_at: 2000 }]).presence, split);
+  // and a CEO submitting last cannot overrule the desk that owns it
+  const ceo: SeatPartial = { role: "ceo", updated_at: 3000, partial: { presence: stale } };
+  assert.deepEqual(mergeMemberDecisions(base, [coo, cmo, ceo]).presence, split);
+  // the CMO keeps pricing — moving the divider must not move the price lever with it
+  assert.deepEqual(mergeMemberDecisions(base, [coo, cmo]).price, { mass: 7 });
+});

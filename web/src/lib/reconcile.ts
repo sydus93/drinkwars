@@ -78,7 +78,7 @@ export function fmtLever(field: string, v: unknown): string {
 }
 
 const LABEL: Record<string, string> = {
-  price: "Prices", presence: "Channel presence", pr_action: "PR action", market_presence: "Markets served", market_supply: "Market allocation", buy_info: "Market research", invest_B: "Brand spend",
+  price: "Prices", presence: "Capacity allocation", pr_action: "PR action", market_presence: "Markets served", market_supply: "Market allocation", buy_info: "Market research", invest_B: "Brand spend",
   run_rate: "Run rate", invest_cap: "Capacity capex", invest_process: "Process", invest_Q: "Quality", invest_rnd: "R&D", build_facilities: "Build facilities", maintain_facilities: "Maintenance", mothball_facilities: "Mothball", reactivate_facilities: "Reactivate", divest_facilities: "Divest", buy_vertical: "Vertical assets", invest_water_efficiency: "Water efficiency",
   hire_roles: "Key hires", fire_roles: "Let go (roles)", hire_employees: "Hires", hire_bids: "Signing bonuses", fire_employees: "Let go", raise_employees: "Raises", poach_employees: "Poach offers", invest_T_emp: "Employee relations",
   debt_draw: "Draw debt", debt_repay: "Repay debt", equity_raise: "Raise equity", dividend: "Dividend", draw_convertible: "Convertible", draw_rbf: "Revenue-based financing", invest_T_inv: "Investor relations",

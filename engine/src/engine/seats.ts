@@ -35,10 +35,17 @@ export const ROLE_DESK: Record<string, SeatDesk | "all"> = {
  *  each). `firm_id` is excluded — it's identity, always carried from the base decision. */
 export const DESK_LEVERS: Record<SeatDesk, (keyof FirmDecision)[]> = {
   // CMO — go-to-market + the brand stock that demand rides on.
-  commercial: ["price", "presence", "pr_action", "market_presence", "market_supply", "buy_info", "beliefs", "invest_B", "reflection"],
+  commercial: ["price", "pr_action", "market_presence", "market_supply", "buy_info", "beliefs", "invest_B", "reflection"],
   // COO — capacity, process, quality, facilities: the making of the product.
+  // `presence` is the capacity-allocation divider (DW-062). It sat on the commercial desk while
+  // its control renders inside the OPERATIONS card, so the CMO's form — which opens on commercial
+  // — never showed it, yet their client still transmitted it every submit (a seat always ships
+  // its own-desk levers, seeded from the standing plan). The owner pass runs after the recency
+  // pass, so the COO's drag was discarded in BOTH submission orders and the split silently
+  // snapped back to last round's. A lever's desk here MUST match the `deskCls(...)` gate its
+  // control renders under in web/src/components/DecisionForm.tsx.
   operations: [
-    "run_rate", "invest_water_efficiency", "invest_rnd", "buy_vertical",
+    "presence", "run_rate", "invest_water_efficiency", "invest_rnd", "buy_vertical",
     "build_facilities", "maintain_facilities", "mothball_facilities", "reactivate_facilities", "divest_facilities",
     "invest_cap", "invest_process", "invest_Q",
   ],

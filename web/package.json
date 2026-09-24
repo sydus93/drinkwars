@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "deploy": "VITE_ENABLE_MP=1 VITE_TRANSPORT_URL=https://kikmdmldfgakdabbsdcq.supabase.co/functions/v1/drinkwars vite build --base=/drinkwars/ && rm -rf ../../Webpage/drinkwars && cp -R dist ../../Webpage/drinkwars && echo 'Built into ../../Webpage/drinkwars (multiplayer enabled) \u2014 now commit & push the devinstein.me repo to go live.'",
     "playtest": "node scripts/playtest.mjs",
-    "ui:audit": "node scripts/ui-audit.mjs"
+    "ui:audit": "node scripts/ui-audit.mjs",
+    "test": "node --test test/desk-gates.test.mjs"
   },
   "dependencies": {
     "drinkwars-engine": "*",
