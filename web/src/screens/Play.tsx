@@ -104,7 +104,11 @@ export function Play({
   const [infoLocked, setInfoLocked] = useState(false);
   const onInfoChange = useCallback((bought: boolean) => {
     setInfoPreview(bought);
-    if (bought && !mp) setInfoLocked(true);
+    // The `&& !mp` that used to be here meant the lock never engaged in TEAM games — the only
+    // mode a class plays — so the checkbox stayed live after the intel had been served. The
+    // server now enforces the ratchet (DW-061); this is the visible half, so the box reflects a
+    // purchase that has already happened instead of inviting a student to undo it.
+    if (bought) setInfoLocked(true);
   }, [mp]);
   const [detailFirm, setDetailFirm] = useState<string | null>(null);
   // Talent raids are lifted here so they can be made from a rival's dossier AND the

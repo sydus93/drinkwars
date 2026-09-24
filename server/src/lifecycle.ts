@@ -67,6 +67,28 @@ export interface TeamPlan { seats: TeamPlanSeat[]; composed: FirmDecision | null
 /** The C-suite seats a team-game joiner may take. */
 const TEAM_ROLES = new Set(["ceo", "cfo", "cmo", "coo", "chro"]);
 
+/** Market research is a RATCHET, not a toggle (DW-061).
+ *
+ *  The moment a firm's composed plan buys research the view starts serving rival fundamentals,
+ *  and information cannot be un-seen. But the CHARGE only lands at resolve, off whatever the
+ *  decision says then — so un-ticking the box and re-submitting refunded the $12,000 while the
+ *  numbers stayed in the student's head. Free intelligence, every round, repeatable. Reproduced
+ *  2026-09-24: rival Q/cash went 0 → real → 0 across two submits, and the round resolved with
+ *  `info_purchased: false` and no charge.
+ *
+ *  There was a client-side guard (`infoLocked` in Play.tsx) but it was excluded from multiplayer
+ *  by an `&& !mp`, so it never fired in the mode a class actually uses — and being React state it
+ *  died on refresh and was invisible to the player's teammates anyway. Authority over a purchase
+ *  belongs on the server.
+ *
+ *  Once bought in a round, it stays bought for that round. The composed decision record is
+ *  already persisted per (game, round, team), so this needs no new state and no migration.
+ */
+function ratchetBoughtInfo(next: FirmDecision, existing: { decision?: FirmDecision } | null | undefined): FirmDecision {
+  if (existing?.decision?.buy_info) next.buy_info = true;
+  return next;
+}
+
 export class LifecycleError extends Error {
   constructor(msg: string) {
     super(msg);
@@ -317,6 +339,7 @@ export class GameOrchestrator {
 
     const existing = await this.store.getDecision(gameId, game.current_round, teamId);
     if (existing?.locked) throw new LifecycleError("decision is locked");
+    ratchetBoughtInfo(decision, existing);
     const now = this.clock();
     await this.store.upsertDecision({
       game_id: gameId, round: game.current_round, team_id: teamId, firm_id: team.firm_id, decision,
@@ -326,6 +349,7 @@ export class GameOrchestrator {
       first_opened_at: existing?.first_opened_at ?? now,
     });
   }
+
 
   /**
    * Submit one C-suite seat's slice of a team firm's decision (firm_mode="team").
@@ -354,6 +378,7 @@ export class GameOrchestrator {
     const merged = mergeMemberDecisions(base, seats.map((s) => ({ desk: (s.desk as never) ?? "all", partial: s.partial, updated_at: s.updated_at })));
     const existing = await this.store.getDecision(gameId, round, teamId);
     if (existing?.locked) throw new LifecycleError("decision is locked");
+    ratchetBoughtInfo(merged, existing);
     await this.store.upsertDecision({
       game_id: gameId, round, team_id: teamId, firm_id: team.firm_id, decision: merged,
       submitted: seats.some((s) => s.submitted), locked: false,
@@ -379,6 +404,7 @@ export class GameOrchestrator {
       }
       const base = await this.standingDecision(gameId, round, team.id, team.firm_id, ws?.state ?? null, game.config);
       const merged = mergeMemberDecisions(base, seats.map((s) => ({ desk: (s.desk as never) ?? "all", partial: s.partial, updated_at: s.updated_at })));
+      ratchetBoughtInfo(merged, existing);
       await this.store.upsertDecision({
         game_id: gameId, round, team_id: team.id, firm_id: team.firm_id, decision: merged,
         submitted: seats.some((s) => s.submitted), locked: false,

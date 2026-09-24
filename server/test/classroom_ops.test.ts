@@ -229,3 +229,38 @@ test("DW-050: seat plan seats provisioned students; join by claim lands in the c
   const soloId = await orch.createGame({ config, joinCode: GameOrchestrator.makeJoinCode(), firmMode: "solo", teams: [{ name: "S1" }, { name: "S2" }, { name: "S3" }] });
   await assert.rejects(orch.applySeatPlan(soloId, [{ external_id: "ana01", team: "S1", role: "ceo" }]), LifecycleError);
 });
+
+test("DW-061: market research is a per-round ratchet — un-ticking cannot refund it", async () => {
+  // The view serves rival fundamentals the moment the composed plan buys research, but the
+  // CHARGE lands at resolve off whatever the decision says then. So un-ticking and re-submitting
+  // used to refund the $12,000 while the numbers stayed in the student's head — free
+  // intelligence, every round, repeatable. Information cannot be un-seen, so the purchase
+  // cannot be un-made.
+  const { config, store, orch } = teamGame();
+  const code = GameOrchestrator.makeJoinCode();
+  const gameId = await orch.createGame({ config, joinCode: code, firmMode: "team", teams: [{ name: "F1" }, { name: "F2" }, { name: "F3" }] });
+  const [f1] = await store.getTeams(gameId);
+  await orch.joinGame(code, "Bea", "u-bea", { teamId: f1.id, role: "cmo" });
+
+  await orch.submitMemberDecision(gameId, f1.id, "u-bea", { buy_info: true }, "cmo");
+  assert.equal((await store.getDecision(gameId, 0, f1.id))?.decision.buy_info, true, "research bought");
+
+  await orch.submitMemberDecision(gameId, f1.id, "u-bea", { buy_info: false }, "cmo");
+  assert.equal((await store.getDecision(gameId, 0, f1.id))?.decision.buy_info, true,
+    "un-ticking must NOT refund research already bought this round");
+
+  // It must also survive a teammate overwriting the desk, since the reveal is firm-wide.
+  await orch.joinGame(code, "Cy", "u-cy", { teamId: f1.id, role: "ceo" });
+  await orch.submitMemberDecision(gameId, f1.id, "u-cy", { buy_info: false }, "ceo");
+  assert.equal((await store.getDecision(gameId, 0, f1.id))?.decision.buy_info, true,
+    "a teammate cannot refund it either");
+
+  // …and the ratchet is per ROUND: a new round starts clean.
+  await orch.lockRound(gameId);
+  await orch.resolveRound(gameId);
+  await orch.advanceRound(gameId);
+  const next = (await store.getGame(gameId))!.current_round;
+  await orch.submitMemberDecision(gameId, f1.id, "u-bea", { buy_info: false }, "cmo");
+  assert.equal((await store.getDecision(gameId, next, f1.id))?.decision.buy_info, false,
+    "the ratchet resets each round — last round's purchase must not carry forward");
+});
