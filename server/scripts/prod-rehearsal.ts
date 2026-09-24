@@ -100,16 +100,25 @@ const must = async (p: Promise<{ status: number; json: any; bytes: number }>, wh
 };
 
 // ── student simulator ─────────────────────────────────────────────────────────
-type Student = { ext: string; name: string; firm: number; chair: Chair; submittedThisRound?: boolean; lifecycle?: string; claim?: string; token?: string; round: number; stamp: string; views: number; stop: boolean };
+type Student = { ext: string; name: string; firm: number; chair: Chair; submittedThisRound?: boolean; lifecycle?: string; lastRound?: number; lastLifecycle?: string; lastFull?: number; claim?: string; token?: string; round: number; stamp: string; views: number; stop: boolean };
 async function pollLoop(s: Student) {
   // The real client: /pulse on a jittered cadence, full /view only when the stamp moves.
   await sleep(Math.random() * POLL_MS);
   while (!s.stop) {
     const p = await call("GET", "/pulse", { token: s.token });
     if (p.status === 200) s.lifecycle = p.json?.lifecycle ?? s.lifecycle;
-    if (p.status === 200 && p.json?.stamp && p.json.stamp !== s.stamp) {
+    // Mirror the client's DW-064 coalescing: a round/lifecycle change is fetched at once,
+    // but a teammate's write only forces a full view if we have not fetched one recently.
+    // Without this the driver keeps generating the 5-fetches-per-round pattern the deployed
+    // client no longer produces, and would understate the fix it is meant to measure.
+    const bigChange = p.json?.round !== s.lastRound || p.json?.lifecycle !== s.lastLifecycle;
+    const coalesced = !bigChange && Date.now() - (s.lastFull ?? 0) < 6000;
+    if (p.status === 200 && p.json?.stamp && p.json.stamp !== s.stamp && !coalesced) {
       s.stamp = p.json.stamp;
       s.round = p.json.round;
+      s.lastRound = p.json.round;
+      s.lastLifecycle = p.json.lifecycle;
+      s.lastFull = Date.now();
       // Mirror the client's DW-064 herd jitter: everyone notices the same stamp change at
       // once, so the real app spreads the follow-up /view. A driver without it measures a
       // burst the deployed client no longer produces.

@@ -70,6 +70,12 @@ export class BrowserFleet {
       const errors: string[] = [];
       const ctx = await this.browser.createBrowserContext();
       const page = await ctx.newPage();
+      // Students are told to use a laptop, and the commit rail is `lg:` — below 1024px the
+      // desktop rail is hidden and only the mobile sticky bar renders. The fleet was running
+      // at Chrome's default ~800px, i.e. simulating a phone, which is why the CMO re-submit
+      // could not find a commit button on prod. Verified directly against prod at 1440x900:
+      // five seconds after submitting the button returns as "Update my desk", enabled.
+      await page.setViewport({ width: 1440, height: 900 });
       page.on("pageerror", (e: any) => errors.push(`pageerror: ${e.message}`));
       page.on("console", (m: any) => { if (m.type() === "error" && !/404/.test(m.text())) errors.push(`console: ${m.text().slice(0, 140)}`); });
       page.on("dialog", async (d: any) => { await d.accept(); }); // the pre-submit off-desk confirm
