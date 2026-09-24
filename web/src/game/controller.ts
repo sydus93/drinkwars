@@ -463,6 +463,14 @@ export class SinglePlayerGame {
     }
     await this.orch.lockRound(this.gameId);
     const { lifecycle } = await this.orch.resolveRound(this.gameId);
-    if (lifecycle === "published") await this.orch.advanceRound(this.gameId);
+    if (lifecycle === "published") {
+      await this.orch.advanceRound(this.gameId);
+      // A research purchase is scoped to ONE round — that is what the charge pays for, and it
+      // is what `infoActive` means on the multiplayer wire ("the composed plan buys it THIS
+      // round"). Solo never cleared the flag, so last round's purchase kept rivals visible into
+      // the new round for free, and once the intel lock started deriving from `infoActive`
+      // (DW-061) it also left the checkbox stuck on. Reset it with the round.
+      this.lastInfoBought = false;
+    }
   }
 }

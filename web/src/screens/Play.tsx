@@ -101,15 +101,15 @@ export function Play({
   // wait for), so an untick after reading was a free report. Once revealed, the purchase stands
   // for the round — you can't hand back a report you've read. Multiplayer is unaffected: there
   // the intel only unlocks when the submitted plan carries the purchase.
-  const [infoLocked, setInfoLocked] = useState(false);
+  // Locked by SERVER TRUTH, not by the local checkbox (DW-061). `infoActive` is true once the
+  // firm's COMPOSED plan carries the purchase — the same moment the intel is served and the
+  // same moment the server's ratchet engages — so the box can never disagree with the server
+  // about whether you have bought. Two things this gets right that a `useState` flag did not:
+  // a mis-tick stays freely undoable BEFORE you submit, and the lock survives a refresh.
+  const infoLocked = !!view.infoActive;
   const onInfoChange = useCallback((bought: boolean) => {
     setInfoPreview(bought);
-    // The `&& !mp` that used to be here meant the lock never engaged in TEAM games — the only
-    // mode a class plays — so the checkbox stayed live after the intel had been served. The
-    // server now enforces the ratchet (DW-061); this is the visible half, so the box reflects a
-    // purchase that has already happened instead of inviting a student to undo it.
-    if (bought) setInfoLocked(true);
-  }, [mp]);
+  }, []);
   const [detailFirm, setDetailFirm] = useState<string | null>(null);
   // Talent raids are lifted here so they can be made from a rival's dossier AND the
   // decision form — both write the same list, injected into the decision at submit.
@@ -135,7 +135,6 @@ export function Play({
   // Reset live intel preview + queued raids + decision draft each new round.
   useEffect(() => {
     setInfoPreview(false);
-    setInfoLocked(false);
     setPoaches([]);
     setRationale({});
     setCityActions(emptyCityActions(view));
