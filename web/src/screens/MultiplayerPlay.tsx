@@ -34,6 +34,13 @@ const FULL_REFRESH_MS = 60000; // full view at least this often even if the stam
 // spreads the burst; it is applied ONLY on a change, never on first load, so opening the app
 // is still instant and a student who is waiting on results sees them within ~a second.
 const HERD_JITTER_MS = 1200;
+// DW-064: the pulse stamp includes every TEAMMATE's write, so in a five-person firm each
+// round costs 25 full 21KB view fetches (5 submits x 5 members) — measured at 5.2 per
+// student per round in the prod rehearsal, the single biggest source of /view load. A
+// teammate's submit still matters (Reconcile, the composed plan), it just does not need to
+// land within a second. Round and lifecycle changes DO, and pulse reports them separately,
+// so those stay immediate and only teammate writes are coalesced.
+const PLAN_COALESCE_MS = 6000;
 
 function fmtCountdown(ms: number): string {
   if (ms <= 0) return "passed";
@@ -74,6 +81,8 @@ export function MultiplayerPlay({ client, onExit }: { client: StudentClient; onE
   const failures = useRef(0);
   const stamp = useRef<string | null>(null);
   const lastFull = useRef(0);
+  const lastRound = useRef<number | null>(null);
+  const lastLifecycle = useRef<string | null>(null);
   useEffect(() => {
     let live = true;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -87,15 +96,25 @@ export function MultiplayerPlay({ client, onExit }: { client: StudentClient; onE
         if (v && stamp.current && Date.now() - lastFull.current < FULL_REFRESH_MS) {
           const p = await client.fetchPulse();
           if (!live) return;
-          changed = p.stamp !== stamp.current;
-          if (changed) stamp.current = p.stamp;
+          const moved = p.stamp !== stamp.current;
+          const big = p.round !== lastRound.current || p.lifecycle !== lastLifecycle.current;
+          if (moved && (big || Date.now() - lastFull.current >= PLAN_COALESCE_MS)) {
+            changed = true;
+            stamp.current = p.stamp;
+            lastRound.current = p.round;
+            lastLifecycle.current = p.lifecycle;
+          } else {
+            // Deliberately leave stamp.current alone so a coalesced teammate write is picked
+            // up on a later tick rather than dropped.
+            changed = false;
+          }
         }
         if (changed && v) { await new Promise((r) => setTimeout(r, Math.random() * HERD_JITTER_MS)); if (!live) return; }
         if (changed || !v) {
           const [nv, p] = await Promise.all([client.fetchView(), stamp.current ? Promise.resolve(null) : client.fetchPulse()]);
           if (!live) return;
           v = nv;
-          if (p) stamp.current = p.stamp;
+          if (p) { stamp.current = p.stamp; lastRound.current = p.round; lastLifecycle.current = p.lifecycle; }
           lastFull.current = Date.now();
           setRaw({ ...v });
         }

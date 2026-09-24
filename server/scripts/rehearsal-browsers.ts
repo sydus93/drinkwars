@@ -145,7 +145,7 @@ export class BrowserFleet {
     await Promise.all(this.seats.filter((s) => s.ok).map(async (s) => {
       try {
         await this.click(s.page, /^DECIDE/i);
-        await sleep(800);
+        if (!(await this.waitForForm(s.page))) return this.ok(false, `${s.spec.ext} Decide form never rendered for r${round}`);
         await this.driveOwnDesk(s.page, s.spec.chair, round);
         if (s.spec.chair === "coo") s.split = await this.readBar(s.page);
         const before = s.submits;
@@ -218,6 +218,22 @@ export class BrowserFleet {
     return false;
   }
 
+  /**
+   * Wait for the Decide form to actually be on screen.
+   *
+   * Third instance of the same mistake: after clicking DECIDE I slept a fixed ~700ms. On
+   * prod /view takes 11s, so the form had not rendered, the controls were not there, and
+   * the Submit click found nothing to press — reported as "re-submit never completed".
+   * Anything that waits for the SERVER must wait on a condition, never on a duration.
+   */
+  private async waitForForm(p: Page, timeoutMs = 40_000): Promise<boolean> {
+    return p.waitForFunction(() => {
+      const hasNum = !!document.querySelector('input[type="number"]');
+      const hasBar = [...document.querySelectorAll("label")].some((x) => /capacity allocation/i.test(x.textContent || ""));
+      return hasNum || hasBar;
+    }, { timeout: timeoutMs }).then(() => true).catch(() => false);
+  }
+
   /** The percentages the COO's own allocation bar is showing, as integers. */
   private async readBar(p: Page): Promise<number[] | undefined> {
     return p.evaluate(() => {
@@ -244,7 +260,7 @@ export class BrowserFleet {
     // the CMO tweaks a price and submits again — last word in the room
     try {
       await this.click(cmo.page, /^DECIDE/i);
-      await sleep(700);
+      if (!(await this.waitForForm(cmo.page))) return void this.ok(false, `r${round}: CMO's Decide form never rendered`);
       const inp = await cmo.page.$('input[type="number"]');
       if (inp) {
         await inp.click();
@@ -252,7 +268,13 @@ export class BrowserFleet {
         await inp.type(String(9 + round));
       }
       const before = cmo.submits;
-      await this.click(cmo.page, SUBMIT_BTN);
+      const pressed = await this.click(cmo.page, SUBMIT_BTN);
+      if (!pressed) {
+        // A no-match returns null exactly like a successful click returns a label, so an
+        // unmatched button has been indistinguishable from a fired one. Say what was there.
+        const avail = await cmo.page.evaluate(() => [...document.querySelectorAll("button")].map((b: any) => `${b.innerText.trim().replace(/\n/g, "/").slice(0, 30)}${b.disabled ? " [disabled]" : ""}`).filter(Boolean).slice(0, 10));
+        return void this.ok(false, `r${round}: no commit button matched for the CMO's re-submit`, JSON.stringify(avail));
+      }
       if (!(await this.waitForSubmit(cmo, before))) return void this.ok(false, `r${round}: CMO's re-submit never completed`);
     } catch (e: any) { return void this.ok(false, `r${round}: CMO could not re-submit`, e.message?.slice(0, 100)); }
 
