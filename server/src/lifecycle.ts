@@ -680,11 +680,14 @@ export class GameOrchestrator {
    *  costs. The stamp folds in everything that would change the student's view — round,
    *  lifecycle, deadline, the firm's roster, and every seat's last write. */
   async pulse(gameId: string, teamId: string): Promise<Pulse> {
-    const game = await this.requireGame(gameId);
-    const team = await this.store.getTeam(teamId);
+    // DW-064: four reads that ran in series on the endpoint every student polls — 74% of all
+    // traffic in the prod rehearsal. `game` and `team` need nothing from each other, and both
+    // decision reads need only game.current_round / firm_mode, so this is two waits, not four.
+    const [game, team] = await Promise.all([this.requireGame(gameId), this.store.getTeam(teamId)]);
     const round = game.current_round;
-    const rec = await this.store.getDecision(gameId, round, teamId);
-    const mds = game.firm_mode === "team" ? await this.store.getMemberDecisions(gameId, round, teamId) : [];
+    const mdsPending = game.firm_mode === "team" ? this.store.getMemberDecisions(gameId, round, teamId) : null;
+    const [rec, mdsMaybe] = await Promise.all([this.store.getDecision(gameId, round, teamId), mdsPending]);
+    const mds = mdsMaybe ?? [];
     const writes = Math.max(rec?.submitted_at ?? 0, ...mds.map((m) => m.updated_at ?? 0));
     const stamp = [round, game.lifecycle, game.deadline_at ?? 0, (team?.member_user_ids ?? []).join(","), writes, rec?.revision_count ?? -1, rec?.locked ? 1 : 0].join("|");
     return { round, lifecycle: game.lifecycle, deadlineAt: game.deadline_at ?? null, stamp };

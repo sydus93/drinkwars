@@ -28,6 +28,12 @@ const POLL_WAITING_MS = 8000; // locked/resolving/complete — nothing the stude
 const POLL_HIDDEN_MS = 15000; // tab hidden (resumes instantly on visibilitychange)
 const POLL_ERROR_MS = 15000; // after repeated failures (server down / network) — don't hammer
 const FULL_REFRESH_MS = 60000; // full view at least this often even if the stamp is quiet
+// DW-064: every client in the room notices the same stamp change within one poll of each
+// other — a resolve lands and all ~30 fetch the full view at once. That thundering herd is
+// what turned a 3s /view into 13s at 35 students in the prod rehearsal. A short random delay
+// spreads the burst; it is applied ONLY on a change, never on first load, so opening the app
+// is still instant and a student who is waiting on results sees them within ~a second.
+const HERD_JITTER_MS = 1200;
 
 function fmtCountdown(ms: number): string {
   if (ms <= 0) return "passed";
@@ -84,6 +90,7 @@ export function MultiplayerPlay({ client, onExit }: { client: StudentClient; onE
           changed = p.stamp !== stamp.current;
           if (changed) stamp.current = p.stamp;
         }
+        if (changed && v) { await new Promise((r) => setTimeout(r, Math.random() * HERD_JITTER_MS)); if (!live) return; }
         if (changed || !v) {
           const [nv, p] = await Promise.all([client.fetchView(), stamp.current ? Promise.resolve(null) : client.fetchPulse()]);
           if (!live) return;

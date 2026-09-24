@@ -83,21 +83,41 @@ async function viewFor(gameId: string, teamId: string, userId?: string) {
   // queries/sec for a 25-student class). Read-only scope; see server/src/request-cache.ts.
   const store = withRequestCache(baseStore);
   const orch = new GameOrchestrator(store, () => Date.now(), ORCH_OPTS);
-  const pub = await orch.getPublicState(gameId);
-  const tv = await orch.getTeamView(gameId, teamId);
-  const game = await store.getGame(gameId);
-  const last = (await store.getPublicRounds(gameId)).at(-1) ?? null;
-  const decision = await store.getDecision(gameId, pub.round, teamId);
+  // DW-064 — parallelised, twin of transport.ts::viewFor. The cache already collapsed
+  // DUPLICATE reads; what was left was ~18 DISTINCT round-trips IN SERIES, and on hosted
+  // Postgres each hop is ~150ms of latency, so the sum was this endpoint's floor (measured
+  // 3.3s at 9 students, 13s at 35 in the 2026-09-24 prod rehearsal). The cache memoises
+  // PROMISES, so firing these together still dedupes rather than doubling the queries.
+  //
+  // PHASE 1 — depends on nothing but the ids we were handed.
+  const [pub, tv, game, pubRounds, teams] = await Promise.all([
+    orch.getPublicState(gameId),
+    orch.getTeamView(gameId, teamId),
+    store.getGame(gameId),
+    store.getPublicRounds(gameId),
+    store.getTeams(gameId),
+  ]);
+  const last = pubRounds.at(-1) ?? null;
   const own = tv.own as any;
   const config: any = game?.config;
+  const isTeamGame = game?.firm_mode === "team";
+  // PHASE 2 — needs pub.round / own / firm_mode. `own`-guarded entries keep their original
+  // semantics exactly: a team with no firm still issues none of these reads.
+  const [decision, allResults, seats, teamPlan, standing, ws] = await Promise.all([
+    store.getDecision(gameId, pub.round, teamId),
+    own ? store.getRoundResults(gameId) : Promise.resolve([] as any[]),
+    own && isTeamGame ? orch.getTeamSeats(gameId, teamId) : Promise.resolve([] as any[]),
+    own && isTeamGame && userId ? orch.getTeamPlan(gameId, teamId, userId) : Promise.resolve(undefined),
+    own ? orch.getStandingDecision(gameId, teamId) : Promise.resolve(null),
+    own ? store.getLatestWorldState(gameId) : Promise.resolve(null),
+  ]);
   const unitCostEst = own ? (own.unit_cost > 0 ? own.unit_cost : (config?.costs?.c_base ?? 0) * 0.85) : 0;
-  const allResults = own ? await store.getRoundResults(gameId) : [];
   const lastFull = allResults.at(-1) ?? null;
   const ownResult = own && lastFull ? (lastFull.result.firm_results.find((f: any) => f.firm_id === own.id) ?? null) : null;
   // Presentation names: firm ids in display text read as brewery names.
   const names: Record<string, string> = {};
   const styles: Record<string, { color: string | null; emblem: string | null }> = {}; // DW-051 house colour/mark per firm
-  for (const t of await store.getTeams(gameId)) { names[t.firm_id] = t.name; if (t.color || t.emblem) styles[t.firm_id] = { color: t.color ?? null, emblem: t.emblem ?? null }; }
+  for (const t of teams) { names[t.firm_id] = t.name; if (t.color || t.emblem) styles[t.firm_id] = { color: t.color ?? null, emblem: t.emblem ?? null }; }
   const nameOf = (id: string) => names[id] ?? id;
   // MOD-B05 briefings + MOD-B02 FX + MOD-A05/A06 alliances + MOD-A09 lobbying + MOD-B01 city
   // view + research-gated rival snapshots + shocks + history + MOD-B12 hiring pool.
@@ -109,15 +129,11 @@ async function viewFor(gameId: string, teamId: string, userId?: string) {
   let firms: any[] = []; // public snapshots; rivals' private fields (incl. roster) redacted unless this team bought research
   let shocks: any[] = [];
   let hiringMarket: any[] = []; // MOD-B12 candidate pool (shared/public — same for every firm)
-  const seats = own && game?.firm_mode === "team" ? await orch.getTeamSeats(gameId, teamId) : []; // team firms: C-suite seats + submit status
-  // Team firms: the live plan — each seat's submitted slice + the composed decision (same-firm eyes only).
-  const teamPlan = own && game?.firm_mode === "team" && userId ? await orch.getTeamPlan(gameId, teamId, userId) : undefined;
+  // (seats / teamPlan / standing / ws all resolved in phase 2 above)
   const history = own ? projectHistory(allResults, own.id) : []; // own trend + public field aggregate
   // DW-048 draft seeds (twin of transport.ts): standing plan + this round's own solo decision.
-  const standing = own ? await orch.getStandingDecision(gameId, teamId) : null;
-  const draft = own && game?.firm_mode !== "team" && decision?.submitted ? decision.decision : null;
+  const draft = own && !isTeamGame && decision?.submitted ? decision.decision : null;
   if (own) {
-    const ws = await store.getLatestWorldState(gameId);
     if (ws && config?.modules?.teamRoles?.enabled) briefings = roleBriefings(ws.state, config, own.id) as never;
     if (ws) {
       fx = ws.state.fx_rates ?? {};
