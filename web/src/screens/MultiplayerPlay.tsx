@@ -129,9 +129,11 @@ export function MultiplayerPlay({ client, onExit }: { client: StudentClient; onE
         if (!live) return;
         const status = (e as { status?: number })?.status;
         if (status === 401) {
-          // The server no longer recognises this session (token invalid, game deleted).
+          // The server no longer recognises this session (token invalid, game deleted, or the
+          // instructor removed this player — DW-066 says which when it knows).
           client.clearSaved();
-          setDead("Your session is no longer valid — the game may have been closed. Join again with your code.");
+          const why = e instanceof Error && /seated|removed/i.test(e.message) ? e.message : "Your session is no longer valid — the game may have been closed. Join again with your code.";
+          setDead(why);
           return;
         }
         failures.current += 1;
@@ -253,6 +255,7 @@ export function MultiplayerPlay({ client, onExit }: { client: StudentClient; onE
         </div>
       )}
       <Play
+        key={view.own?.id ?? client.firmId} // DW-066: a move to another firm remounts the form (fresh draft for the new desk)
         view={view}
         busy={busy || !open}
         infoCost={client.infoCost()}

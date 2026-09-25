@@ -140,6 +140,11 @@ async function viewFor(gameId: string, teamId: string, userId?: string) {
   // DW-065: the teams read goes FIRST — the adapters embed each firm's roster, and the request cache
   // primes getTeam / getTeamMembers from it, so the projections below never pay those round-trips.
   const teams = await store.getTeams(gameId);
+  // DW-066 (twin of the edge function): the view is built for the seat the player holds NOW; the
+  // route re-seats the session when the instructor moved them. No seat = removed from the game.
+  const seat = userId ? GameOrchestrator.seatIn(teams, userId) : null;
+  if (userId && !seat) return null;
+  if (seat) teamId = seat.teamId;
   // DW-064 — these reads run IN SERIES on purpose; do not "fix" this with Promise.all.
   // The parallel version was built, proved behaviour-identical by scripts/view-parity.ts,
   // deployed, and measured against a serial baseline on 2026-09-24 (35 students, 3 rounds,
@@ -229,6 +234,7 @@ async function viewFor(gameId: string, teamId: string, userId?: string) {
     standings: (last?.standings ?? []).map((s: { firm_id: string }) => ({ ...s, name: names[s.firm_id] ?? s.firm_id })),
     events: (last?.events ?? []).map((e: string) => renameFirms(e, names)),
     submitted: decision?.submitted ?? false,
+    ...(seat ? { seat: { teamId: seat.teamId, firmId: seat.firmId, role: seat.role } } : {}),
   };
 }
 
@@ -318,7 +324,14 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
   if (method === "GET" && path === "/view") {
     const s = sessions.get(url.searchParams.get("token") ?? "");
     if (!s) return send(res, 401, { error: "invalid or expired token" });
-    return send(res, 200, await viewFor(s.gameId, s.teamId, s.userId));
+    const v = await viewFor(s.gameId, s.teamId, s.userId);
+    if (!v) return send(res, 401, { error: "you are no longer seated in this game — if the instructor moved you, join again with your return code" });
+    if (v.seat && (v.seat.teamId !== s.teamId || (v.seat.role != null && v.seat.role !== (s.role ?? null)))) {
+      // DW-066: re-seat the in-memory session in place; the client learns its new firm/chair.
+      s.teamId = v.seat.teamId; s.role = v.seat.role ?? undefined;
+      return send(res, 200, { ...v, session: { token: url.searchParams.get("token"), teamId: v.seat.teamId, firmId: v.seat.firmId, role: v.seat.role } });
+    }
+    return send(res, 200, v);
   }
   // DW-050: the cheap poll — the client fetches the full view only when the stamp moves.
   if (method === "GET" && path === "/pulse") {

@@ -366,16 +366,22 @@ export class GameOrchestrator {
     if (game.lifecycle !== "open") throw new LifecycleError(`cannot submit: round is "${game.lifecycle}", not open`);
     const team = await this.store.getTeam(teamId);
     if (!team || team.game_id !== gameId) throw new LifecycleError(`no team ${teamId} in game ${gameId}`);
+    // DW-066: the session token names the team the player joined, not the one they sit at NOW.
+    // A player the instructor moved (or removed) kept submitting into their OLD firm — the slice
+    // landed in member_decisions under the old team_id and composed into its plan. Membership is
+    // the authority; the transports re-seat the session on the next view.
+    if (!team.member_user_ids.includes(userId)) throw new LifecycleError(`you are no longer seated at "${team.name}" — reload to pick up your new seat`);
     const round = game.current_round;
-    // Use the passed role, else the seat persisted at join — so a returning player never
-    // falls back to "all" (which would clobber teammates' desks).
-    const effRole = role ?? (await this.store.getMemberRole(teamId, userId)) ?? undefined;
+    // The seat persisted at the move/join wins over the token's — a moved player's token still
+    // says their old chair until the client re-seats. (Was: token role first.)
+    const effRole = (team.members ? team.members.find((m) => m.user_id === userId)?.role ?? null : await this.store.getMemberRole(teamId, userId)) ?? role ?? undefined;
     const desk = effRole ? (ROLE_DESK[effRole] ?? "all") : "all";
     const now = this.clock();
     await this.store.upsertMemberDecision({ game_id: gameId, round, team_id: teamId, user_id: userId, desk, partial, submitted: true, updated_at: now });
 
-    // Compose the team's seats → the per-team decision the engine will resolve.
-    const seats = await this.store.getMemberDecisions(gameId, round, teamId);
+    // Compose the team's seats → the per-team decision the engine will resolve. Only slices from
+    // players who STILL sit here — a moved player's stale row must not trade for this firm.
+    const seats = (await this.store.getMemberDecisions(gameId, round, teamId)).filter((s) => team.member_user_ids.includes(s.user_id));
     const ws = (await this.store.getWorldState(gameId, round)) ?? (await this.store.getLatestWorldState(gameId));
     const base = await this.standingDecision(gameId, round, teamId, team.firm_id, ws?.state ?? null, game.config);
     const merged = mergeMemberDecisions(base, seats.map((s) => ({ desk: (s.desk as never) ?? "all", partial: s.partial, updated_at: s.updated_at })));
@@ -394,7 +400,7 @@ export class GameOrchestrator {
     const round = game.current_round;
     const ws = (await this.store.getWorldState(gameId, round)) ?? (await this.store.getLatestWorldState(gameId));
     for (const team of await this.store.getTeams(gameId)) {
-      const seats = await this.store.getMemberDecisions(gameId, round, team.id);
+      const seats = (await this.store.getMemberDecisions(gameId, round, team.id)).filter((s) => team.member_user_ids.includes(s.user_id));
       const existing = await this.store.getDecision(gameId, round, team.id);
       if (existing?.locked) continue;
       if (!seats.length) {
@@ -680,6 +686,15 @@ export class GameOrchestrator {
     return t ? { teamId: t.id, team: t.name, role: await this.store.getMemberRole(t.id, userId) } : null;
   }
 
+  /** DW-066: where this player sits NOW, from a team list already in hand (no extra read) — the
+   *  transports compare it to the session token on every full view and re-seat the session when
+   *  the instructor moved the player. `null` = removed from the game (the session is dead). */
+  static seatIn(teams: TeamRecord[], userId: string): { teamId: string; firmId: FirmId; team: string; role: string | null } | null {
+    const t = teams.find((x) => x.member_user_ids.includes(userId));
+    if (!t) return null;
+    return { teamId: t.id, firmId: t.firm_id, team: t.name, role: t.members?.find((m) => m.user_id === userId)?.role ?? null };
+  }
+
   /** Cheap change signal for one firm (DW-050): 2–3 reads instead of the ~30 a full view
    *  costs. The stamp folds in everything that would change the student's view — round,
    *  lifecycle, deadline, the firm's roster, and every seat's last write. */
@@ -693,7 +708,10 @@ export class GameOrchestrator {
     const [rec, mdsMaybe] = await Promise.all([this.store.getDecision(gameId, round, teamId), mdsPending]);
     const mds = mdsMaybe ?? [];
     const writes = Math.max(rec?.submitted_at ?? 0, ...mds.map((m) => m.updated_at ?? 0));
-    const stamp = [round, game.lifecycle, game.deadline_at ?? 0, (team?.member_user_ids ?? []).join(","), writes, rec?.revision_count ?? -1, rec?.locked ? 1 : 0].join("|");
+    // DW-066: seats carry their ROLE in the stamp — a same-firm chair change (COO → CFO) must reach
+    // the player's client too, and the adapters embed the roster in the team read, so this is free.
+    const seats = team?.members ? team.members.map((m) => `${m.user_id}:${m.role ?? ""}`) : (team?.member_user_ids ?? []);
+    const stamp = [round, game.lifecycle, game.deadline_at ?? 0, seats.join(","), writes, rec?.revision_count ?? -1, rec?.locked ? 1 : 0].join("|");
     return { round, lifecycle: game.lifecycle, deadlineAt: game.deadline_at ?? null, stamp };
   }
 
@@ -878,7 +896,13 @@ export class GameOrchestrator {
 
     // Fill in for non-submitting active firms so the research panel has a row for them.
     const submitted = await this.store.getDecisions(gameId, round);
-    const submittedFirms = new Set(submitted.filter((d) => d.submitted).map((d) => d.firm_id));
+    // DW-066: any record counts, not just submitted ones. A retried resolve (DW-046 `force`, or a
+    // plain second click after the catch above put the round back to "locked") re-entered this loop
+    // and re-upserted the fill-in rows it had written — which the adapters refuse because those rows
+    // are locked. Every class game has at least one fill-in (an NPC slot or a no-show), so Retry
+    // resolve never actually worked. A submitted:false record here can only be a fill-in from the
+    // earlier attempt (submits always write submitted:true; recompose deletes sliceless records).
+    const submittedFirms = new Set(submitted.map((d) => d.firm_id));
     for (const f of world.firms) {
       if (f.status !== "active" || submittedFirms.has(f.id)) continue;
       const team = teamByFirm.get(f.id);

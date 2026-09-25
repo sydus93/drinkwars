@@ -73,6 +73,8 @@ export interface RawView {
   standing?: FirmDecision | null; // DW-048: the firm's standing plan (server carry-forward) — the draft seed after a reload
   draft?: FirmDecision | null; // DW-048: solo firms — this round's own submitted decision (resume exactly)
   deadlineAt?: number | null; // DW-048: instructor-announced submission deadline for this round (ms epoch)
+  seat?: { teamId: string; firmId: FirmId; role: string | null }; // DW-066: where this player sits NOW (membership, not the token)
+  session?: { token: string; teamId: string; firmId: FirmId; role: string | null }; // DW-066: the instructor moved us — swap the session in
 }
 
 /** DW-065: the edge function runs, by default, in the region nearest the CALLER (us-west-1 from
@@ -230,9 +232,25 @@ export class StudentClient {
   }
 
   async fetchView(): Promise<RawView> {
-    this.last = await api(this.base, `/view?token=${encodeURIComponent(this.token)}`);
-    return this.last!;
+    const v: RawView = await api(this.base, `/view?token=${encodeURIComponent(this.token)}`);
+    // DW-066: the instructor moved this player to another firm (or another chair). The server
+    // built the view for the NEW seat and handed back a token for it — adopt it, forget the old
+    // firm's draft + covers, and persist, so a refresh lands at the new desk too.
+    if (v.session) {
+      const moved = v.session.firmId !== this.firmId || (v.session.role ?? null) !== (this.role ?? null);
+      this.token = v.session.token;
+      this.firmId = v.session.firmId;
+      this.role = v.session.role;
+      // Only a REAL change of firm/chair discards the draft — a re-mint that merely refreshes the
+      // token must never wipe what the student is typing.
+      if (moved) { this.lastDecision = null; this.sentCovers = {}; this.sentCoversRound = -1; this.reseated = true; }
+      this.save();
+    }
+    this.last = v;
+    return v;
   }
+  /** Set when a view swapped this session's firm/chair (DW-066); a submit in flight checks it. */
+  reseated = false;
   /** DW-050: the cheap change signal — poll this; fetch the full view only when `stamp` moves. */
   fetchPulse(): Promise<{ round: number; lifecycle: string; deadlineAt: number | null; stamp: string }> {
     return api(this.base, `/pulse?token=${encodeURIComponent(this.token)}`);
@@ -323,8 +341,14 @@ export class StudentClient {
     // teamPlan is always the CURRENT round, so a fresh round naturally skips this.
     const mine = v.teamPlan?.seats.find((s) => s.me && s.partial);
     if (mine?.partial && !this.lastDecision) {
-      // (other desks are mirrored from the firm's plan by mirrorFirm, after seeding)
-      this.lastDecision = { ...(mine.partial as FirmDecision), firm_id: this.firmId };
+      // DW-066: since DW-051 a specialist's stored slice is ONLY their desk's levers (+ covers), so
+      // it is overlaid on the firm's full plan. Seeding from the bare slice left `price` /
+      // `presence` undefined and the form threw on the first render after a submit + refresh
+      // ("Something broke." — the app boundary — for every non-CEO seat that reloaded).
+      // (other desks are then mirrored from the firm's plan by mirrorFirm, after seeding)
+      const firm = (v.teamPlan?.composed ?? v.standing ?? null) as FirmDecision | null;
+      const base = firm ?? this.houseDecision(v);
+      this.lastDecision = { ...base, ...(mine.partial as Partial<FirmDecision>), firm_id: this.firmId } as FirmDecision;
       // A reload must not forget the covers this seat already sent (DW-052) — they're the
       // off-desk keys present in our stored slice.
       const desk = this.role ? (ROLE_DESK[this.role] ?? "all") : "all";
@@ -382,6 +406,14 @@ export class StudentClient {
       };
     }
 
+    return this.houseDecision(v);
+  }
+  /** The house defaults — a first-round firm with nothing in memory and no standing plan. */
+  private houseDecision(v: RawView): FirmDecision {
+    const own = v.own;
+    const unit = v.unitCostEst || 3;
+    const active = v.segments.filter((s) => s.active).map((s) => s.id);
+    const allSegs = v.segments.map((s) => s.id);
     const price: Record<SegmentId, number> = {};
     const presence: Record<SegmentId, number> = {};
     for (const s of allSegs) { price[s] = 0; presence[s] = 0; }
@@ -410,7 +442,11 @@ export class StudentClient {
       // from the firm's plan as of RIGHT NOW (fresh fetch, so a mirror a few seconds stale can't
       // re-assert e.g. buy_info:false over the CEO's purchase under "later word wins"). Mirrored
       // values equal to the plan are dropped: they'd read as covers on the CEO's card.
+      this.reseated = false;
       const v = await this.fetchView();
+      // The instructor moved us between the form and this fetch: the levers on screen belong to the
+      // OLD firm's desk. Refuse rather than write them into the new one; the tab re-renders next tick.
+      if (this.reseated) throw new Error("your seat changed — the instructor moved you; check your new desk before submitting");
       const plan = (v.teamPlan?.composed ?? v.standing ?? null) as unknown as Record<string, unknown> | null;
       const own = new Set<string>(DESK_LEVERS[desk] as string[]);
       const out: Record<string, unknown> = { firm_id: this.firmId };

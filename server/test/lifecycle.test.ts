@@ -108,10 +108,17 @@ test("a resolved round is append-only (cannot be re-resolved)", async () => {
   await assert.rejects(() => orch.resolveRound(gameId), LifecycleError);
 });
 
-test("in-memory adapter rejects re-writing an append-only row", async () => {
+test("in-memory adapter rejects re-writing an append-only row (0008 rule: identical re-writes pass, resolved rounds are frozen)", async () => {
   const { store, gameId } = await setup();
   const ws = (await store.getWorldState(gameId, 0))!;
-  await assert.rejects(() => store.appendWorldState(ws), /append-only/);
+  await store.appendWorldState({ ...ws, created_at: ws.created_at + 1 }); // a retried resolve: same row, new created_at
+  await store.appendWorldState({ ...ws, state: { ...ws.state, live_triggers: ["water"] } }); // pending round: gamemaster edit
+  await store.setGameLifecycle(gameId, "open", 1); // round 0 is now history
+  await assert.rejects(() => store.appendWorldState({ ...ws, state: { ...ws.state, live_triggers: [] } }), /append-only/);
+  const rr = { game_id: gameId, round: 0, result: { x: 1 } as never, created_at: 1 };
+  await store.appendRoundResult(rr);
+  await store.appendRoundResult({ ...rr, created_at: 2 });
+  await assert.rejects(() => store.appendRoundResult({ ...rr, result: { x: 2 } as never }), /append-only/);
 });
 
 test("replay reproduces the stored history exactly (§3.3)", async () => {
@@ -188,9 +195,40 @@ test("gamemaster (DW-037): planted shocks land on the timeline, fire on schedule
   const after = await orch.getTimeline(gameId);
   assert.ok(after.timeline.find((s) => s.id === again.id)?.fired, "planted shock is marked fired");
   await assert.rejects(() => orch.unscheduleShock(gameId, again.id), /already fired/, "fired shocks are immutable");
+  // DW-066 (mirrors migration 0008): resolved rounds' world states are frozen; only the pending
+  // round's record takes gamemaster edits.
+  const cur = (await store.getLatestWorldState(gameId))!;
+  await assert.rejects(() => store.updateWorldState(gameId, 0, cur.state), /already resolved/);
+  await store.updateWorldState(gameId, cur.round, cur.state);
 
   // Guard: can't plant into the past or beyond the season.
   await orch.advanceRound(gameId);
   await assert.rejects(() => orch.scheduleShock(gameId, { type_id: "harvest", round: 0 }), /not schedulable/);
   await assert.rejects(() => orch.scheduleShock(gameId, { type_id: "harvest", round: 99 }), /not schedulable/);
+});
+
+test("DW-066: a resolve that dies half-way can be re-run — twice-written fill-ins and appends are idempotent", async () => {
+  const { store, orch, gameId } = await setup();
+  // One human submits; the other firms are NPC / no-show fill-ins (every class game has some).
+  const teams = await store.getTeams(gameId);
+  await orch.submitDecision(gameId, teams[0].id, { ...(await orch.getStandingDecision(gameId, teams[0].id))!, invest_Q: 5 });
+  await orch.lockRound(gameId);
+  // Die AFTER the world state + fill-ins are written, before the round result lands.
+  const real = store.appendRoundResult.bind(store);
+  let dieOnce = true;
+  (store as any).appendRoundResult = async (rec: any) => { if (dieOnce) { dieOnce = false; throw new Error("edge function timed out"); } return real(rec); };
+  await assert.rejects(() => orch.resolveRound(gameId), /timed out/);
+  assert.equal((await store.getGame(gameId))!.lifecycle, "locked", "the catch puts the round back where the instructor can act");
+  assert.ok(await store.getWorldState(gameId, 1), "the first attempt already appended round 1's world state");
+  // Retry resolve: same inputs → identical writes; the fill-in rows from attempt 1 must not be re-upserted.
+  const r = await orch.resolveRound(gameId);
+  assert.equal(r.lifecycle, "published");
+  assert.equal((await store.getGame(gameId))!.current_round, 1);
+  assert.ok(await store.getRoundResults(gameId).then((x) => x.length === 1));
+  // And the DW-046 `force` path (process died while still "resolving"): re-run from that mark.
+  await orch.advanceRound(gameId);
+  await orch.lockRound(gameId);
+  await store.setGameLifecycle(gameId, "resolving", 1);
+  await assert.rejects(() => orch.resolveRound(gameId), /not locked/);
+  assert.equal((await orch.resolveRound(gameId, { force: true })).lifecycle, "published");
 });

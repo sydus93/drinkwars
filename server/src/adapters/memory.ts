@@ -21,6 +21,13 @@ function replaceByKey<T>(arr: T[], rows: T[], keyOf: (r: T) => string): void {
   arr.push(...incoming.values());
 }
 
+/** DW-066: mirrors migration 0008 — an append-only row may be re-written only when nothing but
+ *  created_at differs (a retried resolve writes the identical deterministic row). */
+const sameRow = (a: unknown, b: unknown): boolean => {
+  const strip = (r: unknown) => { const { created_at: _c, ...rest } = (r ?? {}) as Record<string, unknown>; return JSON.stringify(rest); };
+  return strip(a) === strip(b);
+};
+
 export class InMemoryAdapter implements StorageAdapter {
   private games = new Map<string, GameRecord>();
   private users = new Map<string, UserRecord>();
@@ -154,13 +161,22 @@ export class InMemoryAdapter implements StorageAdapter {
 
   async appendWorldState(rec: WorldStateRecord): Promise<void> {
     const k = key(rec.game_id, rec.round);
-    if (this.worldStates.has(k)) throw new Error(`world_state ${k} is append-only and already exists`);
+    const cur = this.worldStates.get(k);
+    if (cur && !sameRow(cur, rec)) {
+      // A differing re-write is allowed only on a round not yet resolved (guard_world_state()).
+      const g = this.games.get(rec.game_id);
+      if (!g || rec.round < g.current_round) throw new Error(`world_state ${k} is append-only and already exists`);
+    }
     this.worldStates.set(k, clone(rec));
   }
   async updateWorldState(gameId: string, round: number, state: WorldState): Promise<void> {
     const k = key(gameId, round);
     const cur = this.worldStates.get(k);
     if (!cur) throw new Error(`world_state ${k} does not exist to update`);
+    // DW-066: mirrors migration 0008 — rounds already resolved are frozen; only the pending
+    // round's state (the record the next resolve consumes) takes gamemaster edits.
+    const g = this.games.get(gameId);
+    if (g && round < g.current_round) throw new Error(`append-only table world_states, UPDATE not permitted (round ${round} already resolved)`);
     this.worldStates.set(k, clone({ ...cur, state }));
   }
   async getWorldState(gameId: string, round: number): Promise<WorldStateRecord | null> {
@@ -198,7 +214,7 @@ export class InMemoryAdapter implements StorageAdapter {
 
   async appendRoundResult(rec: RoundResultRecord): Promise<void> {
     const k = key(rec.game_id, rec.round);
-    if (this.roundResults.has(k)) throw new Error(`round_result ${k} is append-only and already exists`);
+    if (this.roundResults.has(k) && !sameRow(this.roundResults.get(k), rec)) throw new Error(`round_result ${k} is append-only and already exists`);
     this.roundResults.set(k, clone(rec));
   }
   async getRoundResult(gameId: string, round: number): Promise<RoundResultRecord | null> {
@@ -211,7 +227,7 @@ export class InMemoryAdapter implements StorageAdapter {
 
   async appendPublicRound(rec: PublicRoundRecord): Promise<void> {
     const k = key(rec.game_id, rec.round);
-    if (this.publicRounds.has(k)) throw new Error(`public_round ${k} is append-only and already exists`);
+    if (this.publicRounds.has(k) && !sameRow(this.publicRounds.get(k), rec)) throw new Error(`public_round ${k} is append-only and already exists`);
     this.publicRounds.set(k, clone(rec));
   }
   async getPublicRound(gameId: string, round: number): Promise<PublicRoundRecord | null> {

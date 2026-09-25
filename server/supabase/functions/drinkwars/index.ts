@@ -87,6 +87,13 @@ async function viewFor(gameId: string, teamId: string, userId?: string) {
   // DW-065: the teams read goes FIRST — the adapters embed each firm's roster, and the request cache
   // primes getTeam / getTeamMembers from it, so the projections below never pay those round-trips.
   const teams = await store.getTeams(gameId);
+  // DW-066: the token names the team the player JOINED; membership says where they sit now. The
+  // instructor's move/remove used to be invisible to the player's tab (it kept viewing — and
+  // submitting into — the old firm). The view is built for the CURRENT seat, and the route below
+  // re-mints the session when it differs. No seat at all = removed from the game.
+  const seat = userId ? GameOrchestrator.seatIn(teams, userId) : null;
+  if (userId && !seat) return null;
+  if (seat) teamId = seat.teamId;
   // DW-064 — these reads run IN SERIES on purpose; do not "fix" this with Promise.all.
   // The parallel version was built, proved behaviour-identical by scripts/view-parity.ts,
   // deployed, and measured against a serial baseline on 2026-09-24 (35 students, 3 rounds,
@@ -153,6 +160,7 @@ async function viewFor(gameId: string, teamId: string, userId?: string) {
     standings: (last?.standings ?? []).map((s: any) => ({ ...s, name: names[s.firm_id] ?? s.firm_id })),
     events: (last?.events ?? []).map((e: string) => renameFirms(e, names)),
     submitted: decision?.submitted ?? false,
+    ...(seat ? { seat: { teamId: seat.teamId, firmId: seat.firmId, role: seat.role } } : {}),
   };
 }
 
@@ -236,7 +244,15 @@ Deno.serve(async (req: Request) => {
     if (method === "GET" && path === "/view") {
       const s = await readToken(u.searchParams.get("token") ?? "");
       if (!s) return json(401, { error: "invalid or expired token" });
-      return json(200, await viewFor(s.gameId, s.teamId, s.userId));
+      const v = await viewFor(s.gameId, s.teamId, s.userId);
+      if (!v) return json(401, { error: "you are no longer seated in this game — if the instructor moved you, join again with your return code" });
+      // DW-066: the instructor moved this player (or changed their chair) → hand back a token for
+      // the seat they hold NOW; the client swaps it in and re-seeds its draft.
+      if (v.seat && (v.seat.teamId !== s.teamId || (v.seat.role != null && v.seat.role !== (s.role ?? null)))) {
+        const token = await mintToken({ gameId: s.gameId, teamId: v.seat.teamId, userId: s.userId, role: v.seat.role ?? undefined });
+        return json(200, { ...v, session: { token, teamId: v.seat.teamId, firmId: v.seat.firmId, role: v.seat.role } });
+      }
+      return json(200, v);
     }
     // DW-050: cheap change signal (twin of transport.ts).
     if (method === "GET" && path === "/pulse") {

@@ -443,6 +443,7 @@ export function Instructor({ onExit }: { onExit: () => void }) {
                 </select>
                 <Button onClick={() => { const mv = moving; setMoving(null); act(() => client!.moveMember(game.gameId, mv.userId, mv.toTeamId, mv.role)); }} disabled={busy || !moving.role}>Move</Button>
                 <Button variant="ghost" onClick={() => setMoving(null)}>Cancel</Button>
+                <span className="basis-full text-[0.68rem] text-inksoft">Their open tab switches to the new firm on its own within about 15 seconds — nothing to re-enter. Anything they submitted this round stays behind and stops trading.</span>
               </div>
             )}
           </Card>

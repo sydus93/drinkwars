@@ -78,6 +78,47 @@ test("roster shows every chair's submit state; remove drops the slice + frees th
   assert.equal((await orch.resolveRound(gameId)).lifecycle, "published");
 });
 
+test("DW-066: a moved player's stale session cannot trade for the old firm; the view re-seats them", async () => {
+  const { config, store, orch } = teamGame();
+  const code = GameOrchestrator.makeJoinCode();
+  const gameId = await orch.createGame({ config, joinCode: code, firmMode: "team", teams: [{ name: "F1" }, { name: "F2" }, { name: "F3" }] });
+  const [f1, f2] = await store.getTeams(gameId);
+  await orch.joinGame(code, "Ana", "u-ana", { teamId: f1.id, role: "ceo" });
+  await orch.joinGame(code, "Cy", "u-cy", { teamId: f1.id, role: "coo" });
+  await orch.submitMemberDecision(gameId, f1.id, "u-cy", { invest_Q: 40 }, "coo");
+  assert.equal((await store.getDecision(gameId, 0, f1.id))?.decision.invest_Q, 40, "Cy's slice composes into F1");
+  const p0 = await orch.pulse(gameId, f1.id);
+
+  // The instructor moves Cy to F2 as CEO. His browser still holds a token that says F1/coo.
+  await orch.moveMember(gameId, "u-cy", f2.id, "ceo");
+  assert.equal((await store.getDecision(gameId, 0, f1.id)), null, "his F1 slice is dropped — nothing of his trades for F1");
+  assert.notEqual((await orch.pulse(gameId, f1.id)).stamp, p0.stamp, "F1's stamp moves → his client fetches a full view");
+  // What the transports do on that full view: resolve the seat from membership, not the token.
+  const seat = GameOrchestrator.seatIn(await store.getTeams(gameId), "u-cy");
+  assert.deepEqual(seat && [seat.teamId, seat.role], [f2.id, "ceo"]);
+  assert.equal(GameOrchestrator.seatIn(await store.getTeams(gameId), "u-nobody"), null, "no seat = removed → session dead");
+  // A submit that still arrives under the OLD team (stale token, race with the re-seat) is refused
+  // and leaves no slice behind.
+  await assert.rejects(() => orch.submitMemberDecision(gameId, f1.id, "u-cy", { invest_Q: 99 }, "coo"), /no longer seated/);
+  assert.equal(await store.getDecision(gameId, 0, f1.id), null);
+  assert.equal((await store.getMemberDecisions(gameId, 0, f1.id)).length, 0);
+  // Under the new team the persisted chair wins over a stale token role: the slice composes as CEO.
+  await orch.submitMemberDecision(gameId, f2.id, "u-cy", { invest_Q: 12, price: { core: 9 } } as never, "coo");
+  assert.equal((await store.getMemberDecisions(gameId, 0, f2.id))[0].desk, "all", "persisted CEO chair, not the token's COO desk");
+  assert.equal((await store.getDecision(gameId, 0, f2.id))?.decision.invest_Q, 12);
+
+  // A same-firm chair change also moves the stamp (roles are in it), so the client re-seats.
+  const p1 = await orch.pulse(gameId, f2.id);
+  await orch.moveMember(gameId, "u-cy", f2.id, "cfo");
+  assert.notEqual((await orch.pulse(gameId, f2.id)).stamp, p1.stamp);
+
+  // A stale member_decisions row (written before this fix) never composes for a firm the
+  // player left: recompose filters to current members.
+  await store.upsertMemberDecision({ game_id: gameId, round: 0, team_id: f1.id, user_id: "u-cy", desk: "operations", partial: { invest_Q: 77 }, submitted: true, updated_at: 5 });
+  await orch.submitMemberDecision(gameId, f1.id, "u-ana", { invest_B: 3 }, "ceo");
+  assert.equal((await store.getDecision(gameId, 0, f1.id))?.decision.invest_Q, 0, "ghost slice ignored");
+});
+
 test("solo remove clears the submit flag; move rejected in solo games", async () => {
   const { config, store, orch } = teamGame();
   const code = GameOrchestrator.makeJoinCode();
