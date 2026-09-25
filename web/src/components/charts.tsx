@@ -87,6 +87,8 @@ export function Scatter({ points, xLabel, yLabel, fmtX = compactNum, fmtY = comp
   let ymin = Math.min(...ys), ymax = Math.max(...ys);
   if (xmin === xmax) { xmin -= 1; xmax += 1; }
   if (ymin === ymax) { ymin -= 1; ymax += 1; }
+  // DW-067: pad the domain so a point on the edge (the leader, usually) keeps its dot and label on the chart.
+  { const px = (xmax - xmin) * 0.08, py = (ymax - ymin) * 0.1; xmin -= px; xmax += px * 2; ymin -= py; ymax += py; }
   const sx = (v: number) => L + ((v - xmin) / (xmax - xmin)) * (SW - L - RM);
   const sy = (v: number) => SH - BM - ((v - ymin) / (ymax - ymin)) * (SH - TM - BM);
   const hp = hover != null && hover < finite.length ? finite[hover] : null;

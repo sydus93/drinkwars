@@ -333,6 +333,201 @@ function ScorePanel({ d }: { d: Derived }) {
   );
 }
 
+/** DW-067 debrief cards — what the board-meeting brief (server/scripts/teach-brief.py) points at.
+ *  "Shoppers" is the engine's choice share (who picked you, outside option included); "wanted" is
+ *  what those shoppers asked for; "sold" is what your tanks could pour. Sold < wanted ⇒ sold out:
+ *  price cost you shoppers but not sales. Sold > wanted ⇒ you caught drinkers rivals turned away. */
+const PULL_TERMS = ["price", "quality", "brand", "fit", "other"] as const;
+const pctPts = (n: number) => `${n >= 0 ? "+" : "−"}${Math.abs(n * 100).toFixed(0)} pts`;
+const pctChg = (n: number) => `${n >= 0 ? "+" : "−"}${Math.abs(n * 100).toFixed(0)}%`;
+function sellStatus(sr: { q_sold: number; q_desired?: number }): { label: string; cls: string } {
+  if (sr.q_desired == null || sr.q_desired <= 0) return { label: "—", cls: "text-inksoft" };
+  if (sr.q_sold < 0.97 * sr.q_desired) return { label: "sold out", cls: "text-brick font-semibold" };
+  if (sr.q_sold > 1.03 * sr.q_desired) return { label: "caught overflow", cls: "text-hop font-semibold" };
+  return { label: "spare tanks", cls: "text-inksoft" };
+}
+
+function PriceShoppersCard({ d, segIds }: { d: Derived; segIds: string[] }) {
+  const prevBy = new Map(d.data.panel.filter((p) => p.round === d.latestRound - 1).map((p) => [p.firmId, p]));
+  const rich = d.latest.some((p) => Object.values(p.segments).some((x) => x.q_desired != null));
+  return (
+    <Card>
+      <Eyebrow>Price, shoppers &amp; tanks · round {d.latestRound + 1}</Eyebrow>
+      <div className="mb-2 text-[0.72rem] text-inksoft">
+        <b>Shoppers</b> = share of the category's drinkers who picked you. <b>Wanted</b> = the cans they asked for. <b>Sold</b> = what your tanks could pour.
+        Sold out ⇒ a higher price costs shoppers but not sales. Δ = change since last round.
+      </div>
+      <div className="grid gap-4">
+        {segIds.map((s) => {
+          const mk = d.data.market.find((m) => m.round === d.latestRound && m.segment === s);
+          const rows = d.latest.filter((p) => p.segments[s] && (p.segments[s].price > 0 || p.segments[s].q_sold > 0));
+          if (!mk || !mk.D || !rows.length) return null;
+          const wanted = rows.reduce((a, p) => a + (p.segments[s].q_desired ?? 0), 0);
+          const sold = rows.reduce((a, p) => a + p.segments[s].q_sold, 0);
+          return (
+            <div key={s} className="overflow-x-auto">
+              <div className="flex flex-wrap items-baseline justify-between gap-x-3 text-sm">
+                <span className="font-semibold">{SEG_LABEL[s] ?? s}</span>
+                <span className="tnum text-[0.72rem] text-inksoft">
+                  {fmt.int(mk.D)} drinkers{rich ? <> · {fmt.int(wanted)} wanted one of you · {fmt.int(sold)} served{wanted > sold ? <> · <b className="text-brick">{fmt.int(wanted - sold)} turned away</b></> : null}</> : <> · {fmt.int(sold)} served</>}
+                </span>
+              </div>
+              <table className="mt-1 w-full text-sm">
+                <thead>
+                  <tr className="text-left text-[0.6rem] uppercase tracking-[0.1em] text-inksoft">
+                    <th className="py-1 pr-2">Firm</th>
+                    <th className="py-1 pr-2 text-right">Price</th>
+                    <th className="py-1 pr-2 text-right">Δ</th>
+                    <th className="py-1 pr-2 text-right">Shoppers</th>
+                    <th className="py-1 pr-2 text-right">Δ</th>
+                    {rich && <th className="py-1 pr-2 text-right">Wanted</th>}
+                    <th className="py-1 pr-2 text-right">Sold</th>
+                    {rich && <th className="py-1 pr-2">Tanks</th>}
+                    <th className="py-1 text-right">Revenue Δ</th>
+                  </tr>
+                </thead>
+                <tbody className="tnum">
+                  {rows.map((p) => {
+                    const sr = p.segments[s];
+                    const pr = prevBy.get(p.firmId)?.segments[s];
+                    const st = sellStatus(sr);
+                    return (
+                      <tr key={p.firmId} className="border-t border-line">
+                        <td className="py-1 pr-2"><span className="mr-1.5 inline-block h-2 w-2 rounded-full align-middle" style={{ background: d.colorByFirm.get(p.firmId) }} />{d.nameByFirm.get(p.firmId)}</td>
+                        <td className="py-1 pr-2 text-right">{fmt.price(sr.price)}</td>
+                        <td className="py-1 pr-2 text-right text-inksoft">{pr?.price ? pctChg(sr.price / pr.price - 1) : "—"}</td>
+                        <td className="py-1 pr-2 text-right">{fmt.pct(sr.share)}</td>
+                        <td className="py-1 pr-2 text-right text-inksoft">{pr ? pctPts(sr.share - pr.share) : "—"}</td>
+                        {rich && <td className="py-1 pr-2 text-right">{sr.q_desired != null ? fmt.int(sr.q_desired) : "—"}</td>}
+                        <td className="py-1 pr-2 text-right">{fmt.int(sr.q_sold)}</td>
+                        {rich && <td className={`py-1 pr-2 text-[0.72rem] ${st.cls}`}>{st.label}</td>}
+                        <td className="py-1 text-right">{pr ? fmt.signed(sr.revenue - pr.revenue) : "—"}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
+function PullCard({ d, segIds }: { d: Derived; segIds: string[] }) {
+  if (!d.latest.some((p) => Object.values(p.segments).some((x) => x.pull))) return null; // export predates DW-067
+  return (
+    <Card>
+      <Eyebrow>Why shoppers chose · round {d.latestRound + 1}</Eyebrow>
+      <div className="mb-2 text-[0.72rem] text-inksoft">
+        Each firm's pull against the field average in that category. Gaps are what count: <b>+0.1 ≈ 10% more shoppers</b>, +0.7 ≈ 2×, +2.3 ≈ 10×.
+        Price is always a drag; quality, brand and focus (fit) are what let a firm charge more and still draw shoppers.
+      </div>
+      <div className="grid gap-4">
+        {segIds.map((s) => {
+          const rows = d.latest.filter((p) => p.segments[s]?.pull && p.segments[s].price > 0);
+          if (rows.length < 2) return null;
+          const avg = Object.fromEntries(PULL_TERMS.map((t) => [t, rows.reduce((a, p) => a + p.segments[s].pull![t], 0) / rows.length])) as Record<string, number>;
+          const sample = rows[0].segments[s];
+          const perDollar = 1 - Math.exp(sample.pull!.price / sample.price); // price pull is linear in price, same slope for every firm
+          const cell = (v: number) => (
+            <td className={`py-1 pr-2 text-right ${v > 0.05 ? "text-hop" : v < -0.05 ? "text-brick" : "text-inksoft"}`}>{v >= 0 ? "+" : "−"}{Math.abs(v).toFixed(2)}</td>
+          );
+          return (
+            <div key={s} className="overflow-x-auto">
+              <div className="flex flex-wrap items-baseline justify-between gap-x-3 text-sm">
+                <span className="font-semibold">{SEG_LABEL[s] ?? s}</span>
+                <span className="text-[0.72rem] text-inksoft">here, each +$1 of price costs ≈ {fmt.pct(perDollar)} of your shoppers vs rivals</span>
+              </div>
+              <table className="mt-1 w-full text-sm">
+                <thead>
+                  <tr className="text-left text-[0.6rem] uppercase tracking-[0.1em] text-inksoft">
+                    <th className="py-1 pr-2">Firm</th>
+                    <th className="py-1 pr-2 text-right">Shoppers</th>
+                    {PULL_TERMS.map((t) => <th key={t} className="py-1 pr-2 text-right">{t === "other" ? "alliances/location" : t}</th>)}
+                    <th className="py-1 text-right">Total vs avg</th>
+                  </tr>
+                </thead>
+                <tbody className="tnum">
+                  {[...rows].sort((a, b) => b.segments[s].share - a.segments[s].share).map((p) => {
+                    const pl = p.segments[s].pull!;
+                    const rel = PULL_TERMS.map((t) => pl[t] - avg[t]);
+                    return (
+                      <tr key={p.firmId} className="border-t border-line">
+                        <td className="py-1 pr-2"><span className="mr-1.5 inline-block h-2 w-2 rounded-full align-middle" style={{ background: d.colorByFirm.get(p.firmId) }} />{d.nameByFirm.get(p.firmId)} <span className="text-inksoft">{fmt.price(p.segments[s].price)}</span></td>
+                        <td className="py-1 pr-2 text-right">{fmt.pct(p.segments[s].share)}</td>
+                        {rel.map((v, i) => <Fragment key={PULL_TERMS[i]}>{cell(v)}</Fragment>)}
+                        <td className="py-1 text-right font-semibold">{(() => { const t = rel.reduce((a, v) => a + v, 0); return `${t >= 0 ? "+" : "−"}${Math.abs(t).toFixed(2)}`; })()}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
+/** DW-067: the brief's POSITIONS block, projectable. Margin/can × cans = gross profit; running costs
+ *  (everything between gross and operating profit: overhead, programs, depreciation) take the rest. */
+function PositionsCard({ d }: { d: Derived }) {
+  const rows = d.latest.filter((p) => p.status === "active" && p.totalQSold > 0);
+  if (!rows.length) return null;
+  const pts: ScatterPoint[] = rows.map((p) => ({ label: d.nameByFirm.get(p.firmId)!, color: d.colorByFirm.get(p.firmId)!, x: p.totalQSold, y: p.gross / p.totalQSold, size: 4 + 4 * Math.max(0, p.gross) / Math.max(1, ...rows.map((q) => q.gross)) }));
+  return (
+    <Card>
+      <Eyebrow>Positions · margin × volume · round {d.latestRound + 1}</Eyebrow>
+      <div className="mb-2 text-[0.72rem] text-inksoft">
+        <b>Margin per can × cans = gross profit.</b> Up-and-left earns more per can; down-and-right sells more cans; bigger dot = more gross profit.
+        Then <b>running costs</b> (overhead, programs, depreciation) come out of gross profit. What's left is operating profit, which has to cover interest.
+      </div>
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+        <Scatter points={pts} xLabel="Cans sold" yLabel="Margin per can" fmtX={fmt.int} fmtY={fmt.price} />
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-[0.6rem] uppercase tracking-[0.1em] text-inksoft">
+                <th className="py-1 pr-2">Firm</th>
+                <th className="py-1 pr-2 text-right">Price</th>
+                <th className="py-1 pr-2 text-right">Cost</th>
+                <th className="py-1 pr-2 text-right">Margin</th>
+                <th className="py-1 pr-2 text-right">Cans</th>
+                <th className="py-1 pr-2 text-right">Tanks used</th>
+                <th className="py-1 pr-2 text-right">Gross</th>
+                <th className="py-1 pr-2 text-right">Running</th>
+                <th className="py-1 text-right">Operating</th>
+              </tr>
+            </thead>
+            <tbody className="tnum">
+              {rows.map((p) => {
+                const used = p.cap > 0 ? p.totalQSold / p.cap : 0;
+                return (
+                  <tr key={p.firmId} className="border-t border-line">
+                    <td className="py-1 pr-2"><span className="mr-1.5 inline-block h-2 w-2 rounded-full align-middle" style={{ background: d.colorByFirm.get(p.firmId) }} />{d.nameByFirm.get(p.firmId)}</td>
+                    <td className="py-1 pr-2 text-right">{fmt.price(p.revenue / p.totalQSold)}</td>
+                    <td className="py-1 pr-2 text-right">{fmt.price(p.unitCost)}</td>
+                    <td className="py-1 pr-2 text-right font-semibold">{fmt.price(p.gross / p.totalQSold)}</td>
+                    <td className="py-1 pr-2 text-right">{fmt.int(p.totalQSold)}</td>
+                    <td className={`py-1 pr-2 text-right ${used >= 0.97 ? "font-semibold text-brick" : "text-inksoft"}`} title={used >= 0.97 ? "tanks full: more shoppers would not have sold another can" : ""}>{fmt.pct(used)}</td>
+                    <td className="py-1 pr-2 text-right">{fmt.money(p.gross)}</td>
+                    <td className="py-1 pr-2 text-right text-inksoft">−{fmt.money(p.gross - p.ebit)}</td>
+                    <td className={`py-1 text-right ${p.ebit < 0 ? "font-semibold text-brick" : ""}`}>{fmt.money(p.ebit)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <div className="mt-1 text-[0.68rem] text-inksoft">Tanks used in red = full: a price cut would have won shoppers with no beer to sell them.</div>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 function MarketPanel({ d }: { d: Derived }) {
   const segIds = d.data.meta.segments.map((s) => s.id);
   // Demand vs served per segment, over rounds.
@@ -347,6 +542,9 @@ function MarketPanel({ d }: { d: Derived }) {
   const latest = d.latest;
   return (
     <div className="grid gap-4">
+      <PriceShoppersCard d={d} segIds={segIds} />
+      <PositionsCard d={d} />
+      <PullCard d={d} segIds={segIds} />
       <Card>
         <Eyebrow>Demand vs. served</Eyebrow>
         <Legend series={[{ label: "Demand (D)", color: "var(--color-inksoft)", data: [] }, { label: "Units served", color: "var(--color-copper)", data: [] }]} />
@@ -606,6 +804,10 @@ function FinancePanel({ d }: { d: Derived }) {
     <div className="grid gap-4">
       <Card>
         <Eyebrow>Solvency canaries · last round</Eyebrow>
+        <div className="mb-2 text-[0.72rem] text-inksoft">
+          <b>Safety line:</b> cash under {fmt.money(d.latest[0]?.cashSafetyThreshold ?? 120_000)} <b>or</b> coverage under 1× (operating profit ÷ interest).
+          Below it, lenders stop new loans. After {3} quarters in a row a rival can buy the firm; after {5}, the covenant forces exit (game defaults).
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -784,7 +986,9 @@ function TeamPanel({ d }: { d: Derived }) {
                   <th className="py-1 pr-2">Category</th>
                   <th className="py-1 pr-2 text-right">Price</th>
                   <th className="py-1 pr-2 text-right">Share</th>
+                  <th className="py-1 pr-2 text-right">Wanted</th>
                   <th className="py-1 pr-2 text-right">Units sold</th>
+                  <th className="py-1 pr-2">Tanks</th>
                   <th className="py-1 text-right">Revenue</th>
                 </tr>
               </thead>
@@ -797,7 +1001,9 @@ function TeamPanel({ d }: { d: Derived }) {
                       <td className="py-1 pr-2">{SEG_LABEL[s] ?? s}</td>
                       <td className="py-1 pr-2 text-right">{sr.price > 0 ? fmt.price(sr.price) : "—"}</td>
                       <td className="py-1 pr-2 text-right">{fmt.pct(sr.share)}</td>
+                      <td className="py-1 pr-2 text-right">{sr.q_desired != null ? fmt.int(sr.q_desired) : "—"}</td>
                       <td className="py-1 pr-2 text-right">{fmt.int(sr.q_sold)}</td>
+                      <td className={`py-1 pr-2 text-[0.72rem] ${sellStatus(sr).cls}`}>{sellStatus(sr).label}</td>
                       <td className="py-1 text-right">{fmt.money(sr.revenue)}</td>
                     </tr>
                   );

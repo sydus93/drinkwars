@@ -28,9 +28,16 @@ export interface DashTeam {
 
 export interface DashSegmentResult {
   price: number;
-  share: number;
+  share: number; // share of SHOPPERS (the logit choice share, outside option included) — not share of units sold
   q_sold: number;
   revenue: number;
+  /** DW-067: what shoppers wanted from this firm before tanks ran out (D × share). q_sold < q_desired
+   *  ⇒ the firm sold out and turned drinkers away. Absent on exports built before DW-067. */
+  q_desired?: number;
+  /** DW-067: why shoppers chose it — the utility terms the logit ranks firms on (§5.1). Differences
+   *  between firms are what matter: +0.1 of pull ≈ 10% more shoppers. `other` = alliance + location
+   *  effects. The segment constant (same for every firm) is left out. */
+  pull?: { price: number; quality: number; brand: number; fit: number; other: number };
 }
 
 /** One firm's resolved-round outcome, trimmed to the fields the dashboard charts.
@@ -220,7 +227,13 @@ export async function buildInstructorDashboard(store: StorageAdapter, gameId: st
       const segments: Record<SegmentId, DashSegmentResult> = {};
       for (const s of segIds) {
         const sr = fr.segments[s];
-        segments[s] = { price: sr.price, share: sr.share, q_sold: sr.q_sold, revenue: sr.revenue };
+        const a = sr.attraction;
+        const r3 = (n: number) => Math.round(n * 1000) / 1000;
+        segments[s] = {
+          price: sr.price, share: sr.share, q_sold: sr.q_sold, revenue: sr.revenue,
+          ...(sr.q_desired != null ? { q_desired: sr.q_desired } : {}),
+          ...(a ? { pull: { price: r3(a.price), quality: r3(a.quality), brand: r3(a.brand), fit: r3(a.fit), other: r3((sr.utility ?? 0) - a.alpha - a.price - a.quality - a.brand - a.fit) } } : {}),
+        };
       }
       panel.push({
         round: r,
