@@ -5,7 +5,7 @@
  */
 import type {
   AgreementRow, BeliefRow, DecisionRecord, DistinctivenessRow, FirmRoundRow, GameRecord,
-  Lifecycle, MemberDecisionRecord, PublicRoundRecord, ReflectionRow, RoundResultRecord, StorageAdapter, TeamRecord, TelemetryRow,
+  Lifecycle, MemberDecisionRecord, PublicRoundRecord, ReflectionRow, RoundResultRecord, StorageAdapter, TeamMemberRecord, TeamRecord, TelemetryRow,
   UserRecord, WorldStateRecord,
 } from "../types.js";
 import type { WorldState } from "drinkwars-engine";
@@ -92,10 +92,13 @@ export class InMemoryAdapter implements StorageAdapter {
     this.teams.set(t.id, clone(t));
   }
   async getTeams(gameId: string): Promise<TeamRecord[]> {
-    return [...this.teams.values()].filter((t) => t.game_id === gameId).map(clone);
+    return Promise.all([...this.teams.values()].filter((t) => t.game_id === gameId).map((t) => this.withMembers(t)));
   }
   async getTeam(id: string): Promise<TeamRecord | null> {
-    return this.teams.has(id) ? clone(this.teams.get(id)!) : null;
+    return this.teams.has(id) ? this.withMembers(this.teams.get(id)!) : null;
+  }
+  private async withMembers(t: TeamRecord): Promise<TeamRecord> {
+    return { ...clone(t), members: await this.getTeamMembers(t.id) };
   }
   async getTeamsForUser(userId: string): Promise<TeamRecord[]> {
     return [...this.teams.values()].filter((t) => t.member_user_ids.includes(userId)).map(clone);
@@ -139,6 +142,14 @@ export class InMemoryAdapter implements StorageAdapter {
   }
   async getMemberRole(teamId: string, userId: string): Promise<string | null> {
     return this.memberRoles.get(key(teamId, userId)) ?? null;
+  }
+  async getTeamMembers(teamId: string): Promise<TeamMemberRecord[]> {
+    const t = this.teams.get(teamId);
+    if (!t) return [];
+    return t.member_user_ids.map((uid) => {
+      const u = this.users.get(uid);
+      return { user_id: uid, role: this.memberRoles.get(key(teamId, uid)) ?? null, display_name: u?.display_name ?? null, external_id: u?.external_id ?? null, claim_code: u?.claim_code ?? null };
+    });
   }
 
   async appendWorldState(rec: WorldStateRecord): Promise<void> {

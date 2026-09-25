@@ -33,6 +33,21 @@ const FIRMS = Math.max(1, Number(process.env.FIRMS ?? 8));
 const ROUNDS = Math.max(1, Number(process.env.ROUNDS ?? 3));
 const POLL_MS = Math.max(500, Number(process.env.POLL_MS ?? 2500));
 const BROWSERS = Math.max(0, Number(process.env.BROWSERS ?? 4));
+// DW-065: the live client pins the edge to the database's region (multiplayer.ts edgeUrl). Default matches it;
+// EDGE_REGION= (empty) reproduces the unpinned behaviour for an A/B.
+const EDGE_REGION = process.env.EDGE_REGION ?? (isProd ? "us-east-2" : "");
+// DW-065: the instructor console polls /status for the whole class period (Instructor.tsx: 4 s, one in
+// flight). Before this the harness never issued it, and at 71 storage reads a call on the pre-DW-065
+// server that single poll loop was as much load as the entire class — so every earlier rehearsal
+// under-loaded prod. CONSOLE_MS=0 disables it; 2500 reproduces the pre-DW-065 console cadence.
+const CONSOLE_MS = Math.max(0, Number(process.env.CONSOLE_MS ?? 4000));
+let consoleStop = false;
+async function consoleLoop(gid: string): Promise<void> {
+  while (!consoleStop) {
+    await call("GET", `/instructor/games/${gid}/status`, { instructor: true, label: "/instructor/games/:id/status (console)" });
+    await sleep(CONSOLE_MS);
+  }
+}
 
 const ALL_CHAIRS = ["ceo", "cfo", "cmo", "coo", "chro"] as const;
 type Chair = (typeof ALL_CHAIRS)[number];
@@ -73,6 +88,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function call(method: string, path: string, opts: { body?: unknown; token?: string; instructor?: boolean; label?: string } = {}): Promise<{ status: number; json: any; bytes: number }> {
   const url = new URL(BASE + path);
   if (opts.token) url.searchParams.set("token", opts.token);
+  if (EDGE_REGION) url.searchParams.set("forceFunctionRegion", EDGE_REGION); // DW-065: mirror the client's region pin
   const t0 = performance.now();
   try {
     const res = await fetch(url, {
@@ -194,6 +210,7 @@ async function main() {
   }));
   expect(apiStudents.every((s) => !!s.token), "every API student holds a session token");
   const loops = apiStudents.filter((s) => s.token).map((s) => pollLoop(s));
+  if (CONSOLE_MS > 0) { loops.push(consoleLoop(gid)); console.log(`  instructor console polling /status every ${CONSOLE_MS} ms`); }
 
   // 3. rounds
   for (let r = 1; r <= ROUNDS; r++) {
@@ -284,6 +301,7 @@ async function main() {
 
 async function finish(gid: string | null, loops: Promise<void>[] = [], students: Student[] = [], fleet: BrowserFleet | null = null) {
   for (const s of students) s.stop = true;
+  consoleStop = true;
   await Promise.allSettled(loops);
   if (fleet) {
     // A real client that cannot join or submit is a failed rehearsal, not a footnote.

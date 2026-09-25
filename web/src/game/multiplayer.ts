@@ -75,10 +75,36 @@ export interface RawView {
   deadlineAt?: number | null; // DW-048: instructor-announced submission deadline for this round (ms epoch)
 }
 
+/** DW-065: the edge function runs, by default, in the region nearest the CALLER (us-west-1 from
+ *  Colorado) while the database lives in us-east-2 — so each of a request's ~10-20 storage reads
+ *  crossed the continent (~70 ms apiece; /view measured 1.8 s → 0.9 s unloaded once pinned).
+ *  The pin is a query parameter, not the x-region header, so GETs stay CORS-simple (no preflight).
+ *  A pinned request is never re-routed if that region is down, so a network failure retries once
+ *  unpinned. Local transports (not a supabase.co host) are never pinned. */
+const EDGE_REGION: string = (import.meta as any).env?.VITE_EDGE_REGION ?? "us-east-2";
+const FETCH_TIMEOUT_MS = 45_000; // a hung request must not freeze the poll loop / the commit button forever
+const pinnable = (base: string) => !!EDGE_REGION && /supabase\.co/.test(base);
+export function edgeUrl(base: string, path: string, pin = pinnable(base)): string {
+  if (!pin) return `${base}${path}`;
+  return `${base}${path}${path.includes("?") ? "&" : "?"}forceFunctionRegion=${encodeURIComponent(EDGE_REGION)}`;
+}
+export async function edgeFetch(base: string, path: string, init: RequestInit = {}): Promise<Response> {
+  const attempt = async (pin: boolean) => {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), FETCH_TIMEOUT_MS);
+    try { return await fetch(edgeUrl(base, path, pin), { ...init, signal: ctl.signal }); }
+    catch (e) { throw (e as { name?: string })?.name === "AbortError" ? new Error("network timeout — the game server took too long to answer") : e; }
+    finally { clearTimeout(t); }
+  };
+  try { return await attempt(pinnable(base)); }
+  catch (e) { if (!pinnable(base)) throw e; return attempt(false); }
+}
+
 async function api(base: string, path: string, opts: RequestInit = {}): Promise<any> {
-  const res = await fetch(`${base}${path}`, {
+  // content-type only when there is a body: a GET with it is a non-simple request and preflights.
+  const res = await edgeFetch(base, path, {
     ...opts,
-    headers: { "content-type": "application/json", ...(opts.headers ?? {}) },
+    headers: { ...(opts.body != null ? { "content-type": "application/json" } : {}), ...(opts.headers ?? {}) },
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) { const e = new Error(body?.error || `request failed (${res.status})`) as Error & { status?: number }; e.status = res.status; throw e; }
@@ -97,7 +123,7 @@ export interface MyGame { gameId: string; title: string | null; joinCode: string
 
 /** A player's games, by their durable claim code (return-to-game + career). */
 export async function fetchMyGames(claim: string, base: string = TRANSPORT_URL): Promise<{ player: { name: string | null; external_id: string | null }; games: MyGame[] }> {
-  const res = await fetch(`${base}/me/games?claim=${encodeURIComponent(claim)}`);
+  const res = await edgeFetch(base, `/me/games?claim=${encodeURIComponent(claim)}`);
   if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || "unknown claim code");
   return res.json();
 }
@@ -115,7 +141,7 @@ export interface GamePeek {
 
 /** Validate a join code + learn the game's shape before a student founds a team. */
 export async function peekGame(code: string, claim?: string, base: string = TRANSPORT_URL): Promise<GamePeek> {
-  const res = await fetch(`${base}/game?code=${encodeURIComponent(code.trim().toUpperCase())}${claim ? `&claim=${encodeURIComponent(claim.trim().toUpperCase())}` : ""}`);
+  const res = await edgeFetch(base, `/game?code=${encodeURIComponent(code.trim().toUpperCase())}${claim ? `&claim=${encodeURIComponent(claim.trim().toUpperCase())}` : ""}`);
   if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || "no game found for that code");
   return res.json();
 }
@@ -508,7 +534,7 @@ export class InstructorClient {
   /** Research data export — the per-firm-per-round panel as a downloadable file.
    *  Uses raw fetch (not `api`) so the passcode header reaches the attachment route. */
   async exportData(gameId: string, format: "csv" | "json"): Promise<Blob> {
-    const res = await fetch(`${this.base}/instructor/games/${gameId}/export?format=${format}`, { headers: this.headers() });
+    const res = await edgeFetch(this.base, `/instructor/games/${gameId}/export?format=${format}`, { headers: this.headers() });
     if (!res.ok) throw new Error(`export failed (${res.status})`);
     return res.blob();
   }

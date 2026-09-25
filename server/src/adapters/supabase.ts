@@ -19,7 +19,7 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type {
   AgreementRow, BeliefRow, DecisionRecord, DistinctivenessRow, FirmRoundRow, GameRecord,
-  Lifecycle, MemberDecisionRecord, PublicRoundRecord, ReflectionRow, RoundResultRecord, StorageAdapter, TeamRecord, TelemetryRow,
+  Lifecycle, MemberDecisionRecord, PublicRoundRecord, ReflectionRow, RoundResultRecord, StorageAdapter, TeamRecord, TeamMemberRecord, TelemetryRow,
   UserRecord, WorldStateRecord,
 } from "../types.js";
 import type { WorldState } from "drinkwars-engine";
@@ -50,9 +50,17 @@ const mapMemberDecision = (r: any): MemberDecisionRecord => ({
   desk: r.desk ?? null, partial: r.partial ?? {}, submitted: r.submitted, updated_at: fromTs(r.updated_at),
 });
 const USER_COLS = "id, role, email, consent, deid_code, external_id, display_name, cohort, claim_code";
+// DW-065: every team read also carries the seat + user display fields, so a request that reads the
+// game's teams never needs getTeam / getTeamMembers round-trips afterwards (request-cache.ts primes them).
+const TEAM_COLS = "id, game_id, firm_id, name, color, emblem, team_members(user_id, role, users(display_name, external_id, claim_code))";
+const mapMember = (m: any): TeamMemberRecord => ({
+  user_id: m.user_id, role: m.role ?? null,
+  display_name: m.users?.display_name ?? null, external_id: m.users?.external_id ?? null, claim_code: m.users?.claim_code ?? null,
+});
 const mapTeam = (r: any): TeamRecord => ({
   id: r.id, game_id: r.game_id, firm_id: r.firm_id, name: r.name, color: r.color ?? null, emblem: r.emblem ?? null,
   member_user_ids: (r.team_members ?? []).map((m: any) => m.user_id),
+  members: (r.team_members ?? []).map(mapMember),
 });
 const mapWorldState = (r: any): WorldStateRecord => ({
   game_id: r.game_id, round: r.round, state: r.state, seed: Number(r.seed), created_at: fromTs(r.created_at),
@@ -141,11 +149,11 @@ export class SupabaseAdapter implements StorageAdapter {
     }
   }
   async getTeams(gameId: string): Promise<TeamRecord[]> {
-    const rows = must(await this.db.from("teams").select("id, game_id, firm_id, name, color, emblem, team_members(user_id)").eq("game_id", gameId));
+    const rows = must(await this.db.from("teams").select(TEAM_COLS).eq("game_id", gameId));
     return (rows ?? []).map(mapTeam);
   }
   async getTeam(id: string): Promise<TeamRecord | null> {
-    const r = must(await this.db.from("teams").select("id, game_id, firm_id, name, color, emblem, team_members(user_id)").eq("id", id).maybeSingle());
+    const r = must(await this.db.from("teams").select(TEAM_COLS).eq("id", id).maybeSingle());
     return r ? mapTeam(r) : null;
   }
   async addTeamMember(teamId: string, userId: string): Promise<void> {
@@ -170,12 +178,18 @@ export class SupabaseAdapter implements StorageAdapter {
     const r = must(await this.db.from("team_members").select("role").eq("team_id", teamId).eq("user_id", userId).maybeSingle());
     return r?.role ?? null;
   }
+  async getTeamMembers(teamId: string): Promise<TeamMemberRecord[]> {
+    // team_members.user_id → users.id is the only FK between the two tables, so PostgREST embeds
+    // the user row unambiguously; a member whose users row is missing embeds null (was: getUser → null).
+    const rows = must(await this.db.from("team_members").select("user_id, role, users(display_name, external_id, claim_code)").eq("team_id", teamId));
+    return (rows ?? []).map(mapMember);
+  }
   async getTeamsForUser(userId: string): Promise<TeamRecord[]> {
     // team_members → the teams this user belongs to (each with its full membership).
     const mine = must(await this.db.from("team_members").select("team_id").eq("user_id", userId));
     const ids = (mine ?? []).map((m: any) => m.team_id);
     if (!ids.length) return [];
-    const rows = must(await this.db.from("teams").select("id, game_id, firm_id, name, color, emblem, team_members(user_id)").in("id", ids));
+    const rows = must(await this.db.from("teams").select(TEAM_COLS).in("id", ids));
     return (rows ?? []).map(mapTeam);
   }
 

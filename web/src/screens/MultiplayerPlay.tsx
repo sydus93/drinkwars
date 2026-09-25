@@ -22,8 +22,8 @@ import { setSelfFirm } from "../lib/teamColors.js";
 // DW-050: the poll is a PULSE (≈120 bytes, 3 reads) and the full view is fetched only when
 // its stamp moves (or every FULL_REFRESH_MS as a safety net). A class of 25 on a sprint day
 // used to cost ~200k full-view calls; this makes the common tick nearly free.
-const POLL_OPEN_MS = 3000; // open round, my seat not yet submitted, tab visible
-const POLL_SUBMITTED_MS = 6000; // I've submitted — waiting on teammates / the instructor
+const POLL_OPEN_MS = 4000; // DW-065: was 3000 — every pulse is 4 serialized storage reads project-wide; see multiplayer.ts edgeFetch note // open round, my seat not yet submitted, tab visible
+const POLL_SUBMITTED_MS = 8000; // DW-065: was 6000 // I've submitted — waiting on teammates / the instructor
 const POLL_WAITING_MS = 8000; // locked/resolving/complete — nothing the student can change
 const POLL_HIDDEN_MS = 15000; // tab hidden (resumes instantly on visibilitychange)
 const POLL_ERROR_MS = 15000; // after repeated failures (server down / network) — don't hammer

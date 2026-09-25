@@ -41,17 +41,22 @@ export function Instructor({ onExit }: { onExit: () => void }) {
   useEffect(() => {
     if (!client || !game) return;
     let live = true;
+    let inflight = false; // DW-065: setInterval fires regardless; at class load /status took ~8 s and the calls stacked
     const tick = async () => {
       if (typeof document !== "undefined" && document.hidden) return; // DW-048: a backgrounded console doesn't poll
+      if (inflight) return;
+      inflight = true;
       try {
         const s = await client.status(game.gameId);
         if (live) setStatus(s);
       } catch {
         /* keep last status */
+      } finally {
+        inflight = false;
       }
     };
     tick();
-    const h = setInterval(tick, 2500);
+    const h = setInterval(tick, 4000);
     const onVisible = () => { if (!document.hidden) tick(); };
     document.addEventListener("visibilitychange", onVisible);
     return () => {

@@ -319,10 +319,13 @@ export class GameOrchestrator {
     const team = await this.store.getTeam(teamId);
     if (!team) return [];
     const mds = await this.store.getMemberDecisions(gameId, game.current_round, teamId);
+    // DW-065: the roster in one read (was getUser + getMemberRole per chair, in series). Iteration
+    // still follows team.member_user_ids so seat order is unchanged.
+    const roster = new Map((await this.store.getTeamMembers(teamId)).map((m) => [m.user_id, m]));
     const out: TeamSeat[] = [];
     for (const uid of team.member_user_ids) {
-      const u = await this.store.getUser(uid);
-      const role = await this.store.getMemberRole(teamId, uid);
+      const u = roster.get(uid);
+      const role = u?.role ?? null;
       const md = mds.find((m) => m.user_id === uid);
       out.push({ name: u?.display_name ?? "Player", role, desk: md?.desk ?? (role ? (ROLE_DESK[role] ?? "all") : null), submitted: md?.submitted ?? false });
     }
@@ -460,10 +463,11 @@ export class GameOrchestrator {
     if (!team || team.game_id !== gameId) return { seats: [], composed: null, locked: false };
     const round = game.current_round;
     const mds = await this.store.getMemberDecisions(gameId, round, teamId);
+    const roster = new Map((await this.store.getTeamMembers(teamId)).map((m) => [m.user_id, m])); // DW-065: one read, not two per chair
     const seats: TeamPlanSeat[] = [];
     for (const uid of team.member_user_ids) {
-      const u = await this.store.getUser(uid);
-      const role = await this.store.getMemberRole(teamId, uid);
+      const u = roster.get(uid);
+      const role = u?.role ?? null;
       const md = mds.find((m) => m.user_id === uid);
       seats.push({
         name: u?.display_name ?? "Player", role,
@@ -772,14 +776,15 @@ export class GameOrchestrator {
     for (const team of await this.store.getTeams(gameId)) {
       const mds = await this.store.getMemberDecisions(gameId, game.current_round, team.id);
       const solo = game.firm_mode !== "team" ? await this.store.getDecision(gameId, game.current_round, team.id) : null;
+      const roster = new Map((await this.store.getTeamMembers(team.id)).map((m) => [m.user_id, m])); // DW-065
       const members = [];
       for (const uid of team.member_user_ids) {
-        const u = await this.store.getUser(uid);
+        const u = roster.get(uid);
         const md = mds.find((m) => m.user_id === uid);
         members.push({
           userId: uid, name: u?.display_name ?? "Player", externalId: u?.external_id ?? null,
           claim: u?.claim_code ?? null, // DW-049: instructor-only — so the console can re-issue a lost return code
-          role: await this.store.getMemberRole(team.id, uid),
+          role: u?.role ?? null,
           submitted: game.firm_mode === "team" ? (md?.submitted ?? false) : (solo?.submitted ?? false),
           updatedAt: game.firm_mode === "team" ? (md?.updated_at ?? null) : (solo?.submitted_at ?? null),
         });

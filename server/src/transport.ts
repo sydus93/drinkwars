@@ -73,6 +73,7 @@ function cors(res: ServerResponse) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type,X-Instructor-Pass");
+  res.setHeader("Access-Control-Max-Age", "7200"); // DW-065 (twin of the edge)
 }
 function send(res: ServerResponse, status: number, body: unknown) {
   cors(res);
@@ -136,38 +137,27 @@ async function viewFor(gameId: string, teamId: string, userId?: string) {
   // request-cache.ts for the scope rule.
   const store = withRequestCache(baseStore);
   const orch = new GameOrchestrator(store, () => Date.now(), ORCH_OPTS);
-  // DW-064 — these reads used to run one after another. The request cache already collapses
-  // DUPLICATE reads, so what remained was ~18 DISTINCT round-trips in series; against a hosted
-  // Postgres each hop is ~150ms of pure latency, which made the sum the endpoint's floor
-  // (measured 3.3s at 9 students, 13s at 35). Nothing here is cheaper now — it just waits
-  // concurrently. The cache memoises PROMISES, not resolved values, so firing these together
-  // still dedupes the underlying queries rather than doubling them.
-  //
-  // PHASE 1 — depends on nothing but the ids we were handed.
-  const [pub, tv, game, pubRounds, teams] = await Promise.all([
-    orch.getPublicState(gameId),
-    orch.getTeamView(gameId, teamId),
-    store.getGame(gameId),
-    store.getPublicRounds(gameId),
-    store.getTeams(gameId),
-  ]);
-  const last = pubRounds.at(-1) ?? null;
+  // DW-065: the teams read goes FIRST — the adapters embed each firm's roster, and the request cache
+  // primes getTeam / getTeamMembers from it, so the projections below never pay those round-trips.
+  const teams = await store.getTeams(gameId);
+  // DW-064 — these reads run IN SERIES on purpose; do not "fix" this with Promise.all.
+  // The parallel version was built, proved behaviour-identical by scripts/view-parity.ts,
+  // deployed, and measured against a serial baseline on 2026-09-24 (35 students, 3 rounds,
+  // prod, Supabase healthy): /view p50 11.6s serial vs 11.5-11.9s parallel — NO GAIN, because
+  // the depth that costs lives INSIDE getPublicState/getTeamView, not at this top level.
+  // It also cost ~2-3s on /submit p50 (10.3s serial vs 12.5-13.9s parallel). The win is to
+  // cut round-trips inside those two projections; widening the fan-out here only crowds writes.
+  const pub = await orch.getPublicState(gameId);
+  const tv = await orch.getTeamView(gameId, teamId);
+  const game = await store.getGame(gameId);
+  const last = (await store.getPublicRounds(gameId)).at(-1) ?? null;
+  const decision = await store.getDecision(gameId, pub.round, teamId);
   const own = tv.own as any; // full FirmState for this team's firm | null
   const config: any = game?.config;
-  const isTeamGame = game?.firm_mode === "team";
-  // PHASE 2 — needs pub.round / own / firm_mode from phase 1. The `own`-guarded entries keep
-  // their original semantics exactly: a team with no firm still issues none of these reads.
-  const [decision, allResults, seats, teamPlan, standing, ws] = await Promise.all([
-    store.getDecision(gameId, pub.round, teamId),
-    own ? store.getRoundResults(gameId) : Promise.resolve([] as Awaited<ReturnType<typeof store.getRoundResults>>),
-    own && isTeamGame ? orch.getTeamSeats(gameId, teamId) : Promise.resolve([] as Awaited<ReturnType<typeof orch.getTeamSeats>>),
-    own && isTeamGame && userId ? orch.getTeamPlan(gameId, teamId, userId) : Promise.resolve(undefined),
-    own ? orch.getStandingDecision(gameId, teamId) : Promise.resolve(null),
-    own ? store.getLatestWorldState(gameId) : Promise.resolve(null),
-  ]);
   const unitCostEst = own ? (own.unit_cost > 0 ? own.unit_cost : (config?.costs?.c_base ?? 0) * 0.85) : 0;
   // This team's own last-round diagnostics only (extracted server-side).
   let ownResult: any = null;
+  const allResults = own ? await store.getRoundResults(gameId) : [];
   const lastFull = allResults.at(-1) ?? null;
   if (own) {
     ownResult = lastFull ? (lastFull.result.firm_results.find((f) => f.firm_id === own.id) ?? null) : null;
@@ -188,12 +178,17 @@ async function viewFor(gameId: string, teamId: string, userId?: string) {
   let firms: ReturnType<typeof projectFirms> = []; // public snapshots; rivals' private fields redacted unless this team bought market research
   let shocks: ReturnType<typeof projectShocks> = [];
   let hiringMarket: ReturnType<typeof generateHiringMarket> = []; // MOD-B12 candidate pool (shared/public — same for every firm)
-  // (seats / teamPlan / standing / ws all resolved in phase 2 above)
+  const seats = own && game?.firm_mode === "team" ? await orch.getTeamSeats(gameId, teamId) : []; // team firms: this firm's C-suite seats + submit status
+  // Team firms: the live plan — each seat's submitted slice + the composed decision
+  // (same-firm eyes only; the session's team is the only one ever queried).
+  const teamPlan = own && game?.firm_mode === "team" && userId ? await orch.getTeamPlan(gameId, teamId, userId) : undefined;
   const history = own ? projectHistory(allResults, own.id) : []; // own trend + public field aggregate
   // DW-048 draft seeds: the firm's standing plan (what it trades on absent a fresh submit) and,
   // for solo firms, this round's own submitted decision — so a reload resumes the real plan.
-  const draft = own && !isTeamGame && decision?.submitted ? decision.decision : null;
+  const standing = own ? await orch.getStandingDecision(gameId, teamId) : null;
+  const draft = own && game?.firm_mode !== "team" && decision?.submitted ? decision.decision : null;
   if (own) {
+    const ws = await store.getLatestWorldState(gameId);
     if (ws && config?.modules?.teamRoles?.enabled) briefings = roleBriefings(ws.state, config, own.id) as never;
     if (ws) {
       fx = ws.state.fx_rates ?? {};
@@ -489,12 +484,15 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
       try {
         if (action === "dashboard" && method === "GET") return send(res, 200, await buildInstructorDashboard(store, gameId, { noShowPolicy: ORCH_OPTS.noShowPolicy }));
         if (action === "status" && method === "GET") {
-          const status = await orch.getStatus(gameId);
-          const game = await store.getGame(gameId);
+          // DW-065 (twin of the edge): read-only, polled — one request cache across status/roster/describe.
+          const cstore = withRequestCache(baseStore);
+          const corch = new GameOrchestrator(cstore, () => Date.now(), ORCH_OPTS);
+          const status = await corch.getStatus(gameId);
+          const game = await cstore.getGame(gameId);
           // Per-chair submit state rides along (DW-048) so the console shows WHO is missing.
-          const roster = await orch.getRoster(gameId);
+          const roster = await corch.getRoster(gameId);
           return send(res, 200, {
-            ...(await orch.describeGame(gameId)), // DW-049: title/size/mode/modules — the set-up card
+            ...(await corch.describeGame(gameId)), // DW-049: title/size/mode/modules — the set-up card
             ...status,
             joinCode: game?.join_code,
             nRounds: game?.n_rounds,

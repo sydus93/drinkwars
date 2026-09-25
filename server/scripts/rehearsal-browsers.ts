@@ -155,6 +155,7 @@ export class BrowserFleet {
         await this.driveOwnDesk(s.page, s.spec.chair, round);
         if (s.spec.chair === "coo") s.split = await this.readBar(s.page);
         const before = s.submits;
+        if (!(await this.waitForCommit(s.page))) return this.ok(false, `${s.spec.ext} commit button never left "Working…" for r${round}`);
         const btn = await this.click(s.page, SUBMIT_BTN);
         if (!btn) return this.ok(false, `${s.spec.ext} found a Submit button`, "none matched");
         const landed = await this.waitForSubmit(s, before);
@@ -240,6 +241,19 @@ export class BrowserFleet {
     }, { timeout: timeoutMs }).then(() => true).catch(() => false);
   }
 
+  /** Wait until the commit button is actually pressable.
+   *  DecisionForm renders "Working…" instead of the label while `busy` is true, and
+   *  MultiplayerPlay holds `busy` across BOTH the /submit round-trip AND the /view that
+   *  follows it — ~20s at 35-student load. Clicking inside that window finds no button
+   *  matching /^(submit|update)/ and looks exactly like a missing control, which is how
+   *  this was misread as a viewport bug twice. Wait the window out instead. */
+  private async waitForCommit(p: Page, timeoutMs = 60_000): Promise<boolean> {
+    return p.waitForFunction(() => {
+      const b = [...document.querySelectorAll("button")].find((x: any) => /^(submit|update)\b/i.test(x.innerText.trim()));
+      return !!b && !(b as any).disabled;
+    }, { timeout: timeoutMs, polling: 250 }).then(() => true).catch(() => false);
+  }
+
   /** The percentages the COO's own allocation bar is showing, as integers. */
   private async readBar(p: Page): Promise<number[] | undefined> {
     return p.evaluate(() => {
@@ -274,11 +288,12 @@ export class BrowserFleet {
         await inp.type(String(9 + round));
       }
       const before = cmo.submits;
+      if (!(await this.waitForCommit(cmo.page))) return void this.ok(false, `r${round}: CMO's commit button never left "Working…"`);
       const pressed = await this.click(cmo.page, SUBMIT_BTN);
       if (!pressed) {
         // A no-match returns null exactly like a successful click returns a label, so an
         // unmatched button has been indistinguishable from a fired one. Say what was there.
-        const avail = await cmo.page.evaluate(() => [...document.querySelectorAll("button")].map((b: any) => `${b.innerText.trim().replace(/\n/g, "/").slice(0, 30)}${b.disabled ? " [disabled]" : ""}`).filter(Boolean).slice(0, 10));
+        const avail = await cmo.page.evaluate(() => [...document.querySelectorAll("button")].map((b: any) => `${b.innerText.trim().replace(/\n/g, "/").slice(0, 30)}${b.disabled ? " [disabled]" : ""}`).filter(Boolean));
         return void this.ok(false, `r${round}: no commit button matched for the CMO's re-submit`, JSON.stringify(avail));
       }
       if (!(await this.waitForSubmit(cmo, before))) return void this.ok(false, `r${round}: CMO's re-submit never completed`);

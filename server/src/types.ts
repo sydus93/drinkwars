@@ -13,6 +13,15 @@ export type TeamStatus = "active" | "bankrupt" | "exited_banked" | "exited_inves
 /** Round lifecycle (§5): a simple instructor-advanced state machine. */
 export type Lifecycle = "open" | "locked" | "resolving" | "published" | "complete";
 
+/** A seat on a firm with the user fields the roster views show (DW-065). */
+export interface TeamMemberRecord {
+  user_id: string;
+  role: string | null; // C-suite seat (team_members.role)
+  display_name: string | null;
+  external_id: string | null;
+  claim_code: string | null;
+}
+
 export interface UserRecord {
   id: string;
   role: Role;
@@ -31,6 +40,7 @@ export interface TeamRecord {
   firm_id: FirmId; // v1: one team per firm
   name: string;
   member_user_ids: string[];
+  members?: TeamMemberRecord[]; // DW-065: seat+display fields when the read fetched them (primes getTeamMembers)
   color?: string | null; // DW-051 house colour (hex) picked at founding
   emblem?: string | null; // DW-051 house mark id
 }
@@ -183,6 +193,10 @@ export interface StorageAdapter {
   // Game
   createGame(g: GameRecord): Promise<void>;
   getGame(id: string): Promise<GameRecord | null>;
+  /** DW-065: one firm's whole roster (seat + display fields) in ONE read. getTeamSeats / getTeamPlan /
+   *  getRoster used to issue getUser + getMemberRole PER MEMBER — 10 serial round-trips for a five-chair
+   *  firm on every /view, 56 on every instructor /status. Same facts, one query. */
+  getTeamMembers(teamId: string): Promise<TeamMemberRecord[]>;
   getGameByCode(code: string): Promise<GameRecord | null>;
   setGameLifecycle(id: string, lifecycle: Lifecycle, currentRound: number): Promise<void>;
   setGameDeadline(id: string, deadlineAt: number | null): Promise<void>; // DW-048 (games.deadline_at, migration 0006)

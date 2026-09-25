@@ -32,7 +32,7 @@ const CHAIRS = ["ceo", "cfo", "cmo", "coo", "chro"] as const;
 // ── normalisation ────────────────────────────────────────────────────────────
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Fields whose value is a clock reading or a random credential — never engine output. */
-const VOLATILE = new Set(["created_at", "updated_at", "submitted_at", "deadline_at", "stamp", "claim_code", "claim", "join_code", "joinCode", "token", "now", "seed_hint"]);
+const VOLATILE = new Set(["created_at", "updated_at", "submitted_at", "deadline_at", "stamp", "claim_code", "claim", "join_code", "joinCode", "token", "now", "seed_hint", "createdAt", "updatedAt"]);
 function normalise(v: unknown, ids: Map<string, string>): unknown {
   if (Array.isArray(v)) return v.map((x) => normalise(x, ids));
   if (v && typeof v === "object") {
@@ -86,6 +86,10 @@ async function main() {
   const ids = new Map<string, string>();
   const dump: Record<string, unknown> = {};
   for (const s of students as any[]) dump[`${s.firm}:${s.chair}`] = normalise(await get(`/view?token=${s.token}`), ids);
+  // DW-065: the instructor console's status + roster payloads ride the same read path.
+  const ih2 = { "x-instructor-pass": PASS };
+  dump["instructor:status"] = normalise(await (await fetch(`${BASE}/instructor/games/${game.gameId}/status`, { headers: ih2 })).json(), ids);
+  dump["instructor:roster"] = normalise(await (await fetch(`${BASE}/instructor/games/${game.gameId}/roster`, { headers: ih2 })).json(), ids);
   await post(`/instructor/games/${game.gameId}/end`, {}, true);
 
   const { writeFileSync } = await import("node:fs");
