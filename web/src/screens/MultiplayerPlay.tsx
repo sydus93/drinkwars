@@ -40,7 +40,7 @@ const HERD_JITTER_MS = 1200;
 // teammate's submit still matters (Reconcile, the composed plan), it just does not need to
 // land within a second. Round and lifecycle changes DO, and pulse reports them separately,
 // so those stay immediate and only teammate writes are coalesced.
-const PLAN_COALESCE_MS = 6000;
+const PLAN_COALESCE_MS = 10000; // DW-065: must exceed the longest poll interval (8 s) or it never coalesces in the submitted state
 
 function fmtCountdown(ms: number): string {
   if (ms <= 0) return "passed";
@@ -83,6 +83,7 @@ export function MultiplayerPlay({ client, onExit }: { client: StudentClient; onE
   const lastFull = useRef(0);
   const lastRound = useRef<number | null>(null);
   const lastLifecycle = useRef<string | null>(null);
+  const lastDeadline = useRef<number | null>(null); // a deadline change is 'big' too — the countdown must not lag behind coalescing
   useEffect(() => {
     let live = true;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -97,12 +98,13 @@ export function MultiplayerPlay({ client, onExit }: { client: StudentClient; onE
           const p = await client.fetchPulse();
           if (!live) return;
           const moved = p.stamp !== stamp.current;
-          const big = p.round !== lastRound.current || p.lifecycle !== lastLifecycle.current;
+          const big = p.round !== lastRound.current || p.lifecycle !== lastLifecycle.current || p.deadlineAt !== lastDeadline.current;
           if (moved && (big || Date.now() - lastFull.current >= PLAN_COALESCE_MS)) {
             changed = true;
             stamp.current = p.stamp;
             lastRound.current = p.round;
             lastLifecycle.current = p.lifecycle;
+            lastDeadline.current = p.deadlineAt;
           } else {
             // Deliberately leave stamp.current alone so a coalesced teammate write is picked
             // up on a later tick rather than dropped.
@@ -114,7 +116,7 @@ export function MultiplayerPlay({ client, onExit }: { client: StudentClient; onE
           const [nv, p] = await Promise.all([client.fetchView(), stamp.current ? Promise.resolve(null) : client.fetchPulse()]);
           if (!live) return;
           v = nv;
-          if (p) { stamp.current = p.stamp; lastRound.current = p.round; lastLifecycle.current = p.lifecycle; }
+          if (p) { stamp.current = p.stamp; lastRound.current = p.round; lastLifecycle.current = p.lifecycle; lastDeadline.current = p.deadlineAt; }
           lastFull.current = Date.now();
           setRaw({ ...v });
         }

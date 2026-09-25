@@ -57,7 +57,7 @@ export function withRequestCache(store: StorageAdapter): StorageAdapter {
       const fn = value as (...a: unknown[]) => unknown;
       if (typeof prop !== "string" || !CACHEABLE.has(prop)) return fn.bind(target);
       return (...args: unknown[]) => {
-        const key = `${prop}(${JSON.stringify(args)})`;
+        const key = keyOf(prop, args);
         const hit = cache.get(key);
         if (hit) return hit;
         const p = Promise.resolve(fn.apply(target, args));

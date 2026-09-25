@@ -88,7 +88,9 @@ export function edgeUrl(base: string, path: string, pin = pinnable(base)): strin
   if (!pin) return `${base}${path}`;
   return `${base}${path}${path.includes("?") ? "&" : "?"}forceFunctionRegion=${encodeURIComponent(EDGE_REGION)}`;
 }
+let pinBroken = false; // a pinned READ failed at the network layer → the region is unreachable; everything after goes unpinned
 export async function edgeFetch(base: string, path: string, init: RequestInit = {}): Promise<Response> {
+  const method = (init.method ?? "GET").toUpperCase();
   const attempt = async (pin: boolean) => {
     const ctl = new AbortController();
     const t = setTimeout(() => ctl.abort(), FETCH_TIMEOUT_MS);
@@ -96,8 +98,18 @@ export async function edgeFetch(base: string, path: string, init: RequestInit = 
     catch (e) { throw (e as { name?: string })?.name === "AbortError" ? new Error("network timeout — the game server took too long to answer") : e; }
     finally { clearTimeout(t); }
   };
-  try { return await attempt(pinnable(base)); }
-  catch (e) { if (!pinnable(base)) throw e; return attempt(false); }
+  const pin = pinnable(base) && !pinBroken;
+  try { return await attempt(pin); }
+  catch (e) {
+    // Only reads are retried. A write whose response was lost may already have been applied — a
+    // re-sent submit is harmless, a second "create game" / anonymous join / scheduled shock is not —
+    // so writes surface the error and the person decides. A pinned read that fails at the network
+    // layer (not a timeout) marks the region unreachable, so later requests, writes included, go
+    // unpinned without ever being replayed.
+    if (!pin || method !== "GET") throw e;
+    if (!/timeout/.test((e as Error)?.message ?? "")) pinBroken = true;
+    return attempt(false);
+  }
 }
 
 async function api(base: string, path: string, opts: RequestInit = {}): Promise<any> {
