@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Facility, FirmDecision, PrPlayType, SegmentId } from "drinkwars-engine";
-import { DESK_LEVERS, ROLE_DESK } from "drinkwars-engine";
+import { DESK_LEVERS, equityCapacity, ROLE_DESK } from "drinkwars-engine";
 import type { GameView } from "../game/controller.js";
 import { mergeDecision, type CityActions } from "../game/cityActions.js";
 import { SEG_LABEL, SEG_TAG, STOCK_LABEL, fmt, toDisplayMoney, toEngineMoney } from "../labels.js";
@@ -337,7 +337,11 @@ export function DecisionForm({
   const investSpend = proj.invest_cap + proj.invest_Q + proj.invest_B + proj.invest_process + proj.invest_T_emp + proj.invest_T_inv + proj.invest_T_gov;
   const infoSpend = proj.buy_info ? infoCost : 0;
   const financeOut = proj.debt_repay + proj.dividend;
-  const financeIn = proj.debt_draw + proj.equity_raise;
+  // DW-071: investors fund at most a share of the firm's valuation (0 once it's ≤ 0). Same
+  // function, same beginning-of-round state as the resolver, so the forecast is the result.
+  const equityCap = view.finance ? equityCapacity(view.own, { finance: view.finance }) : Infinity;
+  const equityGated = Number.isFinite(equityCap);
+  const financeIn = proj.debt_draw + Math.min(proj.equity_raise, equityCap);
   const netFinancing = financeIn - financeOut;
   const projectedCash = cash - investSpend - infoSpend - brewSpend - moduleSpend + netFinancing + instrDraws; // before this round's sales
   const overcommit = projectedCash < 0;
@@ -539,6 +543,11 @@ export function DecisionForm({
                   <input type="number" step="5000" min="0" value={toDisplayMoney(d[f.key] as number)} onChange={(e) => set({ [f.key]: Math.max(0, toEngineMoney(+e.target.value)) } as Partial<FirmDecision>)} className="w-28 text-right" />
                 </div>
                 <div className="text-[0.66rem] leading-snug text-inksoft">{f.hint}</div>
+                {f.key === "equity_raise" && equityGated && (
+                  equityCap < 1
+                    ? <div className="text-[0.66rem] leading-snug text-brick">Equity market closed: your losses have pushed your valuation to zero or below, so no investor will buy in.</div>
+                    : <div className={`text-[0.66rem] leading-snug tnum ${d.equity_raise > equityCap ? "text-brick" : "text-inksoft"}`}>Investors will fund up to <b>{fmt.money(equityCap)}</b> this quarter ({Math.round((view.finance?.equity_gate?.max_fraction_of_valuation ?? 0) * 100)}% of your valuation){d.equity_raise > equityCap ? " — only that much will be raised." : "."}</div>
+                )}
               </div>
             ))}
           </div>
@@ -971,10 +980,17 @@ export function DecisionForm({
               <div className="mt-3 border-t border-line pt-3">
                 <div className="flex items-center gap-1.5">
                   <span className="text-sm font-semibold">Key people</span>
-                  <InfoDot title="The talent market">You hire specialists from an open talent market — you're not poaching a specific rival, you're competing for scarce talent. A hire boosts a capability the day they start and takes it with them if they leave. <b>Rivals can poach your people</b> each round; a strong crew culture (employee trust) is what keeps them home. You can see who staffs which rivals in a brewery's dossier.</InfoDot>
+                  <InfoDot title="The talent market">Each role is yours to fill — a rival hiring the same role doesn't take it from you, and it doesn't matter who submits first. A hire lands when the round resolves, as long as you can cover the signing bonus plus the first salary; if you can't, the round's news says so. A hire boosts a capability the day they start and takes it with them if they leave: each round some chance they move on to another job, which a strong crew culture (employee trust) makes rarer. Any seat on your team can request a hire. You can see who staffs which rivals in a brewery's dossier.</InfoDot>
                 </div>
                 <div className="mb-1.5 text-[0.66rem] leading-snug text-inksoft">
                   Retention this round: <span className={retentionTone}>{retentionLabel}</span> — driven by your {STOCK_LABEL.T_emp.toLowerCase()}.
+                </div>
+                {/* DW-071: say plainly who is on the payroll — game-1 teams couldn't tell whether a hire had landed. */}
+                <div className="mb-1.5 text-[0.7rem] leading-snug">
+                  <b>On staff now:</b>{" "}
+                  {(view.own.key_hires ?? []).length
+                    ? (view.own.key_hires ?? []).map((h) => `${labRoles.find((r) => r.id === h.role)?.label ?? h.role} (since R${h.hired_round + 1})`).join(" · ")
+                    : <span className="text-inksoft">nobody yet — a hire you request shows up here after the round resolves.</span>}
                 </div>
                 <div className="mt-1 grid gap-2">
                   {labRoles.map((r) => {
@@ -985,7 +1001,7 @@ export function DecisionForm({
                     return (
                       <div key={r.id} className="flex items-center justify-between gap-2">
                         <div className="min-w-0">
-                          <div className="text-[0.78rem] font-semibold">{r.label}{employed && <span className="ml-1 text-[0.6rem] text-inksoft">· at risk of poaching</span>}</div>
+                          <div className="text-[0.78rem] font-semibold">{r.label}{employed && <span className="ml-1 text-[0.6rem] text-hop">· on staff</span>}</div>
                           <div className="text-[0.66rem] leading-snug text-inksoft">{bonusTxt} · {fmt.money(r.salary)}/round{!employed ? ` · ${fmt.money(r.signing_bonus)} signing` : ""}</div>
                         </div>
                         {employed ? (

@@ -35,6 +35,7 @@ export interface FinanceInputs {
   disposalProceeds?: number; // MOD-B11 divest: cash from selling a facility — a book-neutral PP&E reduction (cash in = PP&E out)
   round?: number; // current round (needed by MOD-B08 instrument terms)
   instruments?: { draw_convertible: number; draw_rbf: number }; // MOD-B08 draws this round
+  equityCap?: number; // DW-071: most investors will fund this round (from equityCapacity); omit ⇒ no cap
   config: Config;
 }
 
@@ -52,6 +53,7 @@ export interface FinanceOutput {
 }
 
 const EPS = 1e-6;
+const fmNum = (n: number): string => Math.round(n).toLocaleString("en-US"); // comma-grouped for event prose
 
 export function regulatoryBurden(tGov: number, c: Config): number {
   const { regulatory_burden_base, regulatory_burden_halfsat } = c.finance;
@@ -74,7 +76,20 @@ export function buildStatements(input: FinanceInputs): FinanceOutput {
 
   // --- Financing actions (§13 step 2) ---
   const issueCost = equityIssueCost(f.T_inv, c);
-  const equityNet = Math.max(0, input.financing.equity_raise) * (1 - issueCost);
+  const events: string[] = [];
+  // DW-071 equity gate: investors fund at most the cap. The shortfall is simply not raised
+  // (no cost, no dilution) and the firm is told why.
+  const equityAsked = Math.max(0, input.financing.equity_raise);
+  const equityCap = input.equityCap ?? Infinity;
+  const equityGross = Math.min(equityAsked, equityCap);
+  if (equityAsked > equityGross + 0.5) {
+    events.push(
+      equityGross > 0.5
+        ? `EQUITY: investors fund only $${fmNum(equityGross)} of the $${fmNum(equityAsked)} ${f.id} sought — ${Math.round((c.finance.equity_gate?.max_fraction_of_valuation ?? 1) * 100)}% of its valuation is the most they will buy in a quarter`
+        : `EQUITY MARKET CLOSED: no investor will fund ${f.id}'s $${fmNum(equityAsked)} raise — its losses have pushed its valuation to zero or below`,
+    );
+  }
+  const equityNet = equityGross * (1 - issueCost);
   const repay = Math.min(Math.max(0, input.financing.debt_repay), debtBegin);
 
   // Credit rationing: cap the new draw so post-financing leverage ≤ max_leverage.
@@ -92,7 +107,6 @@ export function buildStatements(input: FinanceInputs): FinanceOutput {
   const fi = c.modules?.financialInstruments;
   const fiOn = !!fi?.enabled;
   const round = input.round ?? 0;
-  const events: string[] = [];
   let conv = f.convertible_note ?? null;
   let rbfOut = Math.max(0, f.rbf_outstanding ?? 0);
   let rbfPrin = Math.max(0, f.rbf_principal ?? 0);
@@ -268,16 +282,27 @@ export function buildStatements(input: FinanceInputs): FinanceOutput {
   };
 }
 
-/** Firm valuation for the investor path (§7.5). */
-export function firmValuation(f: FirmState, c: Config): number {
+/** Firm valuation for the investor path (§7.5). `skipFounding` drops the firm's first
+ *  round (its planned founding loss) from the earnings window — DW-071's equity gate. */
+export function firmValuation(f: FirmState, c: Pick<Config, "finance">, skipFounding = false): number {
   const netAssets = f.cash + f.ppe_book - f.debt; // = book equity
   const window = Math.max(1, c.finance.valuation.normalization_window);
-  const recent = f.ni_history.slice(-window);
+  const recent = (skipFounding ? f.ni_history.slice(1) : f.ni_history).slice(-window);
   const normEarnings = recent.length ? recent.reduce((a, b) => a + b, 0) / recent.length : 0;
   const pw = c.finance.valuation.premium_weights;
   const premium =
     pw.Q * f.Q + pw.B * f.B + pw.T_emp * f.T_emp + pw.T_inv * f.T_inv + pw.T_gov * f.T_gov + pw.cap * f.cap + pw.process * f.process;
   return netAssets + c.finance.valuation.multiple * normEarnings + premium;
+}
+
+/** DW-071: the most equity investors will fund this round — a fraction of the firm's
+ *  valuation going INTO the round, 0 once that valuation is ≤ 0. Infinity when the gate is
+ *  off (or absent from a pre-DW-071 game's stored config). The student view calls this on
+ *  the same beginning-of-round state the resolver does, so the form's promise is the result. */
+export function equityCapacity(f: FirmState, c: Pick<Config, "finance">): number {
+  const g = c.finance.equity_gate;
+  if (!g?.enabled) return Infinity;
+  return Math.max(0, g.max_fraction_of_valuation * firmValuation(f, c, g.skip_founding_round));
 }
 
 /** Keys used by the valuation premium (kept here to stay in sync with the type). */

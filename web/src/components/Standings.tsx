@@ -1,5 +1,7 @@
+import { Fragment } from "react";
 import type { GameView } from "../game/controller.js";
 import { Card, Eyebrow, Tag } from "./ui.js";
+import { inContention } from "drinkwars-engine";
 import { firmColor } from "../lib/teamColors.js";
 
 const STATUS_TONE: Record<string, "ink" | "hop" | "brick" | "copper"> = {
@@ -55,7 +57,12 @@ export function Standings({ view, onSelect }: { view: GameView; onSelect?: (firm
               <span className="tnum w-14 text-right text-sm">{s.score.toFixed(3)}</span>
             </>
           );
-          return clickable ? (
+          // DW-071: you have to survive to win — firms that have left the game rank below every
+          // firm still trading (server-side order), and the line between them is drawn.
+          const divider = i > 0 && !inContention(s.status) && inContention(view.standings[i - 1].status)
+            ? <div className="mt-1 border-t border-line2 pt-1 text-[0.62rem] uppercase tracking-[0.08em] text-inksoft">Out of contention — you have to survive to win</div>
+            : null;
+          return <Fragment key={s.firm_id}>{divider}{clickable ? (
             <button
               key={s.firm_id}
               onClick={() => onSelect!(s.firm_id)}
@@ -68,7 +75,7 @@ export function Standings({ view, onSelect }: { view: GameView; onSelect?: (firm
             <div key={s.firm_id} className={`flex items-center gap-2 rounded-[2px] px-2 py-1 ${s.isYou ? "bg-panel2" : ""}`}>
               {Inner}
             </div>
-          );
+          )}</Fragment>;
         })}
       </div>
       {onSelect && <div className="mt-1.5 text-[0.64rem] text-inksoft">Tap any brewery for its dossier.</div>}

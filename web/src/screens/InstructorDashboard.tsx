@@ -3,6 +3,7 @@ import type { ScheduledShock } from "drinkwars-engine";
 import type { DashEngagementRow, DashPanelRow, DashTeam, InstructorDashboard as DashData } from "drinkwars-server";
 import type { GameTimeline, InstructorClient } from "../game/multiplayer.js";
 import { Button, Card, Eyebrow, Row, Stat, Tag } from "../components/ui.js";
+import { ErrorBoundary } from "../components/ErrorBoundary.js";
 import { Legend, LineChart, Scatter, type ScatterPoint, type Series } from "../components/charts.js";
 import { Events } from "../components/Events.js";
 import { parseEvents } from "../components/eventFeed.js";
@@ -41,9 +42,10 @@ const SCORE_LABEL: Record<(typeof SCORE_KEYS)[number], string> = {
 };
 
 // --- formatting helpers -------------------------------------------------------
-const fcov = (n: number) => (n > 900 ? "∞" : `${n.toFixed(1)}×`);
-const flev = (n: number) => n.toFixed(2);
-const fscore = (n: number) => n.toFixed(3);
+// DW-071: a missing field (older export, mid-season server upgrade) prints "—" instead of throwing.
+const fcov = (n: number) => (n == null ? "—" : n > 900 ? "∞" : `${n.toFixed(1)}×`);
+const flev = (n: number) => (n == null ? "—" : n.toFixed(2));
+const fscore = (n: number) => (n == null ? "—" : n.toFixed(3));
 const ftime = (s: number | null) => (s == null ? "—" : s >= 60 ? `${Math.floor(s / 60)}m ${Math.round(s % 60)}s` : `${Math.round(s)}s`);
 const shortName = (t: DashTeam) => (t.joined ? t.name : t.name.replace(/^Open slot/i, "NPC"));
 
@@ -105,8 +107,8 @@ function derive(data: DashData): Derived {
 /** Build one Series per team for a chosen metric, in stable team order/colors. */
 function teamSeries(d: Derived, get: (p: DashPanelRow) => number): Series[] {
   return d.teams.map((t) => ({
-    label: d.nameByFirm.get(t.firmId)!,
-    color: d.colorByFirm.get(t.firmId)!,
+    label: d.nameByFirm.get(t.firmId) ?? t.firmId,
+    color: d.colorByFirm.get(t.firmId) ?? "var(--color-inksoft)",
     data: (d.panelByFirm.get(t.firmId) ?? []).map(get),
   }));
 }
@@ -142,11 +144,17 @@ function ChartCard({ title, series, formatY, zeroBaseline }: { title: string; se
 // Panels
 // =============================================================================
 
+/** DW-071: a panel that throws renders an inline Retry box; the tab bar, the other tabs and the
+ *  controls keep working. Before, one bad value blanked the whole instructor console. */
+function Guard({ label, resetKey, children }: { label: string; resetKey?: string; children: ReactNode }) {
+  return <ErrorBoundary scope="panel" label={label} resetKey={resetKey} note="The rest of the dashboard still works — Retry re-draws this panel.">{children}</ErrorBoundary>;
+}
+
 function OverviewPanel({ d }: { d: Derived }) {
   const latest = d.latest;
   const active = latest.filter((p) => p.status === "active").length;
   const bankrupt = latest.filter((p) => p.status === "bankrupt").length;
-  const exited = latest.filter((p) => p.status.startsWith("exited") || p.status === "acquired").length;
+  const exited = latest.filter((p) => p.status?.startsWith("exited") || p.status === "acquired").length;
   const scores = latest.map((p) => p.scoreCumulative);
   const top = scores.length ? Math.max(...scores) : 0;
   const med = scores.length ? [...scores].sort((a, b) => a - b)[Math.floor(scores.length / 2)] : 0;
@@ -221,7 +229,7 @@ function OverviewPanel({ d }: { d: Derived }) {
                 <div className="flex items-center gap-2">
                   <span className="truncate text-sm font-semibold">{d.nameByFirm.get(p.firmId)}</span>
                   {!d.joinedByFirm.get(p.firmId) && <Tag>NPC</Tag>}
-                  {p.status !== "active" && <Tag tone={p.status === "bankrupt" ? "brick" : "copper"}>{p.status.replace("exited_", "")}</Tag>}
+                  {p.status !== "active" && <Tag tone={p.status === "bankrupt" ? "brick" : "copper"}>{p.status?.replace("exited_", "")}</Tag>}
                 </div>
                 <div className="mt-0.5 h-1.5 w-full overflow-hidden rounded-[2px] bg-line">
                   <div className="h-full" style={{ width: `${((p.scoreCumulative - lo) / span) * 100}%`, background: d.colorByFirm.get(p.firmId)! }} />
@@ -246,7 +254,7 @@ function OverviewPanel({ d }: { d: Derived }) {
         {joinedEng.length === 0 && <div className="mt-2 text-[0.72rem] text-inksoft">No human teams yet — all slots are adaptive NPCs.</div>}
       </Card>
 
-      {events.length > 0 && <Events events={parseEvents(events)} />}
+      {events.length > 0 && <Guard label="Event feed"><Events events={parseEvents(events)} /></Guard>}
     </div>
   );
 }
@@ -349,7 +357,7 @@ function sellStatus(sr: { q_sold: number; q_desired?: number }): { label: string
 
 function PriceShoppersCard({ d, segIds }: { d: Derived; segIds: string[] }) {
   const prevBy = new Map(d.data.panel.filter((p) => p.round === d.latestRound - 1).map((p) => [p.firmId, p]));
-  const rich = d.latest.some((p) => Object.values(p.segments).some((x) => x.q_desired != null));
+  const rich = d.latest.some((p) => Object.values(p.segments ?? {}).some((x) => x.q_desired != null));
   return (
     <Card>
       <Eyebrow>Price, shoppers &amp; tanks · round {d.latestRound + 1}</Eyebrow>
@@ -416,7 +424,7 @@ function PriceShoppersCard({ d, segIds }: { d: Derived; segIds: string[] }) {
 }
 
 function PullCard({ d, segIds }: { d: Derived; segIds: string[] }) {
-  if (!d.latest.some((p) => Object.values(p.segments).some((x) => x.pull))) return null; // export predates DW-067
+  if (!d.latest.some((p) => Object.values(p.segments ?? {}).some((x) => x.pull))) return null; // export predates DW-067
   return (
     <Card>
       <Eyebrow>Why shoppers chose · round {d.latestRound + 1}</Eyebrow>
@@ -430,7 +438,7 @@ function PullCard({ d, segIds }: { d: Derived; segIds: string[] }) {
           if (rows.length < 2) return null;
           const avg = Object.fromEntries(PULL_TERMS.map((t) => [t, rows.reduce((a, p) => a + p.segments[s].pull![t], 0) / rows.length])) as Record<string, number>;
           const sample = rows[0].segments[s];
-          const perDollar = 1 - Math.exp(sample.pull!.price / sample.price); // price pull is linear in price, same slope for every firm
+          const perDollar = 1 - Math.exp((sample.pull?.price ?? 0) / sample.price); // price pull is linear in price, same slope for every firm
           const cell = (v: number) => (
             <td className={`py-1 pr-2 text-right ${v > 0.05 ? "text-hop" : v < -0.05 ? "text-brick" : "text-inksoft"}`}>{v >= 0 ? "+" : "−"}{Math.abs(v).toFixed(2)}</td>
           );
@@ -542,9 +550,9 @@ function MarketPanel({ d }: { d: Derived }) {
   const latest = d.latest;
   return (
     <div className="grid gap-4">
-      <PriceShoppersCard d={d} segIds={segIds} />
-      <PositionsCard d={d} />
-      <PullCard d={d} segIds={segIds} />
+      <Guard label="Price, shoppers & tanks"><PriceShoppersCard d={d} segIds={segIds} /></Guard>
+      <Guard label="Positions"><PositionsCard d={d} /></Guard>
+      <Guard label="Why shoppers chose"><PullCard d={d} segIds={segIds} /></Guard>
       <Card>
         <Eyebrow>Demand vs. served</Eyebrow>
         <Legend series={[{ label: "Demand (D)", color: "var(--color-inksoft)", data: [] }, { label: "Units served", color: "var(--color-copper)", data: [] }]} />
@@ -774,7 +782,7 @@ function FinancePanel({ d }: { d: Derived }) {
     return "hop";
   };
   const riskLabel = (p: DashPanelRow) => {
-    if (p.status !== "active") return p.status.replace("exited_", "exit·");
+    if (p.status !== "active") return p.status?.replace("exited_", "exit·");
     if (p.creditRationed) return "credit rationed";
     if (p.coverage < 1) return "can't cover interest";
     if (p.cash < 0) return "cash negative";
@@ -964,7 +972,7 @@ function TeamPanel({ d }: { d: Derived }) {
             <Stat label="Rank" value={`#${last.rank}`} accent="copper" />
             <Stat label="Score" value={fscore(last.scoreCumulative)} />
             <Stat label="Cash" value={fmt.money(last.cash)} accent={last.cash < 0 ? "brick" : "ink"} />
-            <Stat label="Status" value={<Tag tone={last.status === "active" ? "hop" : "brick"}>{last.status.replace("exited_", "exit·")}</Tag>} />
+            <Stat label="Status" value={<Tag tone={last.status === "active" ? "hop" : "brick"}>{last.status?.replace("exited_", "exit·")}</Tag>} />
           </div>
         )}
       </Card>
@@ -1333,7 +1341,14 @@ export function InstructorDashboard({ client, gameId, roundKey }: { client: Inst
     }
   };
 
-  const d = useMemo(() => (data ? derive(data) : null), [data]);
+  // DW-071: derive() runs in render — a malformed payload shows as an error line, not a crash.
+  const [d, deriveErr] = useMemo((): [Derived | null, string | null] => {
+    if (!data) return [null, null];
+    try { return [derive(data), null]; } catch (e) {
+      console.error("[drinkwars] render error", "dashboard derive", e);
+      return [null, `Couldn't read the dashboard data (${e instanceof Error ? e.message : String(e)}) — try Refresh.`];
+    }
+  }, [data]);
 
   return (
     <div className="grid gap-4">
@@ -1360,9 +1375,9 @@ export function InstructorDashboard({ client, gameId, roundKey }: { client: Inst
       {err && <div className="text-sm text-brick">{err}</div>}
 
       {!d ? (
-        <Card><div className="text-sm text-inksoft">Loading dashboard…</div></Card>
+        <Card><div className={`text-sm ${deriveErr ? "text-brick" : "text-inksoft"}`}>{deriveErr ?? "Loading dashboard…"}</div></Card>
       ) : (
-        <>
+        <Guard label={TABS.find((t) => t.id === tab)?.label ?? tab} resetKey={`${tab}|${roundKey}`}>
           {tab === "monitor" && <MonitorPanel d={d} />}
           {tab === "balance" && <BalancePanel />}
           {tab === "schedule" && <SchedulePanel d={d} client={client} gameId={gameId} roundKey={roundKey} />}
@@ -1384,7 +1399,7 @@ export function InstructorDashboard({ client, gameId, roundKey }: { client: Inst
               {tab === "team" && <TeamPanel d={d} />}
             </>
           ))}
-        </>
+        </Guard>
       )}
     </div>
   );

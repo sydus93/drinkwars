@@ -11,6 +11,7 @@
  * client. Players are anonymous in v1; revisit consent gating with the NetID
  * identified-student upgrade.
  */
+import { rankStandings } from "drinkwars-engine";
 import type { FirmId, FirmStatus, GovernanceForm, SegmentId, TemplateId } from "drinkwars-engine";
 import type { Lifecycle, StorageAdapter } from "./types.js";
 
@@ -215,7 +216,7 @@ export async function buildInstructorDashboard(store: StorageAdapter, gameId: st
     const marketTotalQ = rr.result.market.reduce((a, m) => a + m.total_q, 0) || 1;
 
     // Within-round rank by cumulative scorecard (1 = leader).
-    const ranked = [...firms].sort((a, b) => b.scorecard_cumulative - a.scorecard_cumulative);
+    const ranked = rankStandings(firms); // DW-071: survivors first
     const rankOf = new Map(ranked.map((f, i) => [f.firm_id, i + 1]));
     const nFirms = firms.length || 1;
 

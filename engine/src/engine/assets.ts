@@ -92,7 +92,11 @@ export function resolveAssets(world: WorldState, decisions: Map<FirmId, FirmDeci
         const cfg = lab.roles.find((r) => r.id === roleId);
         const already = f.key_hires.some((h) => h.role === roleId);
         if (!cfg || already) continue;
-        if (f.cash < cfg.signing_bonus + cfg.salary) continue;
+        if (f.cash < cfg.signing_bonus + cfg.salary) {
+          // DW-071: a hire that doesn't happen says so — silent drops read as a broken game.
+          out.events.push(`HIRE FAILED: ${f.id} cannot cover a ${cfg.label.toLowerCase()}'s $${Math.round(cfg.signing_bonus + cfg.salary).toLocaleString("en-US")} signing bonus + first salary`);
+          continue;
+        }
         f.key_hires.push({ role: roleId, hired_round: round });
         addBonus(f, cfg.bonus);
         opex += cfg.signing_bonus;
@@ -108,7 +112,9 @@ export function resolveAssets(world: WorldState, decisions: Map<FirmId, FirmDeci
         if (h.hired_round < round && rng.bool(pLeave)) {
           f.key_hires.splice(i, 1);
           removeBonus(f, cfg.bonus);
-          out.events.push(`POACHED: ${f.id} loses its ${cfg.label.toLowerCase()} to a rival offer`);
+          // DW-071: not "to a rival offer" — no rival gains anyone here; it is plain attrition,
+          // and students read the old wording as a competitor stealing their hire.
+          out.events.push(`DEPARTURE: ${f.id}'s ${cfg.label.toLowerCase()} leaves for another job`);
           continue;
         }
         opex += cfg.salary;

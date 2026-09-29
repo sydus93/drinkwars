@@ -23,7 +23,7 @@ import { resolveFacilities, facilityCapacity } from "./facilities.js";
 import { computeMarketConduct } from "./conduct.js";
 import { resolveEmployees } from "./employees.js";
 import { resolveMa } from "./ma.js";
-import { buildStatements, firmValuation } from "./finance.js";
+import { buildStatements, equityCapacity, firmValuation } from "./finance.js";
 import { invCfg, computeInventory, type InventoryFlow } from "./inventory.js";
 import { resolveAgreementActions, computeAgreementEffects, resolveContingentClauses } from "./coopetition.js";
 import { resolveLobbying } from "./lobbying.js";
@@ -75,6 +75,10 @@ export function resolveRound(prevWorld: WorldState, decisionList: FirmDecision[]
     const raw = decisionList.find((d) => d?.firm_id === id) ?? zeroDecision(id, allSegmentIds);
     decisions.set(id, sanitizeDecision(raw, id, allSegmentIds));
   }
+
+  // DW-071: price each firm's equity headroom on the state it walks INTO the round with —
+  // before stocks advance or anything is spent — the same state the student form reads.
+  const equityCapByFirm = new Map<FirmId, number>(participants.map((id) => [id, equityCapacity(w.firms.find((f) => f.id === id)!, c)]));
 
   // Step 3: resolve agreement actions (form/defect), trust effects & costs.
   const agRes = resolveAgreementActions(w, decisions, c, round);
@@ -379,6 +383,7 @@ export function resolveRound(prevWorld: WorldState, decisionList: FirmDecision[]
       disposalProceeds: facRes.salvageByFirm.get(f.id) ?? 0, // MOD-B11 divest proceeds (book-neutral)
       round,
       instruments: { draw_convertible: d.draw_convertible ?? 0, draw_rbf: d.draw_rbf ?? 0 },
+      equityCap: equityCapByFirm.get(f.id),
       config: c,
     });
     f.cash = fin.next.cash;

@@ -14,7 +14,7 @@
  */
 import type { Config, FirmDecision, FirmState, PrPlayType, SegmentId, WorldState } from "../types.js";
 import { invCfg } from "../engine/inventory.js";
-import { firmValuation } from "../engine/finance.js";
+import { equityCapacity, firmValuation } from "../engine/finance.js";
 import { generateHiringMarket } from "../engine/employees.js";
 import { activeMarkets, marketDemandScale } from "../engine/geography.js";
 import { facilityCapacity } from "../engine/facilities.js";
@@ -414,6 +414,8 @@ export function decideAdaptive(lean: Lean, f: FirmState, world: WorldState, c: C
     const dormant = (f.facilities ?? []).filter((x) => !x.active);
     if (dormant.length && capTight) reactivate.push(dormant[0].id);
   }
+  // DW-071: a bot asks only for what investors will fund (the engine would trim it anyway).
+  equityRaise = Math.min(equityRaise, equityCapacity(f, c));
 
   // Solvency guard. With inventory enabled, brewing is paid in cash up front
   // (recovered as COGS only when sold), so reserve that production bill before

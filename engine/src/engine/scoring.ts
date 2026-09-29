@@ -16,7 +16,7 @@
  *   §6 bridge — this round's change in headline score decomposed into per-component
  *      bars that sum to the delta with zero residual (asserted in tests).
  */
-import type { Config, FirmId, FirmState, ScoringPenalty } from "../types.js";
+import type { Config, FirmId, FirmState, FirmStatus, ScoringPenalty } from "../types.js";
 
 export interface ScoreSnapshot {
   firm_id: FirmId;
@@ -189,4 +189,18 @@ export function scoreRound(snaps: ScoreSnapshot[], c: Config, firmsById: Map<Fir
   });
 
   return out;
+}
+
+/** DW-071: you have to survive to win. A firm that has left the game — bankrupt, acquired
+ *  or exited — is out of contention and ranks below every firm still operating, whatever
+ *  its sustained average. Game 1 (09-29): a firm went bankrupt in r3 and still ranked #1,
+ *  because z-scoring caps any one firm's financial penalty at ≈2.4σ in a 7-firm room while
+ *  its spending bought the top of the other three pillars. A rebuilding firm is still in. */
+export function inContention(status: FirmStatus | string): boolean {
+  return status === "active" || status === "exited_rebuilt";
+}
+
+/** Standings order: contenders first, then by cumulative score (stable within ties). */
+export function rankStandings<T extends { status: FirmStatus | string; scorecard_cumulative: number }>(rows: T[]): T[] {
+  return [...rows].sort((a, b) => Number(inContention(b.status)) - Number(inContention(a.status)) || b.scorecard_cumulative - a.scorecard_cumulative);
 }

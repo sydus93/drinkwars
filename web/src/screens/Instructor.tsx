@@ -1,15 +1,27 @@
 import { useEffect, useState } from "react";
 import { Button, Card, Eyebrow } from "../components/ui.js";
+import { ErrorBoundary } from "../components/ErrorBoundary.js";
 import { MODULE_REGISTRY } from "drinkwars-engine";
 import { InstructorClient, type GameSummary, type InstructorStatus, type ModuleSelection } from "../game/multiplayer.js";
 import { InstructorDashboard } from "./InstructorDashboard.js";
 import { ModeSelector } from "./ModeSelector.js";
 import { TuningBoard, tuningToOverride, tuningDefaults, type TuningVals } from "./TuningBoard.js";
 
+// DW-071: "the console is open in this tab" lives in sessionStorage (per tab, survives a reload,
+// not a new tab), so a reload / app-level crash lands back in the game instead of on the Lobby.
+// Set whenever a game is opened; cleared only by a deliberate Leave/Back (or a rejected resume).
+const OPEN_KEY = "dw_instr_open";
+const VIEW_KEY = "dw_instr_view";
+const RETRY_MS = [1000, 3000]; // DW-071: auto-resume backoff on network / 5xx failures
+type Saved = { pass?: string; gameId?: string; joinCode?: string };
+const readSaved = (): Saved => { try { return JSON.parse(localStorage.getItem("dw_instr") || "null") ?? {}; } catch { return {}; } };
+const ss = (k: string, v?: string | null) => { try { if (v === undefined) return sessionStorage.getItem(k); if (v === null) sessionStorage.removeItem(k); else sessionStorage.setItem(k, v); } catch { /* storage blocked — no auto-resume */ } return null; };
+export const instructorWasOpen = () => ss(OPEN_KEY) === "1";
+
 /** Instructor console: passcode → create a game → share the code → lock / resolve. */
 export function Instructor({ onExit }: { onExit: () => void }) {
-  const [pass, setPass] = useState<string>(() => { try { return JSON.parse(localStorage.getItem("dw_instr") || "null")?.pass ?? ""; } catch { return ""; } });
-  const [code, setCode] = useState<string>(() => { try { return JSON.parse(localStorage.getItem("dw_instr") || "null")?.joinCode ?? ""; } catch { return ""; } });
+  const [pass, setPass] = useState<string>(() => readSaved().pass ?? "");
+  const [code, setCode] = useState<string>(() => readSaved().joinCode ?? "");
   const [client, setClient] = useState<InstructorClient | null>(null);
   const [nFirms, setNFirms] = useState(6);
   const [nRounds, setNRounds] = useState(16);
@@ -23,7 +35,10 @@ export function Instructor({ onExit }: { onExit: () => void }) {
   const [status, setStatus] = useState<InstructorStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [view, setView] = useState<"controls" | "dashboard">("controls");
+  const [view, setView] = useState<"controls" | "dashboard">(() => (ss(VIEW_KEY) === "dashboard" ? "dashboard" : "controls"));
+  // DW-071: auto-resume when this tab had the console open and we still hold the credentials.
+  const [reconnecting, setReconnecting] = useState(() => { const s = readSaved(); return instructorWasOpen() && !!s.pass && !!(s.joinCode || s.gameId); });
+  const [leaveArmed, setLeaveArmed] = useState(false); // DW-071: two-step Leave (no browser dialog)
   const [firmMode, setFirmMode] = useState<"solo" | "team">("solo");
   const [title, setTitle] = useState("");
   const [rosterText, setRosterText] = useState("");
@@ -66,13 +81,59 @@ export function Instructor({ onExit }: { onExit: () => void }) {
     };
   }, [client, game]);
 
-  const persist = (gameId: string, joinCode: string) => {
+  const persist = (gameId: string, joinCode: string, p = pass) => {
     try {
-      localStorage.setItem("dw_instr", JSON.stringify({ pass, gameId, joinCode }));
+      localStorage.setItem("dw_instr", JSON.stringify({ pass: p, gameId, joinCode }));
     } catch {
       /* ignore */
     }
+    ss(OPEN_KEY, "1"); // DW-071
   };
+  const exit = () => { ss(OPEN_KEY, null); ss(VIEW_KEY, null); onExit(); }; // DW-071: deliberate leave — don't auto-resume
+
+  useEffect(() => { ss(VIEW_KEY, view); }, [view]); // DW-071: a reload restores Controls vs Dashboard
+  useEffect(() => { // DW-071: the armed Leave falls back to a plain button after 5 s
+    if (!leaveArmed) return;
+    const t = window.setTimeout(() => setLeaveArmed(false), 5000);
+    return () => window.clearTimeout(t);
+  }, [leaveArmed]);
+
+  // DW-071: the Resume button's flow, run on its own after a reload. resume() is a POST, which
+  // edgeFetch never retries, so retry here — network/5xx only; a 4xx (bad passcode, game gone)
+  // is final and drops to the form with the error. A game opened from "Your games" without a join
+  // code re-attaches via status(), a GET that also proves the passcode.
+  useEffect(() => {
+    if (!reconnecting) return;
+    let live = true;
+    const s = readSaved();
+    const c = new InstructorClient(s.pass ?? "");
+    (async () => {
+      for (let i = 0; ; i++) {
+        try {
+          const g = s.joinCode ? await c.resume(s.joinCode) : { gameId: s.gameId!, joinCode: (await c.status(s.gameId!)).joinCode ?? "" };
+          if (!live) return;
+          setClient(c);
+          setGame({ gameId: g.gameId, joinCode: g.joinCode });
+          persist(g.gameId, g.joinCode, s.pass);
+          setReconnecting(false);
+          return;
+        } catch (e) {
+          if (!live) return;
+          const st = (e as { status?: number }).status;
+          const final = (st != null && st < 500) || i >= RETRY_MS.length;
+          if (final) {
+            if (st != null && st < 500) ss(OPEN_KEY, null);
+            setErr(`Couldn't reconnect to the game: ${e instanceof Error ? e.message : String(e)}`);
+            setReconnecting(false);
+            return;
+          }
+          await new Promise((r) => setTimeout(r, RETRY_MS[i]));
+          if (!live) return;
+        }
+      }
+    })();
+    return () => { live = false; };
+  }, [reconnecting]); // once per reconnect attempt
 
   const create = async () => {
     setBusy(true);
@@ -196,6 +257,16 @@ export function Instructor({ onExit }: { onExit: () => void }) {
     }
   };
 
+  if (!game && reconnecting) {
+    return (
+      <div className="mx-auto flex min-h-screen max-w-xl flex-col items-center justify-center gap-3 px-6 py-16 text-center">
+        <div className="eyebrow">Instructor</div>
+        <div className="text-sm text-inksoft">Reconnecting to game{code ? ` ${code}` : ""}…</div>
+        <Button variant="ghost" onClick={() => setReconnecting(false)}>Cancel</Button>
+      </div>
+    );
+  }
+
   if (!game) {
     return (
       <div className="mx-auto flex min-h-screen max-w-xl flex-col justify-center px-6 py-16">
@@ -313,7 +384,7 @@ export function Instructor({ onExit }: { onExit: () => void }) {
               ))}
             </div>
             {err && <div className="text-sm text-brick">{err}</div>}
-            <div><Button variant="ghost" onClick={onExit}>Back</Button></div>
+            <div><Button variant="ghost" onClick={exit}>Back</Button></div>
           </div>
         </div>
       </div>
@@ -339,7 +410,15 @@ export function Instructor({ onExit }: { onExit: () => void }) {
         </div>
         <div className="flex items-center gap-3">
           {flash && <span className="rounded-md border border-hop/50 bg-hop/10 px-2 py-1 text-[0.72rem] text-ink">{flash}</span>}
-          <Button variant="ghost" onClick={onExit}>Leave</Button>
+          {leaveArmed ? (
+            <span className="flex items-center gap-2 text-sm text-ink">
+              Really leave?
+              <Button variant="ghost" onClick={exit}>Leave</Button>
+              <Button onClick={() => setLeaveArmed(false)}>Stay</Button>
+            </span>
+          ) : (
+            <Button variant="ghost" onClick={() => setLeaveArmed(true)}>Leave</Button>
+          )}
         </div>
       </header>
 
@@ -355,6 +434,9 @@ export function Instructor({ onExit }: { onExit: () => void }) {
         ))}
       </div>
 
+      {/* DW-071: a render throw in the console body stays in the body — header, tabs and Leave
+          keep working, and Retry re-draws in place (it used to take the whole app down). */}
+      <ErrorBoundary scope="panel" resetKey={view} label={view === "controls" ? "Controls" : "Dashboard"} note="The game on the server is untouched — Retry re-draws this panel, or switch tabs.">
       {view === "controls" ? (
         <>
           <Card className="text-center">
@@ -409,7 +491,7 @@ export function Instructor({ onExit }: { onExit: () => void }) {
                   <div className="flex items-center justify-between">
                     <span className={t.joined ? "font-semibold" : "text-inksoft"}>{t.joined ? t.name : "— open slot —"}</span>
                     <span className="font-mono text-[0.7rem] text-inksoft">
-                      {!t.joined ? "open · NPC at lock" : status?.nonSubmitters.includes(t.teamId) ? "waiting" : "submitted"}
+                      {!t.joined ? "open · NPC at lock" : status?.nonSubmitters?.includes(t.teamId) ? "waiting" : "submitted"}
                     </span>
                   </div>
                   {/* DW-048: every chair with its own submit state + remove/move — a wrong-firm join
@@ -471,7 +553,7 @@ export function Instructor({ onExit }: { onExit: () => void }) {
           {err && <div className="mt-3 text-sm text-brick">{err}</div>}
           <div className="mt-4 flex flex-wrap items-center gap-2">
             <Button onClick={() => {
-              const missing = (status?.teams ?? []).filter((t) => t.joined && status?.nonSubmitters.includes(t.teamId)).map((t) => t.name);
+              const missing = (status?.teams ?? []).filter((t) => t.joined && status?.nonSubmitters?.includes(t.teamId)).map((t) => t.name);
               const q = missing.length
                 ? `Lock round ${(status?.round ?? 0) + 1}? ${missing.length} claimed firm${missing.length === 1 ? " hasn't" : "s haven't"} submitted (${missing.join(", ")}) — they'll trade on last quarter's standing plan. You can Unlock if this is a mistake.`
                 : `Lock round ${(status?.round ?? 0) + 1}? Every claimed firm has submitted. Students can no longer revise.`;
@@ -496,6 +578,7 @@ export function Instructor({ onExit }: { onExit: () => void }) {
       ) : (
         client && <InstructorDashboard client={client} gameId={game.gameId} roundKey={roundKey} />
       )}
+      </ErrorBoundary>
     </div>
   );
 }

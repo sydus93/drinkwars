@@ -92,6 +92,7 @@ export function validateConfig(c: Config): Config {
   rate(c.finance?.equity_issue_cost_base, "finance.equity_issue_cost_base");
   rate(c.finance?.dividend_max_fraction, "finance.dividend_max_fraction");
   if (c.finance?.min_spread != null) nonneg(c.finance.min_spread, "finance.min_spread");
+  if (c.finance?.equity_gate != null) rate(c.finance.equity_gate.max_fraction_of_valuation, "finance.equity_gate.max_fraction_of_valuation");
   // Silent-typo guard: finance.ts tests `=== "graduated"`, so "Graduated" or "step " would
   // quietly fall back to the step cliff with no error anywhere.
   req(

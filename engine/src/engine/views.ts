@@ -11,6 +11,7 @@ import type {
 } from "../types.js";
 import { activeMarkets, marketDemandScale } from "./geography.js";
 import { firmValuation } from "./finance.js";
+import { rankStandings } from "./scoring.js";
 
 export interface AllianceClauseSummary {
   condition: ClauseCondition;
@@ -252,7 +253,7 @@ const median = (xs: number[]): number => { if (!xs.length) return 0; const s = [
  *  (own = the viewer's; field = league-wide aggregates already visible in standings). */
 export function projectHistory(records: { round: number; result: RoundResult }[], viewerId: FirmId): { own: OwnTrendView; field: FieldTrendView }[] {
   return records.map((rr) => {
-    const ranked = [...rr.result.firm_results].sort((a, b) => b.scorecard_cumulative - a.scorecard_cumulative);
+    const ranked = rankStandings(rr.result.firm_results); // DW-071: survivors first
     const ownFr = rr.result.firm_results.find((f) => f.firm_id === viewerId);
     const scores = rr.result.firm_results.map((f) => f.scorecard_cumulative);
     return {

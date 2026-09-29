@@ -120,6 +120,12 @@ export interface FinanceConfig {
   max_leverage: number; // debt capacity cap (debt / equity)
   equity_issue_cost_base: number;
   equity_issue_cost_tinv_k: number;
+  /** DW-071: investors fund a raise only against what the firm is worth. Per round a firm
+   *  may sell at most `max_fraction_of_valuation` × its pre-round valuation (§7.5); at a
+   *  valuation ≤ 0 the equity market is closed. `skip_founding_round` keeps the planned r0
+   *  loss out of the earnings window, or nearly every firm would be locked out from r1.
+   *  Absent (games created before DW-071) ⇒ no gate, the v1 behaviour. */
+  equity_gate?: { enabled: boolean; max_fraction_of_valuation: number; skip_founding_round: boolean };
   fixed_overhead: number;
   regulatory_burden_base: number; // opex; falls with T_gov
   regulatory_burden_halfsat: number;

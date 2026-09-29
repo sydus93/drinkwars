@@ -236,6 +236,11 @@ export const defaultConfig: Config = {
     max_leverage: 3.0,
     equity_issue_cost_base: 0.05,
     equity_issue_cost_tinv_k: 0.002,
+    // DW-071: game 1 (09-29) — one team raised $1.2M then $3.9M at valuations of −$4.7M/−$3.1M,
+    // and every raise also lifted the 3× debt cap (debt reached $4.9M). Half the valuation per
+    // quarter, closed at ≤ 0. On game 1's data: that raise → $139k then closed; the modest
+    // raises of firms still worth something pass untouched.
+    equity_gate: { enabled: true, max_fraction_of_valuation: 0.5, skip_founding_round: true },
     fixed_overhead: 28_000, // $/qtr G&A: insurance, licenses, card fees, admin
     regulatory_burden_base: 16_000, // $/qtr compliance drag, relieved by T_gov
     regulatory_burden_halfsat: 10,

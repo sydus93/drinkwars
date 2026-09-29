@@ -9,6 +9,9 @@
  * panel and the other tabs still work; one around the whole app as a backstop. The inner one
  * resets when `resetKey` changes (the tab id), so switching tabs clears the error without a
  * reload.
+ *
+ * DW-071: the instructor console uses the panel scope too (console body + each dashboard
+ * panel), and a panel's button now retries in place instead of reloading the page.
  */
 import { Component, type ErrorInfo, type ReactNode } from "react";
 
@@ -19,6 +22,8 @@ interface Props {
   /** "panel" degrades gracefully inside the page; "app" is the full-screen backstop. */
   scope?: "panel" | "app";
   label?: string;
+  /** DW-071: replaces the student-facing explainer (the instructor console has its own). */
+  note?: string;
 }
 interface State { error: Error | null; key: string | number | undefined }
 
@@ -44,25 +49,29 @@ export class ErrorBoundary extends Component<Props, State> {
     const { error } = this.state;
     if (!error) return this.props.children;
     const app = this.props.scope === "app";
+    const { note } = this.props;
     return (
       <div className={app ? "mx-auto mt-10 max-w-[560px] px-4" : "px-4 py-6"}>
         <div className="rounded-lg border border-brick/40 bg-brick/10 px-4 py-3 text-sm text-ink">
           <div className="font-semibold text-brick">
-            {app ? "Something broke." : `This panel hit an error${this.props.label ? ` (${this.props.label})` : ""}.`}
+            {app ? "Something broke." : `This panel failed to render${this.props.label ? ` (${this.props.label})` : ""}.`}
           </div>
           <p className="mt-1 text-inksoft">
-            {app
-              ? "Your round is safe on the server if you are playing with a team; a solo game lives only in this tab."
-              : "The rest of the round is fine — switch tabs and carry on. Your decisions are untouched."}
+            {note ??
+              (app
+                ? "Your round is safe on the server if you are playing with a team; a solo game lives only in this tab."
+                : "The rest of the round is fine — switch tabs and carry on. Your decisions are untouched.")}
           </p>
           <div className="mt-3 flex items-center gap-3">
+            {/* DW-071: a panel retries in place — re-render just this subtree, no page reload (a
+                reload used to drop the instructor out of their console mid-class). */}
             <button
-              onClick={() => window.location.reload()}
+              onClick={() => (app ? window.location.reload() : this.setState({ error: null }))}
               className="rounded border border-line2 px-3 py-1.5 text-xs font-semibold text-ink transition-colors hover:text-copper"
             >
-              Reload
+              {app ? "Reload" : "Retry"}
             </button>
-            <span className="text-xs text-inksoft">Tell your instructor what you were doing — the details are in the browser console.</span>
+            {!note && <span className="text-xs text-inksoft">Tell your instructor what you were doing — the details are in the browser console.</span>}
           </div>
         </div>
       </div>

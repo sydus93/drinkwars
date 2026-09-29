@@ -7,6 +7,7 @@
  *   npm run demo            (from server/)
  */
 import { loadConfig } from "drinkwars-engine/node";
+import { rankStandings } from "drinkwars-engine";
 import type { Config, FirmDecision, SegmentId, WorldState } from "drinkwars-engine";
 import { GameOrchestrator, InMemoryAdapter } from "./index.js";
 
@@ -78,7 +79,7 @@ for (let round = 0; round < config.game.n_rounds; round++) {
   if (lifecycle === "published") await orch.advanceRound(gameId);
 
   const rr = (await store.getRoundResult(gameId, resolved))!;
-  const standings = [...rr.result.firm_results].sort((a, b) => b.scorecard_cumulative - a.scorecard_cumulative);
+  const standings = rankStandings(rr.result.firm_results);
   const active = rr.result.firm_results.filter((f) => f.status === "active").length;
   const flags = nonSubmitters.length ? ` | non-submitters flagged: ${nonSubmitters.length}` : "";
   const ev = rr.result.events.length ? ` | ${rr.result.events.length} event(s)` : "";

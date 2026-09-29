@@ -92,19 +92,31 @@ export function mergeMemberDecisions(base: FirmDecision, seats: SeatPartial[]): 
     const desk = deskOf(s);
     return desk !== "all" && (DESK_LEVERS[desk] as (keyof FirmDecision)[]).includes(f);
   };
+  // DW-071: an EMPTY collection (no hires, no builds, no bids…) is not a decision. Every seat
+  // ships its own desk's one-shot levers every submit, reset to [] each round, so an owner who
+  // never touched the hiring card sent hire_roles: [] — and, owning the desk, erased the hires
+  // a teammate had requested (game 1: one team lost its hires in r0 AND r1 this way). An empty
+  // value now only fills a lever nobody else set; it never overwrites a real request.
+  const isEmpty = (v: unknown): boolean =>
+    Array.isArray(v) ? v.length === 0 : v !== null && typeof v === "object" && Object.keys(v as object).length === 0;
+  const put = (f: keyof FirmDecision, v: unknown) => {
+    const cur = (out as unknown as Record<string, unknown>)[f as string];
+    if (isEmpty(v) && cur !== undefined && !isEmpty(cur)) return;
+    (out as unknown as Record<string, unknown>)[f as string] = v;
+  };
   const byTime = seats.map((s, i) => ({ s, i })).sort((a, b) => ((a.s.updated_at ?? 0) - (b.s.updated_at ?? 0)) || (a.i - b.i)).map((x) => x.s);
   for (const s of byTime) {
     for (const f of ALL_LEVERS) {
       if (owns(s, f)) continue;
       const v = s.partial[f];
-      if (v !== undefined) (out as unknown as Record<string, unknown>)[f as string] = v;
+      if (v !== undefined) put(f, v);
     }
   }
   for (const s of seats) {
     for (const f of ALL_LEVERS) {
       if (!owns(s, f)) continue;
       const v = s.partial[f];
-      if (v !== undefined) (out as unknown as Record<string, unknown>)[f as string] = v;
+      if (v !== undefined) put(f, v);
     }
   }
   out.firm_id = base.firm_id;

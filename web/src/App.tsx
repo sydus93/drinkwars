@@ -9,7 +9,7 @@ import type { Scenario } from "./scenarios/catalog.js";
 import { Join } from "./screens/Join.js";
 import { PlayerHome } from "./screens/PlayerHome.js";
 import { MultiplayerPlay } from "./screens/MultiplayerPlay.js";
-import { Instructor } from "./screens/Instructor.js";
+import { Instructor, instructorWasOpen } from "./screens/Instructor.js";
 import { MP_ENABLED, StudentClient } from "./game/multiplayer.js";
 import { ErrorBoundary } from "./components/ErrorBoundary.js";
 
@@ -95,12 +95,14 @@ type Screen = "lobby" | "solo" | "scenario" | "join" | "instructor" | "player";
 export function App() {
   // Resume a saved student session on load (refresh → same firm, not a new slot).
   const [student, setStudent] = useState<StudentClient | null>(() => (MP_ENABLED ? StudentClient.restore() : null));
-  const [screen, setScreen] = useState<Screen>(() => (student ? "join" : "lobby"));
+  // DW-071: a tab that had the instructor console open comes back into it (reload, app-level
+  // error "Reload", accidental refresh) — it used to land on the Lobby, three clicks from the game.
+  const [screen, setScreen] = useState<Screen>(() => (MP_ENABLED && instructorWasOpen() ? "instructor" : student ? "join" : "lobby"));
 
   return (
     // Backstop boundary: keyed on `screen`, so leaving a broken screen clears the error.
-    // The finer-grained one lives around each Review panel in Play.tsx.
-    <ErrorBoundary scope="app" resetKey={screen}>
+    // The finer-grained ones live around each Review panel in Play.tsx and the instructor console.
+    <ErrorBoundary scope="app" resetKey={screen} note={screen === "instructor" ? "The game is safe on the server. Reload brings you straight back into this game's console." : undefined}>
       {screen === "lobby" && <Lobby onPick={setScreen} />}
       {screen === "solo" && <Solo />}
       {screen === "scenario" && <Scenarios onExit={() => setScreen("lobby")} />}

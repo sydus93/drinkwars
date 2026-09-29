@@ -12,7 +12,7 @@
  * pure function of (state, decisions, config, seed), so any round is replayable
  * (§3.3) — `replay()` verifies that against the persisted history.
  */
-import { ADAPTIVE_LEANS, decideAdaptive, initGame, mergeMemberDecisions, resolveRound as engineResolve, ROLE_DESK, segmentDemandTotals } from "drinkwars-engine";
+import { ADAPTIVE_LEANS, decideAdaptive, initGame, mergeMemberDecisions, rankStandings, resolveRound as engineResolve, ROLE_DESK, segmentDemandTotals } from "drinkwars-engine";
 import type { Config, FirmDecision, FirmId, RoundResult, ScheduledShock, SegmentId, WorldState } from "drinkwars-engine";
 import type {
   AgreementRow, BeliefRow, DecisionRecord, DistinctivenessRow, FirmMode, FirmRoundRow, GameRecord,
@@ -954,7 +954,7 @@ export class GameOrchestrator {
   /** Persist the student-facing public projection for a resolved round (§3.2):
    *  ranked standings, public events, and per-segment market — no private diagnostics. */
   private async appendPublicProjection(gameId: string, round: number, result: RoundResult): Promise<void> {
-    const ranked = [...result.firm_results].sort((a, b) => b.scorecard_cumulative - a.scorecard_cumulative);
+    const ranked = rankStandings(result.firm_results); // DW-071: survivors first
     await this.store.appendPublicRound({
       game_id: gameId, round,
       events: result.events,
@@ -1013,7 +1013,7 @@ export class GameOrchestrator {
     if (agRows.length) await this.store.upsertAgreements(agRows);
 
     // Standings (for belief realization): rank firms by cumulative scorecard.
-    const ranked = [...result.firm_results].sort((a, b) => b.scorecard_cumulative - a.scorecard_cumulative);
+    const ranked = rankStandings(result.firm_results); // DW-071: survivors first
     const rankOf = new Map(ranked.map((f, i) => [f.firm_id, i + 1]));
     const realMarketSize = result.market.filter((m) => m.active).reduce((a, m) => a + m.D, 0);
     const nFirms = result.firm_results.length || 1;
@@ -1091,7 +1091,7 @@ export class GameOrchestrator {
     const own = ws && team ? ws.state.firms.find((f) => f.id === team.firm_id) ?? null : null;
     const results = await this.store.getRoundResults(gameId);
     const last = results.at(-1);
-    const standings = (last?.result.firm_results ?? []).map((f) => ({ firm_id: f.firm_id, score: f.scorecard_cumulative })).sort((a, b) => b.score - a.score);
+    const standings = rankStandings(last?.result.firm_results ?? []).map((f) => ({ firm_id: f.firm_id, score: f.scorecard_cumulative })); // DW-071: survivors first
     return { own, publishedResults: results.map((r) => r.round), standings: game.lifecycle === "open" && results.length === 0 ? [] : standings };
   }
 }

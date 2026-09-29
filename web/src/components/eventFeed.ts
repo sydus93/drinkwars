@@ -87,6 +87,27 @@ const RULES: Rule[] = [
     kind: "opportunity", title: "Key hire",
     body: (_r, m) => `${m[1]} brought on a ${m[2]}.`,
   },
+  // DW-071: the labor-market attrition line (was "POACHED … to a rival offer" — no rival gains anyone).
+  {
+    test: /^DEPARTURE:\s*(.+?)'s\s+(.+?)\s+leaves for another job/i,
+    kind: "shock", title: "Key hire leaves",
+    body: (_r, m) => `${m[1]}'s ${m[2]} left for another job. Investing in your people (employee relations) makes this rarer.`,
+  },
+  {
+    test: /^HIRE FAILED:\s*(.+?)\s+cannot cover a\s+(.+?)'s\s+(\$[\d,]+)/i,
+    kind: "shock", title: "Hire fell through",
+    body: (_r, m) => `${m[1]} couldn't cover a ${m[2]}'s ${m[3]} signing bonus and first salary, so the hire didn't happen.`,
+  },
+  {
+    test: /^EQUITY MARKET CLOSED:\s*no investor will fund\s+(.+?)'s\s+(\$[\d,]+) raise/i,
+    kind: "shock", title: "Equity raise refused",
+    body: (_r, m) => `No investor would fund ${m[1]}'s ${m[2]} raise: its losses have pushed its valuation to zero or below. Nothing was raised.`,
+  },
+  {
+    test: /^EQUITY:\s*investors fund only\s+(\$[\d,]+)\s+of the\s+(\$[\d,]+)\s+(.+?)\s+sought/i,
+    kind: "info", title: "Equity raise trimmed",
+    body: (_r, m) => `Investors funded only ${m[1]} of the ${m[2]} ${m[3]} asked for — they buy at most part of what a firm is worth each quarter.`,
+  },
   {
     test: /^POACHED:\s*(.+?)\s+loses its\s+(.+?)\s+to a rival offer/i,
     kind: "shock", title: "Talent poached",
