@@ -320,6 +320,15 @@ export function DecisionForm({
 
   const moduleSpend = prSpend + waterSpend + pgSpend + geoEntrySpend + rndSpend + vertSpend + hireSpend + lobSpendEff + renegCallCost + facSpend + empSpend;
   const anyModuleControls = prOn || sustOn || pgOn || rndOn || vertOn || labOn || maOn || lobOn || facOn || empOn;
+  // DW-071: each play inside "Plays & Programs" shows to the desk that OWNS its lever at merge
+  // (seats.ts DESK_LEVERS). The card used to hide wholesale from people + finance — so in the
+  // labor-market game the CHRO, who owns hire_roles, never saw Key people, shipped an untouched
+  // [] every submit, and erased the CEO's hires (game 1, team E). Card shows if any play does.
+  const playsVisible = desk === "all" || ([
+    [prOn, "commercial"], [sustOn, "operations"], [rndOn, "operations"], [pgOn && goods.length > 0, "strategy"],
+    [vertOn && vertAssets.length > 0, "operations"], [labOn && labRoles.length > 0, "people"],
+    [maOn && rivals.length > 0, "strategy"], [lobOn && lobInits.length > 0, "strategy"],
+  ] as const).some(([on, dk]) => on && desk === dk);
   const setContribution = (goodId: string, v: number) => set({ public_good_contributions: { ...contribs, [goodId]: Math.max(0, v) } });
   const prEvent: GameEvent | null = prModal
     ? {
@@ -864,14 +873,14 @@ export function DecisionForm({
 
         {/* Expansion-module plays & programs (only the enabled ones render) */}
         {anyModuleControls && (
-          <Card className={desk === "finance" || desk === "people" ? "hidden" : ""}>
+          <Card className={playsVisible ? "" : "hidden"}>
             <div className="flex items-center gap-1.5">
               <Eyebrow>Plays &amp; Programs</Eyebrow>
               <InfoDot title="Plays & programs">One-off moves and standing programs that sit on top of your core price, capacity and investment decisions. A <b>play</b> is a single-round action you choose to run or not — it costs money this round and its effect fades. A <b>program</b> is a standing commitment you fund every round and that builds up over time. Each card below says what it costs and what it moves. Which ones appear depends on how your instructor set up this game.</InfoDot>
             </div>
 
             {prOn && (
-              <div className="mt-2 border-t border-line pt-3">
+              <div className={`mt-2 border-t border-line pt-3 ${deskCls("commercial")}`}>
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="text-sm font-semibold">Tactical PR</span>
                   {prOnCooldown ? (
@@ -892,7 +901,7 @@ export function DecisionForm({
             )}
 
             {sustOn && (
-              <div className="mt-3 border-t border-line pt-3">
+              <div className={`mt-3 border-t border-line pt-3 ${deskCls("operations")}`}>
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-semibold">Water efficiency</span>
                   <span className="tnum text-xs text-inksoft">{fmt.money(waterSpend)}</span>
@@ -905,7 +914,7 @@ export function DecisionForm({
             )}
 
             {rndOn && (
-              <div className="mt-3 border-t border-line pt-3">
+              <div className={`mt-3 border-t border-line pt-3 ${deskCls("operations")}`}>
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-semibold">R&amp;D — the new category</span>
                   <span className="tnum text-xs text-inksoft">{fmt.money(rndSpend)}</span>
@@ -919,7 +928,7 @@ export function DecisionForm({
             )}
 
             {pgOn && goods.length > 0 && (
-              <div className="mt-3 border-t border-line pt-3">
+              <div className={`mt-3 border-t border-line pt-3 ${deskCls("strategy")}`}>
                 <div className="flex items-center gap-1.5">
                   <span className="text-sm font-semibold">Industry guild</span>
                   <InfoDot title="Public goods">Contributions are a private cost; the benefit is shared by the whole industry. Fund it together — or free-ride and hope others do.</InfoDot>
@@ -942,7 +951,7 @@ export function DecisionForm({
             )}
 
             {vertOn && vertAssets.length > 0 && (
-              <div className="mt-3 border-t border-line pt-3">
+              <div className={`mt-3 border-t border-line pt-3 ${deskCls("operations")}`}>
                 <div className="flex items-center gap-1.5">
                   <span className="text-sm font-semibold">Vertical moves</span>
                   <InfoDot title="Own your supply chain">Buying upstream cuts what each barrel costs to make; buying distribution cuts your regulatory drag — but visible vertical control draws antitrust attention. Benefits switch on after the integration period.</InfoDot>
@@ -977,7 +986,7 @@ export function DecisionForm({
             )}
 
             {labOn && labRoles.length > 0 && (
-              <div className="mt-3 border-t border-line pt-3">
+              <div className={`mt-3 border-t border-line pt-3 ${deskCls("people")}`}>
                 <div className="flex items-center gap-1.5">
                   <span className="text-sm font-semibold">Key people</span>
                   <InfoDot title="The talent market">Each role is yours to fill — a rival hiring the same role doesn't take it from you, and it doesn't matter who submits first. A hire lands when the round resolves, as long as you can cover the signing bonus plus the first salary; if you can't, the round's news says so. A hire boosts a capability the day they start and takes it with them if they leave: each round some chance they move on to another job, which a strong crew culture (employee trust) makes rarer. Any seat on your team can request a hire. You can see who staffs which rivals in a brewery's dossier.</InfoDot>
@@ -1017,7 +1026,7 @@ export function DecisionForm({
             )}
 
             {maOn && rivals.length > 0 && (
-              <div className="mt-3 border-t border-line pt-3">
+              <div className={`mt-3 border-t border-line pt-3 ${deskCls("strategy")}`}>
                 <div className="flex items-center gap-1.5">
                   <span className="text-sm font-semibold">Acquisitions</span>
                   <InfoDot title="Buying a rival">A bid only lands on a rival in real financial distress (struggling for {maMinDistress}+ rounds), and only at or above a fair-value floor. If it lands you absorb part of their capacity and brand — and all of their debt. Buy market research to see each rival's fair value.</InfoDot>
@@ -1076,7 +1085,7 @@ export function DecisionForm({
             )}
 
             {lobOn && lobInits.length > 0 && (
-              <div className="mt-3 border-t border-line pt-3">
+              <div className={`mt-3 border-t border-line pt-3 ${deskCls("strategy")}`}>
                 <div className="flex items-center gap-1.5">
                   <span className="text-sm font-semibold">Lobbying</span>
                   <InfoDot title="Non-market strategy">Spend to push an industry regulation that suits your position — quality standards reward quality leaders, ad limits hurt brand-heavy rivals, craft promotion grows the premium category. Rivals can counter-lobby to bleed your progress. Heavy <i>offensive</i> lobbying risks an investigation fine, softened by your distributor/regulator standing.</InfoDot>

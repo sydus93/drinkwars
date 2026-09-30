@@ -42,10 +42,17 @@ const NOT_IN_FORM = new Set([
   "build_facilities", "maintain_facilities", "mothball_facilities",
   "reactivate_facilities", "divest_facilities",           // City & Globe
   "hire_employees", "hire_bids", "fire_employees", "raise_employees", "poach_employees",
-  "hire_roles", "fire_roles",                             // People screen / hiring market
-  "public_good_contributions", "lobby_spend",
-  "agreement_actions", "exit_action", "buy_vertical",
+  "agreement_actions", "exit_action",
 ]);
+
+/** DW-071: controls that write their lever through a local helper. Anchoring on the helper
+ *  CALL puts these levers under the check — the labor-market hire buttons (`toggleHire`) sat
+ *  in a card the CHRO, who owns hire_roles, could not see, and this guard had them listed as
+ *  "not in the form", so it never looked (game 1: a team's hires were erased by it). */
+const HELPERS = {
+  toggleHire: "hire_roles", toggleFire: "fire_roles", toggleBuy: "buy_vertical",
+  setContribution: "public_good_contributions", setLobby: "lobby_spend",
+};
 
 // ── parse DESK_LEVERS → owner desk per lever ────────────────────────────────
 const ownerOf = new Map();
@@ -92,7 +99,9 @@ for (const c of cards) {
   for (const d of DESKS) {
     let cls;
     try {
-      cls = new Function("desk", "INVEST_FIELDS", "deskCls", `return (${c.gate || '""'})`)(d, INVEST_FIELDS, (x) => deskCls(x)(d));
+      // playsVisible = "some play in this card shows to this desk" — the card itself opens to
+      // every desk here; each play's own gate is checked against its lever's owner below.
+      cls = new Function("desk", "INVEST_FIELDS", "deskCls", "playsVisible", `return (${c.gate || '""'})`)(d, INVEST_FIELDS, (x) => deskCls(x)(d), true);
     } catch (e) { assert.fail(`could not evaluate a Card gate — parser stale: ${c.gate}\n${e.message}`); }
     if (!String(cls).includes("hidden")) c.visible.add(d);
   }
@@ -101,6 +110,12 @@ for (const c of cards) {
 }
 
 const cardAt = (i) => cards.filter((c) => c.start <= i && i <= c.end).sort((a, b) => b.start - a.start)[0] ?? null;
+
+// DW-071: plays inside a shared card carry their own gate — `<div className={`… ${deskCls("x")}`}>`.
+// A control's effective visibility is its card's AND its enclosing play's.
+const blocks = [...FORM.matchAll(/<div className=\{`[^`]*\$\{deskCls\("(\w+)"\)\}`\}>/g)].map((m) => ({ at: m.index, desk: m[1] }));
+const blockAt = (i, card) => blocks.filter((b) => b.at < i && b.at > card.start).sort((a, b) => b.at - a.at)[0] ?? null;
+const visibleAt = (i, card) => { const b = blockAt(i, card); return b ? new Set([...card.visible].filter((d) => d === "all" || d === b.desk)) : card.visible; };
 
 test("guard parses both sources (a green run must mean something)", () => {
   assert.equal(ownerOf.size, 44, `expected 44 levers in DESK_LEVERS, parsed ${ownerOf.size}`);
@@ -127,13 +142,15 @@ test("every lever's owning desk can see the card its control renders in", () => 
   const located = new Set();
   const problems = new Set();
   for (const [lever, owner] of ownerOf) {
-    const re = new RegExp(`(?:set\\(\\{\\s*${lever}\\b|\\bd\\.${lever}\\b|\\bd\\?\\.${lever}\\b|\\b${lever}:\\s*next\\b|key:\\s*"${lever}")`, "g");
+    const helpers = Object.entries(HELPERS).filter(([, l]) => l === lever).map(([h]) => `\\b${h}\\(`);
+    const re = new RegExp(`(?:set\\(\\{\\s*${lever}\\b|\\bd\\.${lever}\\b|\\bd\\?\\.${lever}\\b|\\b${lever}:\\s*next\\b|key:\\s*"${lever}"${helpers.map((h) => "|" + h).join("")})`, "g");
     for (const m of FORM.matchAll(re)) {
       const c = cardAt(m.index);
       if (!c) continue;                 // a derived value above the JSX, not a control
       located.add(lever);
-      if (!c.visible.has(owner)) {
-        problems.add(`${lever} is owned by ${owner} but its control lives in "${c.name}", visible only to ${[...c.visible].join("/")}`);
+      const vis = visibleAt(m.index, c);
+      if (!vis.has(owner)) {
+        problems.add(`${lever} is owned by ${owner} but its control lives in "${c.name}", visible only to ${[...vis].join("/")}`);
       } else if (c.visible.size > 2 && !SHARED_CARDS.has(c.name)) {
         problems.add(`${lever} renders in "${c.name}", which is visible to ${[...c.visible].join("/")} but is not declared in SHARED_CARDS`);
       }
