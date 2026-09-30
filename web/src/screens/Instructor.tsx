@@ -16,7 +16,11 @@ const RETRY_MS = [1000, 3000]; // DW-071: auto-resume backoff on network / 5xx f
 type Saved = { pass?: string; gameId?: string; joinCode?: string };
 const readSaved = (): Saved => { try { return JSON.parse(localStorage.getItem("dw_instr") || "null") ?? {}; } catch { return {}; } };
 const ss = (k: string, v?: string | null) => { try { if (v === undefined) return sessionStorage.getItem(k); if (v === null) sessionStorage.removeItem(k); else sessionStorage.setItem(k, v); } catch { /* storage blocked — no auto-resume */ } return null; };
-export const instructorWasOpen = () => ss(OPEN_KEY) === "1";
+// The OPEN flag holds THIS tab's game ({gameId, joinCode}), not just "1": dw_instr in localStorage
+// is shared by every tab, so with two sections open in two tabs a reload would otherwise
+// reconnect to whichever game was opened last — and Lock/Resolve would hit the wrong class.
+const tabGame = (): Saved => { try { const v = ss(OPEN_KEY); return v ? JSON.parse(v) ?? {} : {}; } catch { return {}; } };
+export const instructorWasOpen = () => !!ss(OPEN_KEY);
 
 /** Instructor console: passcode → create a game → share the code → lock / resolve. */
 export function Instructor({ onExit }: { onExit: () => void }) {
@@ -37,7 +41,7 @@ export function Instructor({ onExit }: { onExit: () => void }) {
   const [err, setErr] = useState<string | null>(null);
   const [view, setView] = useState<"controls" | "dashboard">(() => (ss(VIEW_KEY) === "dashboard" ? "dashboard" : "controls"));
   // DW-071: auto-resume when this tab had the console open and we still hold the credentials.
-  const [reconnecting, setReconnecting] = useState(() => { const s = readSaved(); return instructorWasOpen() && !!s.pass && !!(s.joinCode || s.gameId); });
+  const [reconnecting, setReconnecting] = useState(() => { const t = tabGame(); return instructorWasOpen() && !!readSaved().pass && !!(t.joinCode || t.gameId); });
   const [leaveArmed, setLeaveArmed] = useState(false); // DW-071: two-step Leave (no browser dialog)
   const [firmMode, setFirmMode] = useState<"solo" | "team">("solo");
   const [title, setTitle] = useState("");
@@ -87,7 +91,7 @@ export function Instructor({ onExit }: { onExit: () => void }) {
     } catch {
       /* ignore */
     }
-    ss(OPEN_KEY, "1"); // DW-071
+    ss(OPEN_KEY, JSON.stringify({ gameId, joinCode })); // DW-071: this tab's game
   };
   const exit = () => { ss(OPEN_KEY, null); ss(VIEW_KEY, null); onExit(); }; // DW-071: deliberate leave — don't auto-resume
 
@@ -105,7 +109,7 @@ export function Instructor({ onExit }: { onExit: () => void }) {
   useEffect(() => {
     if (!reconnecting) return;
     let live = true;
-    const s = readSaved();
+    const s: Saved = { pass: readSaved().pass, ...tabGame() }; // DW-071: this tab's game, the shared passcode
     const c = new InstructorClient(s.pass ?? "");
     (async () => {
       for (let i = 0; ; i++) {

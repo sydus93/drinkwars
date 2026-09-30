@@ -200,7 +200,12 @@ export function inContention(status: FirmStatus | string): boolean {
   return status === "active" || status === "exited_rebuilt";
 }
 
+/** Standings comparator for display rows ({status, score}): contenders first, then by score. */
+export function compareStanding(a: { status: FirmStatus | string; score: number }, b: { status: FirmStatus | string; score: number }): number {
+  return Number(inContention(b.status)) - Number(inContention(a.status)) || b.score - a.score;
+}
+
 /** Standings order: contenders first, then by cumulative score (stable within ties). */
 export function rankStandings<T extends { status: FirmStatus | string; scorecard_cumulative: number }>(rows: T[]): T[] {
-  return [...rows].sort((a, b) => Number(inContention(b.status)) - Number(inContention(a.status)) || b.scorecard_cumulative - a.scorecard_cumulative);
+  return [...rows].sort((a, b) => compareStanding({ status: a.status, score: a.scorecard_cumulative }, { status: b.status, score: b.scorecard_cumulative }));
 }

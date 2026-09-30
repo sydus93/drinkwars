@@ -8,7 +8,7 @@
 // Game logic comes from ./drinkwars-core.js (esbuild bundle of the orchestrator
 // + Supabase adapter + engine). Rebuild it with `npm run build:edge` in server/.
 import { createClient } from "@supabase/supabase-js";
-import { GameOrchestrator, SupabaseAdapter, buildInstructorDashboard, dashboardToCsv, randomBreweryNames, renameFirms, resolveConfig, roleBriefings, summarizeAgreementsFor, summarizeLobbying, withRequestCache, deepMerge, generateHiringMarket, projectMarkets, projectFirms, projectShocks, projectHistory } from "./drinkwars-core.js";
+import { GameOrchestrator, SupabaseAdapter, buildInstructorDashboard, dashboardToCsv, randomBreweryNames, renameFirms, visibleEvents, resolveConfig, roleBriefings, summarizeAgreementsFor, summarizeLobbying, withRequestCache, deepMerge, generateHiringMarket, projectMarkets, projectFirms, projectShocks, projectHistory } from "./drinkwars-core.js";
 
 const url = Deno.env.get("SUPABASE_URL")!;
 const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -158,7 +158,7 @@ async function viewFor(gameId: string, teamId: string, userId?: string) {
     standing, draft, infoActive: !!decision?.decision?.buy_info, deadlineAt: game?.deadline_at ?? null,
     briefings: briefings.map((b) => ({ ...b, lines: b.lines.map((l: string) => renameFirms(l, names)) })),
     standings: (last?.standings ?? []).map((s: any) => ({ ...s, name: names[s.firm_id] ?? s.firm_id })),
-    events: (last?.events ?? []).map((e: string) => renameFirms(e, names)),
+    events: visibleEvents(last?.events ?? [], own?.id).map((e: string) => renameFirms(e, names)), // DW-071: private news stays private
     submitted: decision?.submitted ?? false,
     ...(seat ? { seat: { teamId: seat.teamId, firmId: seat.firmId, role: seat.role } } : {}),
   };

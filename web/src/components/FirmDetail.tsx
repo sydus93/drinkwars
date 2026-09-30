@@ -1,3 +1,4 @@
+import { compareStanding } from "drinkwars-engine";
 import { useEffect } from "react";
 import type { GameView, FirmSnapshot } from "../game/controller.js";
 import { SEG_LABEL, STOCK_LABEL, fmt } from "../labels.js";
@@ -50,7 +51,7 @@ export function FirmDetail({
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const ranked = [...view.firms].sort((a, b) => b.score - a.score);
+  const ranked = [...view.firms].sort(compareStanding); // DW-071: survivors first
   const rank = ranked.findIndex((f) => f.firm_id === firm.firm_id) + 1;
   const fieldMaxQ = Math.max(...view.firms.map((f) => f.Q), 1);
   const fieldMaxB = Math.max(...view.firms.map((f) => f.B), 1);

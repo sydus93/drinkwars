@@ -21,7 +21,7 @@ import { loadConfig } from "drinkwars-engine/node";
 import { deepMerge, generateHiringMarket, projectMarkets, projectFirms, projectShocks, projectHistory, roleBriefings, summarizeAgreementsFor, summarizeLobbying } from "drinkwars-engine";
 import type { FirmDecision } from "drinkwars-engine";
 import { createClient } from "@supabase/supabase-js";
-import { GameOrchestrator, InMemoryAdapter, buildInstructorDashboard, createSupabaseAdapter, dashboardToCsv, randomBreweryNames, renameFirms, withRequestCache, type StorageAdapter } from "./index.js";
+import { GameOrchestrator, InMemoryAdapter, buildInstructorDashboard, createSupabaseAdapter, dashboardToCsv, randomBreweryNames, renameFirms, visibleEvents, withRequestCache, type StorageAdapter } from "./index.js";
 
 // Load server/.env (only needed for supabase mode; harmless otherwise).
 try {
@@ -232,7 +232,7 @@ async function viewFor(gameId: string, teamId: string, userId?: string) {
     ownResult,
     unitCostEst,
     standings: (last?.standings ?? []).map((s: { firm_id: string }) => ({ ...s, name: names[s.firm_id] ?? s.firm_id })),
-    events: (last?.events ?? []).map((e: string) => renameFirms(e, names)),
+    events: visibleEvents(last?.events ?? [], own?.id).map((e: string) => renameFirms(e, names)), // DW-071: private news stays private
     submitted: decision?.submitted ?? false,
     ...(seat ? { seat: { teamId: seat.teamId, firmId: seat.firmId, role: seat.role } } : {}),
   };

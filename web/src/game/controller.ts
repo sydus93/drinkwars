@@ -5,7 +5,7 @@
  * adaptive best-response bots from the engine. This is app-spec §9 step 0.
  */
 import { GameOrchestrator, InMemoryAdapter, randomBreweryNames, renameFirms } from "drinkwars-server";
-import { resolveConfig, decideAdaptive, ADAPTIVE_LEANS, inventoryEnabled, roleBriefings, summarizeAgreementsFor, summarizeLobbying, generateHiringMarket, projectMarkets, projectFirms, projectShocks, projectHistory, segmentDemandTotals } from "drinkwars-engine";
+import { resolveConfig, decideAdaptive, ADAPTIVE_LEANS, inventoryEnabled, roleBriefings, summarizeAgreementsFor, summarizeLobbying, generateHiringMarket, projectMarkets, projectFirms, projectShocks, projectHistory, segmentDemandTotals, compareStanding } from "drinkwars-engine";
 import type { RoleBriefing, AllianceSummary, LobbySummary, Candidate } from "drinkwars-engine";
 import type { BalanceSheet, CashFlow, Config, ConfigOverride, FirmDecision, FirmId, FirmRoundResult, FirmState, Lean, ModulesConfig, PnL, RoundResult, SegmentId, WorldState } from "drinkwars-engine";
 import { rankDistrictsForType } from "../labels.js";
@@ -271,7 +271,7 @@ export class SinglePlayerGame {
 
     const standings: Standing[] = (last?.result.firm_results ?? [])
       .map((f) => ({ firm_id: f.firm_id, name: this.nameOf(f.firm_id), score: f.scorecard_cumulative, status: f.status, isYou: f.firm_id === this.humanFirmId }))
-      .sort((a, b) => b.score - a.score);
+      .sort(compareStanding); // DW-071: survivors first
 
     // History series + latest per-firm snapshots — shared projections (engine views.ts) so solo
     // and multiplayer match. Solo reveals all firm data (single human; the UI blurs cosmetically).

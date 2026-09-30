@@ -33,3 +33,12 @@ export function randomBreweryNames(n: number): string[] {
 export function renameFirms(text: string, names: Record<string, string>): string {
   return text.replace(/firm_\d+/g, (id) => names[id] ?? id);
 }
+
+/** DW-071: news that is one firm's private business — the size of an equity raise investors
+ *  refused or trimmed, a hire it couldn't pay for. It reveals a valuation at or below zero and
+ *  cash below a known line, which rivals otherwise only learn by buying research. Only the firm
+ *  it names sees it; the instructor dashboard reads the full event list and keeps it all. */
+const OWN_ONLY = /^(EQUITY|EQUITY MARKET CLOSED|HIRE FAILED):/;
+export function visibleEvents(events: string[], ownFirmId: string | null | undefined): string[] {
+  return events.filter((e) => !OWN_ONLY.test(e) || (!!ownFirmId && new RegExp(`\\b${ownFirmId}\\b`).test(e)));
+}

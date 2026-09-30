@@ -61,6 +61,14 @@ const norm = (v: unknown): unknown => {
   return v;
 };
 export const same = (a: unknown, b: unknown): boolean => JSON.stringify(norm(a)) === JSON.stringify(norm(b));
+/** DW-071: mirrors the server merge (engine seats.ts) — an EMPTY collection is "no request", so
+ *  it never overrides a teammate's non-empty one. No conflict to show either way: the request
+ *  goes through, and telling the CEO "theirs ([]) will be used" was false (and "Take theirs"
+ *  would have dropped a real hire). */
+const blankOverReal = (blank: unknown, real: unknown): boolean => {
+  const coll = (v: unknown) => Array.isArray(v) ? v.length === 0 : v !== null && typeof v === "object" && Object.keys(v as object).length === 0;
+  return coll(blank) && real != null && typeof real === "object" && !coll(real);
+};
 const empty = (v: unknown): boolean => v == null || v === 0 || v === false || v === "" || (Array.isArray(v) && v.length === 0) || (typeof v === "object" && Object.keys(norm(v) as object).length === 0);
 
 export function fmtLever(field: string, v: unknown): string {
@@ -137,6 +145,7 @@ export function computeConflicts(view: GameView, seatRole: string | null | undef
       for (const f of DESK_LEVERS[desk]) {
         const theirs = s.partial[f];
         if (theirs === undefined) continue;
+        if (blankOverReal(theirs, mine[f])) continue; // DW-071: my request stands
         if (!same(theirs, mine[f])) push(f, s.name, s.role, theirs, "them");
       }
       // DW-051 covers + DW-052 suggestions: a value they set on a desk that isn't theirs
@@ -167,6 +176,7 @@ export function computeConflicts(view: GameView, seatRole: string | null | undef
         const theirs = ceo.partial[f];
         if (theirs === undefined) continue;
         if (same(theirs, standing?.[f])) continue; // CEO left it at the standing plan
+        if (blankOverReal(mine[f], theirs)) continue; // DW-071: my blank doesn't cancel the CEO's request — no false "yours wins"
         if (!same(theirs, mine[f])) push(f, ceo.name, ceo.role ?? "ceo", theirs, "me");
       }
     }

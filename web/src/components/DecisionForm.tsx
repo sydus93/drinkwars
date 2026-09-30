@@ -325,10 +325,10 @@ export function DecisionForm({
   // labor-market game the CHRO, who owns hire_roles, never saw Key people, shipped an untouched
   // [] every submit, and erased the CEO's hires (game 1, team E). Card shows if any play does.
   const playsVisible = desk === "all" || ([
-    [prOn, "commercial"], [sustOn, "operations"], [rndOn, "operations"], [pgOn && goods.length > 0, "strategy"],
-    [vertOn && vertAssets.length > 0, "operations"], [labOn && labRoles.length > 0, "people"],
-    [maOn && rivals.length > 0, "strategy"], [lobOn && lobInits.length > 0, "strategy"],
-  ] as const).some(([on, dk]) => on && desk === dk);
+    [prOn, "pr_action"], [sustOn, "invest_water_efficiency"], [rndOn, "invest_rnd"], [pgOn && goods.length > 0, "public_good_contributions"],
+    [vertOn && vertAssets.length > 0, "buy_vertical"], [labOn && labRoles.length > 0, "hire_roles"],
+    [maOn && rivals.length > 0, "acquisition_bid"], [lobOn && lobInits.length > 0, "lobby_spend"],
+  ] as const).some(([on, lever]) => on && (DESK_LEVERS[desk] as readonly string[] | undefined)?.includes(lever)); // owner read from seats.ts, not copied
   const setContribution = (goodId: string, v: number) => set({ public_good_contributions: { ...contribs, [goodId]: Math.max(0, v) } });
   const prEvent: GameEvent | null = prModal
     ? {

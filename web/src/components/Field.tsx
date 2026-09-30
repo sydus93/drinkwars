@@ -1,3 +1,4 @@
+import { compareStanding } from "drinkwars-engine";
 import { useState } from "react";
 import type { GameView } from "../game/controller.js";
 import type { FirmSnapshot } from "../game/controller.js";
@@ -24,7 +25,7 @@ export function Field({ view, infoActive, pending = false, onInspect }: { view: 
 
   const scores = firms.map((f) => f.score);
   const fieldMedScore = median(others.map((f) => f.score));
-  const myRank = [...firms].sort((a, b) => b.score - a.score).findIndex((f) => f.isYou) + 1;
+  const myRank = [...firms].sort(compareStanding).findIndex((f) => f.isYou) + 1;
 
   return (
     <div className="grid gap-4">
@@ -90,7 +91,7 @@ export function Field({ view, infoActive, pending = false, onInspect }: { view: 
                   </tr>
                 </thead>
                 <tbody className="tnum">
-                  {[...firms].sort((a, b) => b.score - a.score).map((f) => (
+                  {[...firms].sort(compareStanding).map((f) => (
                     <tr
                       key={f.firm_id}
                       onClick={onInspect ? () => onInspect(f.firm_id) : undefined}
