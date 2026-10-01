@@ -11,7 +11,7 @@
 export { GameOrchestrator } from "./lifecycle.js";
 export { SupabaseAdapter } from "./adapters/supabase.js";
 export { buildInstructorDashboard, dashboardToCsv } from "./dashboard.js";
-export { randomBreweryNames, renameFirms } from "./names.js";
+export { randomBreweryNames, renameFirms, visibleEvents } from "./names.js";
 export {
   resolveConfig, roleBriefings, summarizeAgreementsFor, summarizeLobbying,
   // Per-team projections + helpers the Edge transport needs at parity with the
