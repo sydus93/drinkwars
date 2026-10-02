@@ -80,7 +80,7 @@ const base = await ceo.evaluate(async () => (await (await fetch(`http://localhos
 const ceoDec = { ...base.standing, dividend: 40000, price: Object.fromEntries(Object.entries(base.standing.price).map(([k, v]) => [k, v])) };
 let r = await fetch("http://localhost:8787/submit", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token: ceoTok, decision: ceoDec }) });
 ok(r.ok, "CEO submits dividend $40k (whole-firm slice)");
-await sleep(4000);
+await waitText(cfo, /Reconcile · 1 open/, 20000).catch(() => {}); // DW-065b: teammate writes coalesce up to 10 s — poll, don't sleep
 ok(await has(cfo, /Reconcile · 1 open/) && await has(cfo, /Dividend/), "CFO sees Reconcile: Dividend conflict, 'yours goes through'", (await text(cfo)).match(/Reconcile[^\n]*\n[^\n]*\n[^\n]*/)?.[0]?.slice(0, 200));
 // CFO adopts CEO's value → conflict clears
 await clickText(cfo, "Take theirs");
@@ -109,7 +109,7 @@ const cfoSeatPrice = plan.teamPlan?.seats.find((x) => x.role === "cfo")?.partial
 ok(firmPrice && cfoSeatPrice != null && Math.abs(firmPrice[seg] - cfoSeatPrice) < 1e-6 && Math.abs(firmPrice[seg] - ceoDec.price[seg]) > 1e-6 && plan.teamPlan.composed.dividend === 40000, "composed plan: CFO's price COVER lands (CMO chair empty, later word than the CEO's), dividend $40k", JSON.stringify({ price: firmPrice?.[seg], cfoTyped: cfoSeatPrice, ceoHad: ceoDec.price[seg], dividend: plan.teamPlan?.composed?.dividend }));
 // ── CEO page: its FORM still says dividend $0 (we submitted the CEO's $40k via API, not the form),
 //    so it must flag the CFO's $40k as "theirs goes through"; Adopt theirs syncs the form.
-await sleep(3000);
+await waitText(ceo, /Reconcile · 2 open/, 20000).catch(() => {}); // DW-065b: teammate writes coalesce up to 10 s — poll, don't sleep
 const ceoT = await text(ceo);
 ok(/Reconcile · 2 open/i.test(ceoT) && /Dividend[\s\S]{0,160}theirs will be used/i.test(ceoT) && /Prices[\s\S]{0,120}set this for the empty CMO desk[\s\S]{0,160}theirs, unless you submit again/i.test(ceoT), "CEO with a stale form sees the CFO's dividend (their desk) AND the price cover, in plain words", ceoT.match(/Reconcile · [\s\S]{0,420}/i)?.[0]?.replace(/\n+/g, " | ").slice(0, 420));
 // DW-060: the dividend sits on the CFO's OWN desk, so the CEO gets a notification, not a
@@ -130,7 +130,7 @@ const after = await (await fetch(`http://localhost:8787/view?token=${ceoTok}`)).
 ok(after.teamPlan?.composed?.invest_T_emp === 21000 && after.infoActive === true, "composed plan carries the CFO's cover + research (later word wins over the CEO's earlier slice)", JSON.stringify({ invest_T_emp: after.teamPlan?.composed?.invest_T_emp, infoActive: after.infoActive }));
 const rival = (after.firms ?? []).find((f) => !f.isYou && f.status === "active");
 ok(!!rival && (rival.employees?.length > 0 || rival.Q > 0 || rival.cash !== 0), "research reveals rivals' confidential fundamentals in the view", rival ? JSON.stringify({ name: rival.name, Q: rival.Q, cash: rival.cash, crew: rival.employees?.length }) : "no rival");
-await sleep(8000);
+await waitText(ceo, /set this for the empty CHRO desk/, 20000).catch(() => {}); // DW-065b: teammate writes coalesce up to 10 s — poll, don't sleep
 const ceoTxt = await text(ceo);
 ok(/Employee relations[\s\S]{0,120}set this for the empty CHRO desk[\s\S]{0,200}theirs, unless you submit again/i.test(ceoTxt) && /\$21,000/.test(ceoTxt), "CEO's Reconcile names the cover in plain words", ceoTxt.match(/Employee relations[^\n]*\n[^\n]*/)?.[0]?.slice(0, 220));
 // the CFO's research purchase is a second cover (buy_info is a CMO lever) — acknowledge each

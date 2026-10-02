@@ -11,17 +11,19 @@
  *   cd server && npx tsx scripts/dress-rehearsal.ts                  # local (:8787, pass letmein)
  *   cd server && DW_INSTRUCTOR_PASS=… npx tsx scripts/dress-rehearsal.ts --prod
  *
- * Options (env): ROUNDS=12 BASE=<url>. Re-runs reuse the "dress" cohort (idempotent)
+ * Options (env): ROUNDS=12 BASE=<url> MODULES=<preset id | comma list, e.g. laborMarket,sustainability;
+ * default full>. Re-runs reuse the "dress" cohort (idempotent)
  * but create a fresh game each time — end old ones from the instructor console.
  */
 import { PRESETS } from "drinkwars-engine";
 
 const PROD = "https://kikmdmldfgakdabbsdcq.supabase.co/functions/v1/drinkwars";
 const BASE = process.argv.includes("--prod") ? (process.env.BASE ?? PROD) : (process.env.BASE ?? "http://localhost:8787");
-const PASS = process.env.DW_INSTRUCTOR_PASS ?? "letmein";
+// Test tier (server/.env DW_INSTRUCTOR_PASS_TEST) is scoped to its own games; your primary pass still sees them.
+const PASS = process.env.DW_INSTRUCTOR_PASS_TEST || process.env.DW_INSTRUCTOR_PASS || "letmein";
 const ROUNDS = Math.max(3, Number(process.env.ROUNDS ?? 12));
 
-if (process.argv.includes("--prod") && !process.env.DW_INSTRUCTOR_PASS) {
+if (process.argv.includes("--prod") && !process.env.DW_INSTRUCTOR_PASS && !process.env.DW_INSTRUCTOR_PASS_TEST) {
   console.error("Refusing to hit prod with the default passcode. Run:  DW_INSTRUCTOR_PASS=<your pass> npx tsx scripts/dress-rehearsal.ts --prod");
   process.exit(2);
 }
@@ -50,8 +52,11 @@ async function call(method: string, path: string, body?: unknown, instructor = f
 
 async function main() {
   console.log(`Provisioning dress rehearsal vs ${BASE}\n`);
-  const full = PRESETS.find((p) => p.id === "full");
-  const modules = Object.fromEntries((full?.modules ?? []).map((id) => [id, { enabled: true }]));
+  // MODULES = a preset id ("full", "base", …) or a comma list of module ids — rehearse the class's exact config.
+  const want = process.env.MODULES ?? "full";
+  const ids = PRESETS.find((p) => p.id === want)?.modules ?? want.split(",").map((x) => x.trim()).filter(Boolean);
+  const modules = Object.fromEntries(ids.map((id) => [id, { enabled: true }]));
+  console.log(`Modules: ${ids.length ? ids.join(", ") : "(strategy core only)"}`);
 
   const game = await call("POST", "/instructor/games", { nFirms: 3, nRounds: ROUNDS, firmMode: "team", modules, title: `DRESS REHEARSAL ${new Date().toISOString().slice(0, 10)}` }, true);
   const roster = await call("POST", "/instructor/roster", { cohort: "dress", roster: [...SEATS.map((s) => ({ external_id: s.ext, name: s.name })), { external_id: BENCH.ext, name: BENCH.name }] }, true);
@@ -59,7 +64,7 @@ async function main() {
   await call("POST", `/instructor/games/${game.gameId}/seats`, { plan: SEATS.map((s) => ({ external_id: s.ext, team: s.team, role: s.role })) }, true);
 
   console.log(`Join code:  ${game.joinCode}`);
-  console.log(`Game id:    ${game.gameId}   (${ROUNDS} rounds, team mode, Everything (Pro))\n`);
+  console.log(`Game id:    ${game.gameId}   (${ROUNDS} rounds, team mode, ${want})\n`);
   console.log(`${"seat".padEnd(10)} ${"firm".padEnd(9)} claim code`);
   for (const s of SEATS) console.log(`${s.role.toUpperCase().padEnd(10)} ${s.team.padEnd(9)} ${claim(s.ext)}`);
   console.log(`${"(bench)".padEnd(10)} ${"—".padEnd(9)} ${claim(BENCH.ext)}   ← unseated; use for late-add / seat-move tests`);
