@@ -11,9 +11,10 @@
  * client. Players are anonymous in v1; revisit consent gating with the NetID
  * identified-student upgrade.
  */
-import { rankStandings } from "drinkwars-engine";
-import type { FirmId, FirmStatus, GovernanceForm, SegmentId, TemplateId } from "drinkwars-engine";
+import { CF_LINE_KEYS, OPEX_LINE_KEYS, rankStandings } from "drinkwars-engine";
+import type { BalanceSheet, CashFlow, CfSection, FirmId, FirmStatus, GovernanceForm, PnL, SegmentId, TemplateId } from "drinkwars-engine";
 import type { Lifecycle, StorageAdapter } from "./types.js";
+import { exportForecasts, type ScoredCall } from "./forecasts.js";
 
 type Scorecard = { financial: number; market: number; intangible: number; stakeholder: number };
 
@@ -25,6 +26,9 @@ export interface DashTeam {
   /** Who sits in the firm (DW-046): the grading map from a renamable brewery to real
    *  students. NetID/name come from roster provisioning; role is the C-suite chair. */
   members: { userId: string; name: string | null; externalId: string | null; role: string | null }[];
+  /** DW-051 house colour (hex) + mark the team picked at founding; absent on older payloads. */
+  color?: string | null;
+  emblem?: string | null;
 }
 
 export interface DashSegmentResult {
@@ -73,12 +77,24 @@ export interface DashPanelRow {
   reputation: number;
   waterEfficiency: number;
   rndProgress: number;
+  // DW-075 people position (only when a people module is on): roster size, built-up loyalty
+  // (mean/max, 0..cap), key hires and their mean tenure multiplier (1 = flat bonus).
+  headcount?: number;
+  loyaltyMean?: number;
+  loyaltyMax?: number;
+  keyHires?: number;
+  keyTenureMult?: number;
   // Ratio-panel inputs (DW-037)
   gross: number;
   ebit: number;
   interest: number;
   ppe: number;
   assets: number;
+  // DW-070 itemized statements (absent on rounds resolved before DW-070; zero lines omitted)
+  opex: number;
+  opexLines?: PnL["opex_lines"];
+  cfLines?: CashFlow["cf_lines"];
+  debtLines?: BalanceSheet["debt_lines"];
   // Finance health
   coverage: number;
   leverage: number;
@@ -170,6 +186,8 @@ export interface InstructorDashboard {
   events: DashEventRound[]; // per resolved-round
   engagement: DashEngagementRow[]; // firm × resolved-round (rows with a decision)
   agreements: DashAgreement[];
+  /** DW-074: every seat's calls, scored. Present only when the game has calls switched on. */
+  forecasts?: ScoredCall[];
 }
 
 /** Order firms by the trailing number in their id (firm_1, firm_2…), then by id. */
@@ -193,12 +211,17 @@ export async function buildInstructorDashboard(store: StorageAdapter, gameId: st
   const teams: DashTeam[] = [];
   for (const t of [...teamsRaw].sort(byFirmId)) {
     const members: DashTeam["members"] = [];
+    // DW-080: getTeams already embeds each member's name, id and chair (Supabase) — two serial reads per
+    // student here made the dashboard ~67 reads at class size. Fall back only where nothing is embedded.
+    const embedded = new Map((t.members ?? []).map((m) => [m.user_id, m]));
     for (const uid of t.member_user_ids) {
+      const m = embedded.get(uid);
+      if (m) { members.push({ userId: uid, name: m.display_name ?? null, externalId: m.external_id ?? null, role: m.role ?? null }); continue; }
       const u = await store.getUser(uid);
       const role = await store.getMemberRole(t.id, uid);
       members.push({ userId: uid, name: u?.display_name ?? null, externalId: u?.external_id ?? null, role });
     }
-    teams.push({ teamId: t.id, firmId: t.firm_id, name: t.name, joined: t.member_user_ids.length > 0, members });
+    teams.push({ teamId: t.id, firmId: t.firm_id, name: t.name, joined: t.member_user_ids.length > 0, members, color: t.color ?? null, emblem: t.emblem ?? null });
   }
 
   const results = await store.getRoundResults(gameId); // ordered by round
@@ -249,6 +272,10 @@ export async function buildInstructorDashboard(store: StorageAdapter, gameId: st
         interest: fr.pnl.interest,
         ppe: fr.balance_sheet.ppe,
         assets: fr.balance_sheet.assets,
+        opex: fr.pnl.opex,
+        ...(fr.pnl.opex_lines ? { opexLines: fr.pnl.opex_lines } : {}),
+        ...(fr.cash_flow.cf_lines ? { cfLines: fr.cash_flow.cf_lines } : {}),
+        ...(fr.balance_sheet.debt_lines ? { debtLines: fr.balance_sheet.debt_lines } : {}),
         equity: fr.state.equity,
         debt: fr.state.debt,
         cap: fr.state.cap,
@@ -266,6 +293,7 @@ export async function buildInstructorDashboard(store: StorageAdapter, gameId: st
         reputation: fr.state.reputation ?? 0,
         waterEfficiency: fr.state.water_efficiency ?? 0,
         rndProgress: fr.state.rnd_progress ?? 0,
+        ...(fr.state.headcount != null ? { headcount: fr.state.headcount, loyaltyMean: fr.state.loyalty_mean, loyaltyMax: fr.state.loyalty_max, keyHires: fr.state.key_hires, keyTenureMult: fr.state.key_tenure_mult } : {}), // DW-075
         coverage: fr.cost_of_capital.coverage,
         belowSafety: fr.state.cash < cashSafety || fr.cost_of_capital.coverage < 1,
         roundsBelowSafety: (() => { const b = fr.state.cash < cashSafety || fr.cost_of_capital.coverage < 1; const n = b ? (belowStreak.get(fr.firm_id) ?? 0) + 1 : 0; belowStreak.set(fr.firm_id, n); return n; })(),
@@ -328,6 +356,12 @@ export async function buildInstructorDashboard(store: StorageAdapter, gameId: st
     dissolutionType: a.dissolution_type,
   }));
 
+  // DW-074; undefined (and no read) when off. DW-080: a forecasts read that fails (migration 0009 not
+  // applied yet) costs the calls readout only — not the whole Dashboard / Debrief / Field / export.
+  const forecasts = await exportForecasts(store, gameId, game.config, results, teamsRaw).catch((e: unknown) => {
+    console.warn("dashboard: forecasts unavailable —", e instanceof Error ? e.message : e);
+    return undefined;
+  });
   return {
     meta: {
       gameId,
@@ -357,6 +391,7 @@ export async function buildInstructorDashboard(store: StorageAdapter, gameId: st
     events,
     engagement,
     agreements,
+    ...(forecasts ? { forecasts } : {}),
   };
 }
 
@@ -398,7 +433,16 @@ export function dashboardToCsv(d: InstructorDashboard): string {
   ];
   const segCols = segIds.flatMap((s) => [`price_${s}`, `share_${s}`, `qsold_${s}`]);
   const engCols = ["submitted", "revision_count", "time_to_decide_s", "predicted_rank", "realized_rank", "belief_score", "reflection"];
-  const header = [...baseCols, ...segCols, ...engCols];
+  // DW-070 line items, appended LAST so every existing column keeps its position for old .do files.
+  // Blank (not 0) on rounds resolved before DW-070; 0 on itemized rounds where the line was zero.
+  const cfKeys = (Object.keys(CF_LINE_KEYS) as CfSection[]).flatMap((sec) => CF_LINE_KEYS[sec].map((k) => [sec, k] as const));
+  const lineCols = ["opex", ...OPEX_LINE_KEYS.map((k) => `opex_${k}`), ...cfKeys.map(([sec, k]) => `cf_${sec}_${k}`), "debt_bank", "debt_convertible", "debt_rbf"];
+  // DW-074 calls roll-up — appended after everything else, and only for a game with calls on
+  // (a flag-off export keeps exactly the columns it had). Per-call rows are in the JSON export.
+  const callCols = d.forecasts ? ["calls_made", "calls_scored", "calls_score"] : [];
+  const callsByKey = new Map<string, ScoredCall[]>();
+  for (const c of d.forecasts ?? []) { const k = `${c.round}::${c.firmId}`; callsByKey.set(k, [...(callsByKey.get(k) ?? []), c]); }
+  const header = [...baseCols, ...segCols, ...engCols, ...lineCols, ...callCols];
 
   const lines = [header.join(",")];
   for (const p of d.panel) {
@@ -424,6 +468,20 @@ export function dashboardToCsv(d: InstructorDashboard): string {
       eng?.submitted ?? "", eng?.revisionCount ?? "", eng?.timeToDecideS ?? "",
       eng?.predictedRank ?? "", eng?.realizedRank ?? "", eng?.beliefScore ?? "", eng?.reflection ?? "",
     );
+    const ol = p.opexLines as Record<string, number> | undefined;
+    const cl = p.cfLines as Record<string, Record<string, number>> | undefined;
+    const dl = p.debtLines as Record<string, number> | undefined;
+    row.push(
+      p.opex,
+      ...OPEX_LINE_KEYS.map((k) => (ol ? ol[k] ?? 0 : "")),
+      ...cfKeys.map(([sec, k]) => (cl ? cl[sec]?.[k] ?? 0 : "")),
+      ...(["bank", "convertible", "rbf"] as const).map((k) => (dl ? dl[k] ?? 0 : "")),
+    );
+    if (d.forecasts) {
+      const cs = callsByKey.get(`${p.round}::${p.firmId}`) ?? [];
+      const sc = cs.filter((c) => c.score != null);
+      row.push(cs.length, sc.length, sc.length ? sc.reduce((a, c) => a + (c.score as number), 0) / sc.length : "");
+    }
     lines.push(row.map(csvCell).join(","));
   }
   return lines.join("\n");

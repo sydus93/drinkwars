@@ -20,6 +20,10 @@
     "serious-games",
     "typescript"
   ],
+  "scripts": {
+    "gates": "node scripts/gates.mjs",
+    "audits": "node web/scripts/audit-all.mjs"
+  },
   "workspaces": [
     "engine",
     "server",

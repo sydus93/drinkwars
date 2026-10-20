@@ -4,7 +4,7 @@
  * immediately), `decisions` upsert until locked, `agreements` upsert by id.
  */
 import type {
-  AgreementRow, BeliefRow, DecisionRecord, DistinctivenessRow, FirmRoundRow, GameRecord,
+  AgreementRow, BeliefRow, ForecastRecord, DecisionRecord, DistinctivenessRow, FirmRoundRow, GameRecord,
   Lifecycle, MemberDecisionRecord, PublicRoundRecord, ReflectionRow, RoundResultRecord, StorageAdapter, TeamMemberRecord, TeamRecord, TelemetryRow,
   UserRecord, WorldStateRecord,
 } from "../types.js";
@@ -43,6 +43,7 @@ export class InMemoryAdapter implements StorageAdapter {
   private telemetry: TelemetryRow[] = [];
   private reflections: ReflectionRow[] = [];
   private distinctiveness: DistinctivenessRow[] = [];
+  private forecasts = new Map<string, ForecastRecord>(); // key game::round::user (DW-074)
 
   async ping(): Promise<void> {
     /* in-memory store has nothing to keep warm */
@@ -273,5 +274,11 @@ export class InMemoryAdapter implements StorageAdapter {
   }
   async getDistinctiveness(gameId: string): Promise<DistinctivenessRow[]> {
     return this.distinctiveness.filter((r) => r.game_id === gameId).map(clone);
+  }
+  async upsertForecast(rec: ForecastRecord): Promise<void> {
+    this.forecasts.set(key(rec.game_id, rec.round, rec.user_id), clone(rec));
+  }
+  async getForecasts(gameId: string): Promise<ForecastRecord[]> {
+    return [...this.forecasts.values()].filter((f) => f.game_id === gameId).map(clone);
   }
 }

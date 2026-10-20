@@ -26,17 +26,23 @@ export type ModuleSelection = Record<string, { enabled: boolean }>;
 export interface TeamPlanSeat {
   name: string; role: string | null; desk: string | null; submitted: boolean; me: boolean;
   updated_at: number | null; partial: Partial<FirmDecision> | null;
+  touched?: string[]; // DW-074: the levers this seat changed this round
 }
 /** The team's live plan: every seat's submitted slice + the composed firm decision
  *  they merge into (the record the engine will resolve). Refreshed by the 2.5s poll. */
 export interface TeamPlan { seats: TeamPlanSeat[]; composed: FirmDecision | null; locked: boolean }
-import type { InstructorDashboard } from "drinkwars-server";
+import type { InstructorDashboard, InstructorTeamDecisions } from "drinkwars-server";
+import type { ForecastCall, InstructorForecasts, SeatForecasts } from "drinkwars-server"; // DW-074 calls channel
 import type { GameView, Standing } from "./controller.js";
 import { setFirmStyles } from "../lib/teamColors.js";
-import { same } from "../lib/reconcile.js";
+import { resetHolds, specialistSlice, touchedLevers } from "../lib/reconcile.js";
 
+// Unset (a local dev run): the game server on THIS page's host, port 8787 — so a phone that opened
+// http://<laptop-ip>:5173 reaches http://<laptop-ip>:8787, on whatever network the laptop is on
+// today. Production builds and the audits always set VITE_TRANSPORT_URL. (DW-080)
 export const TRANSPORT_URL: string =
-  (import.meta as any).env?.VITE_TRANSPORT_URL ?? "http://localhost:8787";
+  (import.meta as any).env?.VITE_TRANSPORT_URL ??
+  (typeof location !== "undefined" && location.hostname ? `${location.protocol}//${location.hostname}:8787` : "http://localhost:8787");
 
 /** Multiplayer needs a reachable game server. On the public static build it has
  *  none, so the Join/Instructor entries are hidden there. Shown in local dev
@@ -161,7 +167,14 @@ export async function peekGame(code: string, claim?: string, base: string = TRAN
 }
 
 export class StudentClient {
-  constructor(private base: string = TRANSPORT_URL) {}
+  constructor(private base: string = TRANSPORT_URL) { resetHolds(); }
+  // ── DW-074 calls (forecast commitment): a channel of its own, never part of submit(). ──
+  /** Per-game flag from the config handed over at join. Off ⇒ the client never calls /forecasts. */
+  callsEnabled(): boolean { return !!this.config?.classroom?.forecasts?.enabled; }
+  forecasts(): Promise<SeatForecasts> { return api(this.base, `/forecasts?token=${encodeURIComponent(this.token)}`); }
+  submitForecasts(calls: Record<string, ForecastCall>): Promise<{ ok: true; calls: Record<string, ForecastCall> }> {
+    return api(this.base, "/forecasts", { method: "POST", body: JSON.stringify({ token: this.token, calls }) });
+  }
   token = "";
   gameId = "";
   firmId: FirmId = "";
@@ -177,6 +190,7 @@ export class StudentClient {
   claimIssued = false; // true when the server AUTO-issued the code this join (no claim entered) → worth surfacing
   private last: RawView | null = null;
   private lastDecision: FirmDecision | null = null;
+  private lastDecisionRound = -1; // DW-073: team forms never carry one round's memory into the next
 
   /** Join by code. Roster students pass their `claim` code (persistent identity); team
    *  games take a `role` (C-suite seat) and optional `teamId` (which firm to join). An
@@ -200,7 +214,7 @@ export class StudentClient {
   /** Persist the (stateless, signed) token + config so a refresh resumes the SAME firm. */
   private save() {
     try {
-      localStorage.setItem("dw_mp", JSON.stringify({ token: this.token, config: this.config, firmId: this.firmId, nRounds: this.nRounds, firmMode: this.firmMode, role: this.role, claim: this.claim, claimIssued: this.claimIssued }));
+      localStorage.setItem("dw_mp", JSON.stringify({ token: this.token, gameId: this.gameId, config: this.config, firmId: this.firmId, nRounds: this.nRounds, firmMode: this.firmMode, role: this.role, claim: this.claim, claimIssued: this.claimIssued })); // DW-077: gameId keys the wire dismissals across reloads
     } catch {
       /* localStorage unavailable — just no resume */
     }
@@ -218,6 +232,7 @@ export class StudentClient {
       if (!s?.token) return null;
       const c = new StudentClient(base);
       c.token = s.token;
+      c.gameId = s.gameId ?? ""; // DW-077 (absent on a session saved by an older build → falls back to the token)
       c.config = s.config;
       c.firmId = s.firmId;
       c.nRounds = s.nRounds ?? 0;
@@ -243,7 +258,7 @@ export class StudentClient {
       this.role = v.session.role;
       // Only a REAL change of firm/chair discards the draft — a re-mint that merely refreshes the
       // token must never wipe what the student is typing.
-      if (moved) { this.lastDecision = null; this.sentCovers = {}; this.sentCoversRound = -1; this.reseated = true; }
+      if (moved) { this.lastDecision = null; this.sentCovers = {}; this.sentCoversRound = -1; this.reseated = true; resetHolds(); }
       this.save();
     }
     this.last = v;
@@ -332,6 +347,16 @@ export class StudentClient {
   }
   private async seedDecision(v: RawView): Promise<FirmDecision> {
     const own = v.own;
+    // DW-073: a team seat's form starts every round from the FIRM's standing plan, never from this
+    // tab's memory of its own last submit. The merge reads "equal to the standing plan" as "no
+    // change from me" — a stale echo of last round's form (the CEO's house-default prices, a
+    // specialist's own number the CEO had overruled) would otherwise look like a fresh decision.
+    if (this.firmMode === "team" && this.lastDecisionRound !== v.round) this.lastDecision = null;
+    // …and within a round, what this seat last submitted (or resumed) is the form, verbatim. A
+    // second seeding in the same round (React StrictMode's double effect on the dev server; any
+    // remount) used to fall through to the new-round carry below and blank the one-shot levers —
+    // a reloaded CFO's dividend and loan read 0 and a resubmit stored 0.
+    if (this.firmMode === "team" && this.lastDecision) return { ...this.lastDecision };
     const unit = v.unitCostEst || 3;
     const active = v.segments.filter((s) => s.active).map((s) => s.id);
     const allSegs = v.segments.map((s) => s.id);
@@ -349,6 +374,7 @@ export class StudentClient {
       const firm = (v.teamPlan?.composed ?? v.standing ?? null) as FirmDecision | null;
       const base = firm ?? this.houseDecision(v);
       this.lastDecision = { ...base, ...(mine.partial as Partial<FirmDecision>), firm_id: this.firmId } as FirmDecision;
+      this.lastDecisionRound = v.round;
       // A reload must not forget the covers this seat already sent (DW-052) — they're the
       // off-desk keys present in our stored slice.
       const desk = this.role ? (ROLE_DESK[this.role] ?? "all") : "all";
@@ -433,9 +459,12 @@ export class StudentClient {
     };
   }
 
-  async submit(decision: FirmDecision, covers?: Set<string>): Promise<void> {
+  /** `forRound`: the round the FORM was built for (DW-080) — the server refuses it once that round closed. */
+  async submit(decision: FirmDecision, covers?: Set<string>, forRound?: number): Promise<void> {
     this.lastDecision = { ...decision, firm_id: this.firmId };
+    this.lastDecisionRound = this.last?.round ?? -1;
     let slice: Partial<FirmDecision> = this.lastDecision;
+    let planView = this.last;
     const desk = this.role ? (ROLE_DESK[this.role] ?? "all") : "all";
     if (this.firmMode === "team" && desk !== "all") {
       // DW-051: send ONLY this desk's levers plus deliberate covers — off-desk values that differ
@@ -444,32 +473,31 @@ export class StudentClient {
       // values equal to the plan are dropped: they'd read as covers on the CEO's card.
       this.reseated = false;
       const v = await this.fetchView();
+      planView = v;
       // The instructor moved us between the form and this fetch: the levers on screen belong to the
       // OLD firm's desk. Refuse rather than write them into the new one; the tab re-renders next tick.
       if (this.reseated) throw new Error("your seat changed — the instructor moved you; check your new desk before submitting");
       const plan = (v.teamPlan?.composed ?? v.standing ?? null) as unknown as Record<string, unknown> | null;
       const own = new Set<string>(DESK_LEVERS[desk] as string[]);
-      const out: Record<string, unknown> = { firm_id: this.firmId };
-      const src = this.lastDecision as unknown as Record<string, unknown>;
       // DW-052: the server REPLACES this seat's partial on every submit, so a cover sent
       // earlier this round (a research buy, a hire for an empty chair) must be RE-SENT or
       // it silently drops out of the composed plan when this player tweaks their own desk.
       // Remembered covers are re-sent only while the plan still equals what we sent — if
       // the plan moved (someone overruled us), we let their later word stand and forget.
+      // The slicing itself is specialistSlice (lib/reconcile) — shared with the previews.
       if (this.sentCoversRound !== v.round) { this.sentCovers = {}; this.sentCoversRound = v.round; }
-      for (const k of Object.keys(src)) {
-        if (k === "firm_id") continue;
-        if (own.has(k)) { out[k] = src[k]; continue; }
-        const deliberate = covers ? covers.has(k) : true; // the form says which off-desk values the player actually changed
-        if (deliberate && (!plan || !(k in plan) || !same(src[k], plan[k]))) { out[k] = src[k]; this.sentCovers[k] = src[k]; continue; }
-        if (k in this.sentCovers) {
-          if (plan && same(plan[k], this.sentCovers[k])) out[k] = this.sentCovers[k];
-          else delete this.sentCovers[k];
-        }
-      }
-      slice = out as Partial<FirmDecision>;
+      const cut = specialistSlice(this.lastDecision, own, plan, this.sentCovers, covers); // `covers`: the off-desk values the player actually changed
+      this.sentCovers = cut.covers;
+      slice = { ...cut.slice, firm_id: this.firmId };
     }
-    await api(this.base, "/submit", { method: "POST", body: JSON.stringify({ token: this.token, decision: slice }) });
+    // DW-074: say which levers this seat actually CHANGED (vs the firm's standing plan). The merge
+    // uses the list, not the values: a desk left alone no longer overrides the CEO. Rides in the
+    // same request — no extra round-trip.
+    // Sticky within the round: the list this seat already has on the server (it came back in the
+    // team plan) is re-sent with what changed now, so a lever put back to last round's value stays ours.
+    const inferred = this.firmMode === "team" && planView ? touchedLevers(slice, planView.standing, planView.round) : undefined;
+    const touched = inferred ? [...new Set([...(planView?.teamPlan?.seats.find((s) => s.me)?.touched ?? []), ...inferred])] : undefined;
+    await api(this.base, "/submit", { method: "POST", body: JSON.stringify({ token: this.token, decision: slice, touched, round: forRound ?? this.lastDecisionRound }) });
   }
 }
 
@@ -560,6 +588,15 @@ export class InstructorClient {
   /** Full analytics payload for the dashboard (read-only; assembled server-side). */
   dashboard(gameId: string): Promise<InstructorDashboard> {
     return api(this.base, `/instructor/games/${gameId}/dashboard`, { headers: this.headers() });
+  }
+  /** DW-072 #5: every team's pending round, seat by seat — each chair's submitted slice, the
+   *  standing plan and the composed record lock will run (instructor-only, read-only). */
+  teamDecisions(gameId: string): Promise<InstructorTeamDecisions> {
+    return api(this.base, `/instructor/games/${gameId}/decisions`, { headers: this.headers() });
+  }
+  /** DW-074: every seat's calls, realized values and accuracy (instructor-only, read-only). */
+  forecasts(gameId: string): Promise<InstructorForecasts> {
+    return api(this.base, `/instructor/games/${gameId}/forecasts`, { headers: this.headers() });
   }
   // ---- Gamemaster (DW-037): the forward shock schedule + live triggers ----
   /** The forward schedule: engine-rolled + instructor-planted shocks, the plantable

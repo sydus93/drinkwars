@@ -15,11 +15,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Config } from "drinkwars-engine";
 import type { GameView, MarketView, MarketSegmentStanding, MarketLot } from "../game/controller.js";
-import type { CityActions } from "../game/cityActions.js";
-import { marketPresenceFrom } from "../game/cityActions.js";
+import type { CityActions, CityBuildOrder } from "../game/cityActions.js";
+import { dedupeBuilds, marketPresenceFrom } from "../game/cityActions.js";
 import { SEG_LABEL, SEG_CHARACTER, DISTRICT_BEST, MARKET_META, ZONE_OF, ZONE_TONE, FAC_TAG, FAC_NOTE, fmt, rankDistrictsForType, districtFitScore } from "../labels.js";
 import { firmColor } from "../lib/teamColors.js";
 import { FacilityChip, flowBadge } from "./FacilityGlyph.js";
+import { AnchoredPopover } from "./AnchoredPopover.js";
 import { WORLD_LAND_PATH } from "./worldland.js";
 
 // ───────────────────────── constants (Tap House hexes for canvas drawing) ─────────────────────────
@@ -119,7 +120,9 @@ function buildCity(view: GameView, market: MarketView, actions: CityActions, ext
     active: actions.reactivations.includes(s.id) ? true : actions.mothballs.includes(s.id) ? false : s.active,
     pending: false,
   }));
-  const queued: MineModel[] = [...actions.builds, ...extraBuilds]
+  // DW-076: the form mirrors builds the queue already holds (a cover the plan carries, or the
+  // stored slice after a reload) — one marker per order, never two.
+  const queued: MineModel[] = dedupeBuilds([...actions.builds, ...extraBuilds] as CityBuildOrder[])
     .filter((b) => b.market === market.id)
     .map((b, i) => ({ id: `queued_${market.id}_${i}`, type: b.type, district: b.location ?? (market.lots ?? []).find((L) => L.id === b.lot)?.district ?? fallbackDistrict, lot: b.lot, active: true, pending: true }));
   const rivals: RivalModel[] = market.rivalSites.map((s) => ({ firmId: s.firmId, name: s.name, district: s.location_id ?? fallbackDistrict, type: s.type, lot: s.lot_id }));
@@ -322,6 +325,7 @@ function paintGlobe(cv: HTMLCanvasElement, cities: CityModel[], homeGeo: [number
   ctx.beginPath(); ctx.arc(cx, cy, R, 0, 7); ctx.strokeStyle = "rgba(154,80,36,0.5)"; ctx.lineWidth = 1.2; ctx.stroke();
   if ((opts.full || opts.arcs) && homeGeo) { const a = toVec(homeGeo); for (const c of cities) { if (c.kind !== "export") continue; const b = toVec(c.geo); ctx.strokeStyle = "rgba(154,80,36,0.55)"; ctx.lineWidth = opts.full ? 1.4 : 1; ctx.setLineDash([5, 5]); ctx.beginPath(); let s = false; for (let t = 0; t <= 1.0001; t += 1 / 40) { const q = projVec(slerp(a, b, t)); if (q.z > 0) { if (!s) { ctx.moveTo(q.x, q.y); s = true; } else ctx.lineTo(q.x, q.y); } else s = false; } ctx.stroke(); ctx.setLineDash([]); } }
   const pins: GlobePin[] = [];
+  const labels: { text: string; x: number; y: number; prio: number }[] = []; // full globe: drawn after the pins, see below
   for (const c of cities) { const q = proj(c.geo[0], c.geo[1]); const front = q.z > 0.02; pins.push({ id: c.id, x: q.x, y: q.y, front });
     if (q.z > -0.1) {
       const col = c.entered ? "#c0703a" : c.kind === "export" ? "#1f8c93" : "#9a7d52";
@@ -329,8 +333,25 @@ function paintGlobe(cv: HTMLCanvasElement, cities: CityModel[], homeGeo: [number
       ctx.globalAlpha = front ? 1 : 0.4; ctx.beginPath(); ctx.arc(q.x, q.y, opts.full ? (hov ? 8 : 6) : hov ? 5.5 : 4.2, 0, 7); ctx.fillStyle = col; ctx.fill(); ctx.lineWidth = opts.full ? 2 : 1.4; ctx.strokeStyle = "#fff4e0"; ctx.stroke();
       if (c.entered && opts.full) { ctx.beginPath(); ctx.arc(q.x, q.y, 11, 0, 7); ctx.strokeStyle = "rgba(192,112,58,0.5)"; ctx.lineWidth = 1.4; ctx.stroke(); }
       ctx.globalAlpha = 1;
-      if (front && opts.full) { ctx.font = "800 14px 'EB Garamond',Georgia,serif"; ctx.textAlign = "center"; const ty = q.y - 14; ctx.lineWidth = 3.5; ctx.lineJoin = "round"; ctx.strokeStyle = "rgba(244,236,216,0.92)"; ctx.strokeText(c.name.toUpperCase(), q.x, ty); ctx.fillStyle = "#2c1d11"; ctx.fillText(c.name.toUpperCase(), q.x, ty); }
+      if (front && opts.full) labels.push({ text: c.name.toUpperCase(), x: q.x, y: q.y, prio: hov ? 0 : c.entered ? 1 : 2 });
       else if (front && opts.mini && (c.entered || hov)) { ctx.font = "700 9px 'IBM Plex Sans',sans-serif"; ctx.textAlign = "center"; const ty = q.y - 8; ctx.lineWidth = 2.6; ctx.lineJoin = "round"; ctx.strokeStyle = "rgba(244,236,216,0.92)"; ctx.strokeText(c.name.toUpperCase(), q.x, ty); ctx.fillStyle = "#2c1d11"; ctx.fillText(c.name.toUpperCase(), q.x, ty); }
+    }
+  }
+  // DW-080: the full globe labels every city in front — on a phone the US cities printed over each
+  // other. Hovered first, then entered, then the rest; a label that would overlap one already drawn
+  // tries below its pin, else waits for a hover.
+  if (labels.length) {
+    ctx.font = "800 14px 'EB Garamond',Georgia,serif"; ctx.textAlign = "center"; ctx.lineWidth = 3.5; ctx.lineJoin = "round";
+    const drawn: { x0: number; x1: number; y0: number; y1: number }[] = [];
+    for (const L of labels.sort((p, q) => p.prio - q.prio)) {
+      const w = ctx.measureText(L.text).width + 6;
+      for (const ty of [L.y - 14, L.y + 26]) {
+        const r = { x0: L.x - w / 2, x1: L.x + w / 2, y0: ty - 13, y1: ty + 3 };
+        if (L.prio > 0 && drawn.some((d) => r.x0 < d.x1 && r.x1 > d.x0 && r.y0 < d.y1 && r.y1 > d.y0)) continue;
+        drawn.push(r);
+        ctx.strokeStyle = "rgba(244,236,216,0.92)"; ctx.strokeText(L.text, L.x, ty); ctx.fillStyle = "#2c1d11"; ctx.fillText(L.text, L.x, ty);
+        break;
+      }
     }
   }
   return pins;
@@ -377,7 +398,7 @@ function GlobeOverlay({ cities, homeGeo, onClose, onPick }: { cities: CityModel[
   const move = (e: React.PointerEvent) => { mouse.current = { x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY }; if (drag.current) { const dx = e.nativeEvent.offsetX - drag.current.x, dy = e.nativeEvent.offsetY - drag.current.y; if (Math.abs(dx) + Math.abs(dy) > 4) drag.current.moved = true; rot.current = drag.current.rot + dx * 0.32; tilt.current = Math.max(-8, Math.min(78, drag.current.tilt + dy * 0.3)); } };
   const up = (e: React.PointerEvent) => { const d = drag.current; drag.current = null; if (d && d.moved) return; const id = hit(e.nativeEvent.offsetX, e.nativeEvent.offsetY); if (id) { const c = cities.find((x) => x.id === id); if (c) fly.current = { id, t0: performance.now(), rot0: rot.current, tilt0: tilt.current, lon: c.geo[0], lat: c.geo[1] }; } };
   return (
-    <div className="fixed inset-0 z-50" style={{ background: "radial-gradient(120% 100% at 50% 8%, var(--color-panel) 0%, var(--color-paper) 55%, var(--color-panel2) 100%)" }}>
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50" style={{ background: "radial-gradient(120% 100% at 50% 8%, var(--color-panel) 0%, var(--color-paper) 55%, var(--color-panel2) 100%)" }}>
       <canvas ref={ref} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerLeave={() => { mouse.current = null; }} onPointerCancel={() => { drag.current = null; mouse.current = null; }} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", display: "block", cursor: "grab", touchAction: "none" }} />
       <div className="pointer-events-none absolute left-5 top-4">
         <div className="font-mono text-[0.6rem] uppercase tracking-[0.18em] text-copperdeep">Drink Wars · global markets</div>
@@ -396,7 +417,7 @@ function GlobeOverlay({ cities, homeGeo, onClose, onPick }: { cities: CityModel[
             </div>
             <div className="mt-1 flex justify-between pl-[17px]">
               <span className="text-[0.7rem] text-inksoft">{c.region}</span>
-              <span className="font-mono text-[0.6rem]" style={{ color: c.entered ? "var(--color-inksoft)" : "var(--color-gold)" }}>{c.entered ? `${c.mine.length} sites` : `Enter · ${fmt.money(c.entryCost)}`}</span>
+              <span className="font-mono text-[0.6rem]" style={{ color: c.entered ? "var(--color-inksoft)" : "var(--color-gold)" }}>{c.entered ? `${c.mine.length} site${c.mine.length === 1 ? "" : "s"}` : `Enter · ${fmt.money(c.entryCost)}`}</span>
             </div>
           </button>
         ))}
@@ -423,6 +444,7 @@ export function CityView({ view, actions, setActions, onInspect, extraBuilds = [
   const [entering, setEntering] = useState<string | null>(null);
   const [facPop, setFacPop] = useState<string | null>(null);
   const [globeOpen, setGlobeOpen] = useState(false);
+  const stageRef = useRef<HTMLDivElement | null>(null); // the map box the on-map popovers anchor to (DW-079)
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   const sel = cities.find((c) => c.id === selId) ?? cities[0];
@@ -495,7 +517,11 @@ export function CityView({ view, actions, setActions, onInspect, extraBuilds = [
   const enteredCount = cities.filter((c) => c.entered).length;
   const siteCount = cities.reduce((a, c) => a + (c.entered ? c.mine.filter((f) => !f.pending).length : 0), 0);
   const mapHint = !sel.entered ? `${sel.name} — enter the market to develop it` : `${sel.name} — site facilities into districts`;
-  const legendNote = layer === "traffic" ? "Traffic — warm = busy streets" : layer === "zoning" ? "Zoning — land use by district" : layer === "trade" ? "Trade — flows shipped per round" : "Click a FOR-LEASE parcel to site a facility";
+  // DW-076: before the unlock the export markets are not in the view at all (geography.ts filters
+  // them), so the Trade tab is where a team learns WHEN the globe opens. Rounds are 1-based on screen.
+  const intl = view.modules?.international;
+  const exportsOpenRound = intl?.enabled && !hasIntl && view.round < (intl.export_unlock_round ?? 0) ? (intl.export_unlock_round ?? 0) + 1 : null;
+  const legendNote = layer === "traffic" ? "Traffic — warm = busy streets" : layer === "zoning" ? "Zoning — land use by district" : layer === "trade" ? (exportsOpenRound ? `Trade — flows shipped per round · Exports open in round ${exportsOpenRound}` : "Trade — flows shipped per round") : "Click a FOR-LEASE parcel to site a facility";
   const selKindLabel = sel.kind === "export" ? "International market" : sel.kind === "home" ? "Home market" : "Domestic market";
   const totalPresence = Math.max(0.001, Object.values(presence).reduce((a, b) => a + b, 0));
 
@@ -509,15 +535,23 @@ export function CityView({ view, actions, setActions, onInspect, extraBuilds = [
           <div className="mt-0.5 text-sm italic text-inksoft">{enteredCount} market{enteredCount === 1 ? "" : "s"} · {siteCount} site{siteCount === 1 ? "" : "s"}</div>
           <div onClick={() => setGlobeOpen(true)} title="Open the globe" className="relative mt-2.5 cursor-pointer overflow-hidden rounded-[10px] border border-line2" style={{ background: "radial-gradient(120% 100% at 50% 20%, #f6ecd4, #e2d0a6)" }}>
             <div className="pointer-events-none absolute left-2 top-1.5 z-[2]">
-              <div className="font-mono text-[0.5rem] font-semibold uppercase tracking-[0.14em] text-inksoft">Territory</div>
-              <div className="display text-[0.82rem] leading-none text-ink">{hasIntl ? "Global network" : "United States"}</div>
-              <div className="font-mono text-[0.5rem] text-inksoft">{hasIntl ? `${cities.filter((c) => c.kind !== "export").length} domestic · ${cities.filter((c) => c.kind === "export" && c.entered).length} intl live` : `${cities.length} markets`}</div>
+              {/* the card is always parchment (like the map) — fixed ink, not theme tokens, or dark mode reads light-on-light */}
+              <div className="font-mono text-[0.5rem] font-semibold uppercase tracking-[0.14em]" style={{ color: "rgba(44,29,17,.62)" }}>Territory</div>
+              <div className="display text-[0.82rem] leading-none" style={{ color: "#2c1d11" }}>{hasIntl ? "Global network" : "United States"}</div>
+              <div className="font-mono text-[0.5rem]" style={{ color: "rgba(44,29,17,.62)" }}>{hasIntl ? `${cities.filter((c) => c.kind !== "export").length} domestic · ${cities.filter((c) => c.kind === "export" && c.entered).length} intl live` : `${cities.length} markets`}</div>
             </div>
             <MiniGlobe cities={cities} homeGeo={homeGeo} hasIntl={hasIntl} onSelect={selectCity} onOpen={() => setGlobeOpen(true)} />
-            <div className="pointer-events-none absolute bottom-1.5 right-2 font-mono text-[0.5rem] font-semibold uppercase tracking-wide text-copperdeep">Open globe ⤢</div>
+            <div className="pointer-events-none absolute bottom-1.5 right-2 font-mono text-[0.5rem] font-semibold uppercase tracking-wide" style={{ color: "#8a4b1e" }}>Open globe ⤢</div>
           </div>
         </section>
 
+        {exportsOpenRound && tradeOn && (
+          <section className="card p-3">
+            <div className="mb-1 font-mono text-[0.55rem] font-semibold uppercase tracking-[0.14em] text-aero">International ↗</div>
+            <div className="text-sm text-ink">Exports open in round {exportsOpenRound}.</div>
+            <div className="mt-0.5 text-[0.72rem] leading-snug text-inksoft">The export markets appear here once the globe opens; until then, build the home base.</div>
+          </section>
+        )}
         {hasIntl && (
           <section className="card p-3">
             <div className="mb-1.5 font-mono text-[0.55rem] font-semibold uppercase tracking-[0.14em] text-aero">International ↗</div>
@@ -526,7 +560,7 @@ export function CityView({ view, actions, setActions, onInspect, extraBuilds = [
                 <button key={c.id} onClick={() => selectCity(c.id)} className="flex w-full items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left" style={{ borderColor: c.id === selId ? "var(--color-copperdeep)" : "var(--color-line2)", background: c.id === selId ? "color-mix(in srgb, var(--color-aero) 14%, var(--color-panel))" : "var(--color-panel)" }}>
                   <span className="h-1.5 w-1.5 flex-none rounded-full border" style={{ background: c.entered ? "var(--color-copper)" : "var(--color-aero)", borderColor: "var(--color-copperdeep)" }} />
                   <span className="display flex-1 text-[0.85rem] text-ink">{c.name}</span>
-                  <span className="font-mono text-[0.6rem]" style={{ color: c.entered ? "var(--color-inksoft)" : "var(--color-aero)" }}>{c.entered ? `${c.mine.filter((f) => !f.pending).length} sites` : "scout"}</span>
+                  <span className="font-mono text-[0.6rem]" style={{ color: c.entered ? "var(--color-inksoft)" : "var(--color-aero)" }}>{c.entered ? `${c.mine.filter((f) => !f.pending).length} site${c.mine.filter((f) => !f.pending).length === 1 ? "" : "s"}` : "scout"}</span>
                 </button>
               ))}
             </div>
@@ -558,7 +592,8 @@ export function CityView({ view, actions, setActions, onInspect, extraBuilds = [
       </aside>
 
       {/* ░░ CENTER — layer toolbar · map stage · legend ░░ */}
-      <main className="flex flex-col gap-3 lg:sticky lg:top-3.5">
+      {/* sticks BELOW the page's sticky tab bar (it used to stick at 14px, under the bar) */}
+      <main className="flex flex-col gap-3 lg:sticky lg:top-[4.25rem]">
         <div className="flex flex-wrap items-center gap-2.5">
           <div className="inline-flex gap-0.5 rounded-[10px] border border-line2 bg-panel p-0.5">
             {layerTabs.map((t) => (
@@ -570,7 +605,7 @@ export function CityView({ view, actions, setActions, onInspect, extraBuilds = [
         </div>
 
         {/* map stage */}
-        <div className="card relative w-full overflow-visible p-0" style={{ aspectRatio: "1000 / 680" }}>
+        <div ref={stageRef} className="card relative w-full overflow-visible p-0" style={{ aspectRatio: "1000 / 680" }}>
           {/* overflow-visible so on-map popovers (facility / lease) can extend above a
               top-row marker without being cropped by the map box; the canvas keeps the
               rounded map corners via its own border-radius. */}
@@ -581,24 +616,25 @@ export function CityView({ view, actions, setActions, onInspect, extraBuilds = [
               <div key={d.key} className="pointer-events-none absolute z-[4] flex flex-col items-center gap-0.5" style={{ left: `${p.l}%`, top: `${p.t}%`, transform: "translate(-50%,-100%)" }}>
                 <div className="display whitespace-nowrap text-[0.8rem] tracking-[0.1em]" style={{ color: "rgba(44,29,17,.78)", textShadow: `0 1px 3px ${PAL.mapbg}, 0 0 6px ${PAL.mapbg}` }}>{ec.label}</div>
                 <div className="pointer-events-auto flex items-center gap-1">
-                  <span className="rounded border border-line bg-panel/90 px-1 py-px font-mono text-[0.55rem]" style={{ color: ec.rent > 1.05 ? "var(--color-brick)" : ec.rent < 0.95 ? "var(--color-hop)" : "var(--color-inksoft)" }} title="Rent multiplier">R×{ec.rent.toFixed(2)}</span>
-                  <span className="rounded border border-line bg-panel/90 px-1 py-px font-mono text-[0.55rem]" style={{ color: ec.out > 1.02 ? "var(--color-hop)" : ec.out < 0.98 ? "var(--color-brick)" : "var(--color-inksoft)" }} title="Output multiplier">O×{ec.out.toFixed(2)}</span>
-                  <span className="rounded border border-line bg-panel/90 px-1 py-px font-mono text-[0.55rem] text-aero" title="Foot traffic">{trafficDots(d.traffic)}</span>
+                  <span className="hidden rounded border border-line bg-panel/90 px-1 py-px font-mono text-[0.55rem] sm:inline" style={{ color: ec.rent > 1.05 ? "var(--color-brick)" : ec.rent < 0.95 ? "var(--color-hop)" : "var(--color-inksoft)" }} title="Rent multiplier">R×{ec.rent.toFixed(2)}</span>
+                  <span className="hidden rounded border border-line bg-panel/90 px-1 py-px font-mono text-[0.55rem] sm:inline" style={{ color: ec.out > 1.02 ? "var(--color-hop)" : ec.out < 0.98 ? "var(--color-brick)" : "var(--color-inksoft)" }} title="Output multiplier">O×{ec.out.toFixed(2)}</span>
+                  <span className="hidden rounded border border-line bg-panel/90 px-1 py-px font-mono text-[0.55rem] text-aero sm:inline" title="Foot traffic">{trafficDots(d.traffic)}</span>
                   {facOn && sel.entered && <button onClick={() => openSiting(d.key)} title={`Build in ${ec.label}`} className="grid h-[18px] w-[18px] place-items-center rounded border border-copperdeep font-mono text-[0.62rem] font-bold leading-none text-copperdeep" style={{ background: "color-mix(in srgb, var(--color-copper) 22%, var(--color-panel))" }}>+</button>}
                 </div>
               </div>
             ); })}
 
             {plan && facOn && sel.entered && (layer === "map" || layer === "trade") && plan.leases.map((L, i) => { const p = pct(L.cx, L.cy, 0, layer); const ec = dByKey(L.district); const z = ZONE_OF[ec?.kind ?? ""]; const ct = crowdTone(L.crowd); return (
-              <button key={i} onClick={() => openSiting(L.district, L.lot)} title={`Available parcel · ${ec?.label ?? L.district} · ${ct.label}`} className="absolute z-[5] cursor-pointer border-none bg-none p-0" style={{ left: `${p.l}%`, top: `${p.t}%`, transform: "translate(-50%,-100%)" }}>
-                <span className="block rounded-t-[3px] border px-1.5 py-0.5 font-mono text-[0.5rem] font-bold uppercase tracking-wide text-white" style={{ background: "var(--color-copperdeep)", borderColor: "#6e3914" }}>FOR LEASE</span>
-                <span className="flex items-center justify-center gap-0.5 rounded-b-[3px] border border-t-0 px-1 py-px text-center font-mono text-[0.44rem] font-bold uppercase text-copperdeep" style={{ background: "#f3e6c8", borderColor: "#6e3914" }}><span className="h-1.5 w-1.5 rounded-full" style={{ background: ct.color }} />{z?.zone ?? ""}</span>
+              <button key={i} data-dw="lease-pin" onClick={() => openSiting(L.district, L.lot)} title={`Available parcel · ${ec?.label ?? L.district} · ${ct.label}`} className="absolute z-[5] cursor-pointer border-none bg-none p-0" style={{ left: `${p.l}%`, top: `${p.t}%`, transform: "translate(-50%,-100%)" }}>
+                <span className="hidden rounded-t-[3px] border px-1.5 py-0.5 font-mono text-[0.5rem] font-bold uppercase tracking-wide text-white sm:block" style={{ background: "var(--color-copperdeep)", borderColor: "#6e3914" }}>FOR LEASE</span>
+                <span className="hidden items-center justify-center gap-0.5 rounded-b-[3px] border border-t-0 px-1 py-px text-center font-mono text-[0.44rem] font-bold uppercase text-copperdeep sm:flex" style={{ background: "#f3e6c8", borderColor: "#6e3914" }}><span className="h-1.5 w-1.5 rounded-full" style={{ background: ct.color }} />{z?.zone ?? ""}</span>
+                <span className="grid h-[18px] w-[18px] place-items-center rounded-[4px] border sm:hidden" style={{ background: "var(--color-copperdeep)", borderColor: "#6e3914" }} aria-label="For lease"><span className="h-1.5 w-1.5 rounded-full" style={{ background: ct.color }} /></span>
                 <span className="mx-auto block h-2 w-px" style={{ background: "#6e3914" }} />
               </button>
             ); })}
 
             {plan && plan.facilities.map((f) => { const p = pct(f.cx, f.cy, f.h, layer); const ec = dByKey(f.district); const tt = typeOf(f.type); const dim = hoverFac && hoverFac !== f.id ? 0.5 : !f.active ? 0.5 : f.pending ? 0.6 : 1; const fb = tradeOn ? flowBadge((tt?.production_capacity ?? tt?.capacity_contribution ?? 0) - (tt?.retail_draw ?? 0)) : null; return (
-              <button key={f.id} onClick={() => !f.pending && setFacPop(f.id)} onMouseEnter={() => setHoverFac(f.id)} onMouseLeave={() => setHoverFac(null)} title={`${tt?.label ?? f.type} · ${ec?.label ?? f.district}${f.pending ? " · breaking ground" : f.active ? "" : " · mothballed"}`} className="absolute z-[7] flex cursor-pointer flex-col items-center border-none bg-none p-0" style={{ left: `${p.l}%`, top: `${p.t}%`, transform: "translate(-50%,-100%)", opacity: dim, filter: hoverFac === f.id ? "drop-shadow(0 0 5px var(--color-copperdeep))" : "drop-shadow(0 3px 5px rgba(40,25,8,.32))" }}>
+              <button key={f.id} data-dw="fac-marker" onClick={() => !f.pending && setFacPop(f.id)} onMouseEnter={() => setHoverFac(f.id)} onMouseLeave={() => setHoverFac(null)} title={`${tt?.label ?? f.type} · ${ec?.label ?? f.district}${f.pending ? " · breaking ground" : f.active ? "" : " · mothballed"}`} className="absolute z-[7] flex cursor-pointer flex-col items-center border-none bg-none p-0" style={{ left: `${p.l}%`, top: `${p.t}%`, transform: "translate(-50%,-100%)", opacity: dim, filter: hoverFac === f.id ? "drop-shadow(0 0 5px var(--color-copperdeep))" : "drop-shadow(0 3px 5px rgba(40,25,8,.32))" }}>
                 <FacilityChip type={f.type} color={cssColor(youId)} size={30} mine style={f.pending ? { outline: "2px dashed #7e3f18", outlineOffset: 1 } : undefined} />
                 {fb && <span className="mt-0.5 rounded-full px-1.5 py-px font-mono text-[0.5rem] font-bold leading-none" style={{ background: fb.tone === "out" ? "var(--color-copper)" : fb.tone === "in" ? "var(--color-aero)" : "var(--color-panel)", color: fb.tone === "neutral" ? "var(--color-inksoft)" : "#fff4e0", whiteSpace: "nowrap" }}>{fb.text}</span>}
               </button>
@@ -660,15 +696,8 @@ export function CityView({ view, actions, setActions, onInspect, extraBuilds = [
                   </div>
                 </>
               );
-              return (
-                <>
-                  <div onClick={() => setFacPop(null)} className="fixed inset-0 z-40 lg:absolute lg:z-[8]" />
-                  {/* mobile: top-layer bottom sheet */}
-                  <div className="fixed inset-x-0 bottom-0 z-50 max-h-[80vh] overflow-y-auto rounded-t-2xl border-t p-4 lg:hidden" style={{ borderColor: "var(--color-copperdeep)", background: "var(--color-panel)", boxShadow: "0 -14px 30px rgba(40,25,8,.42)", paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}>{body}</div>
-                  {/* desktop: anchored popover — flips below top-band anchors (see lease popover) */}
-                  <div className="absolute z-[9] hidden w-[214px] rounded-xl border p-3 lg:block" style={{ left: `clamp(110px, ${p.l}%, calc(100% - 110px))`, top: `${p.t}%`, transform: p.t < 45 ? "translate(-50%, 12px)" : "translate(-50%, calc(-100% - 16px))", borderColor: "var(--color-copperdeep)", background: "var(--color-panel)", boxShadow: "0 14px 30px rgba(40,25,8,.42)" }}>{body}</div>
-                </>
-              );
+              // DW-079: a top-layer popover anchored to the facility (bottom sheet on a phone) — see AnchoredPopover
+              return <AnchoredPopover stage={stageRef} at={p} width={214} label={`${t.label} · ${ec?.label ?? f.district}`} onClose={() => setFacPop(null)}>{body}</AnchoredPopover>;
             })()}
 
             {/* on-map lease popover — click a FOR-LEASE parcel to build right there (design's sitePop) */}
@@ -685,14 +714,14 @@ export function CityView({ view, actions, setActions, onInspect, extraBuilds = [
               const body = (
                 <>
                   <div className="flex items-baseline justify-between gap-2"><div className="display text-[0.9rem] text-ink">Lease · {d?.label ?? st.district}</div><button onClick={() => setSiting(null)} className="border-none bg-none text-[0.8rem] text-inksoft">✕</button></div>
-                  <div className="text-[0.68rem] italic text-inksoft">{z.zone} · choose what to build</div>
+                  <div className="text-[0.68rem] italic text-inksoft">{z.zone}{d ? ` · rent ×${d.rent.toFixed(2)} · output ×${d.out.toFixed(2)}` : ""} · choose what to build</div>
                   {/* internal scroll: a long type list must never grow the popover past the
                       viewport (it has nowhere to go but up, under the sticky tab nav) */}
                   <div className="mt-2 grid max-h-44 gap-1 overflow-y-auto pr-0.5">
                     {facTypes.filter((t) => z.allow.includes(t.id)).map((t) => { const on = selType === t.id; const canAfford = view.own.cash - queuedSpend >= t.base_cost; return (
                       <button key={t.id} onClick={() => setSiting({ ...st, type: t.id })} className="flex items-center gap-2 rounded-lg border px-2 py-1.5 text-left" style={{ borderColor: on ? "var(--color-copperdeep)" : "var(--color-line2)", background: on ? "color-mix(in srgb, var(--color-copper) 10%, var(--color-panel))" : "var(--color-panel)" }}>
                         <FacilityChip type={t.id} color={cssColor(youId)} size={18} />
-                        <span className="min-w-0 flex-1"><span className="block truncate text-[0.8rem] font-semibold text-ink">{t.label}</span><span className="block text-[0.54rem] text-inksoft">{fmt.money(t.fixed_cost)}/rd upkeep</span></span>
+                        <span className="min-w-0 flex-1"><span className="block truncate text-[0.8rem] font-semibold text-ink">{t.label}</span><span className="block text-[0.54rem] text-inksoft">{fmt.money(t.fixed_cost * (d?.rent ?? 1))}/rd upkeep</span></span>
                         <span className="tnum shrink-0 text-right text-[0.62rem] leading-tight" style={{ color: canAfford ? "var(--color-copperdeep)" : "var(--color-brick)" }}>{fmt.money(t.base_cost)}<span className="block text-[0.5rem] font-normal text-inksoft">to build</span></span>
                       </button>
                     ); })}
@@ -712,22 +741,13 @@ export function CityView({ view, actions, setActions, onInspect, extraBuilds = [
                   <button onClick={build} disabled={!can} className="tt-btn tt-btn--go mt-2.5 w-full py-2 text-[0.62rem]" style={{ opacity: can ? 1 : 0.55, cursor: can ? "pointer" : "not-allowed", filter: can ? undefined : "grayscale(0.4)" }}>{!selType ? "Pick a type" : !selOk ? "Not permitted here" : !afford ? "Not enough cash" : `Build · ${fmt.money(capex)}${st.bid ? ` + ${fmt.money(st.bid)} bid` : ""}`}</button>
                 </>
               );
-              return (
-                <>
-                  {/* backdrop: full-screen on mobile, in-map on desktop */}
-                  <div onClick={() => setSiting(null)} className="fixed inset-0 z-40 lg:absolute lg:z-[8]" />
-                  {/* mobile: top-layer bottom sheet — never clipped by the map viewer */}
-                  <div className="fixed inset-x-0 bottom-0 z-50 max-h-[80vh] overflow-y-auto rounded-t-2xl border-t p-4 lg:hidden" style={{ borderColor: "var(--color-copperdeep)", background: "var(--color-panel)", boxShadow: "0 -14px 30px rgba(40,25,8,.42)", paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}>{body}</div>
-                  {/* desktop: popover anchored to the parcel — above it normally, FLIPPED BELOW
-                      when the parcel sits in the top band (an above-anchored popover there
-                      escapes the map card and gets mangled under the sticky tab nav) */}
-                  <div className="absolute z-[9] hidden w-[224px] rounded-xl border p-3 lg:block" style={{ left: `clamp(116px, ${p.l}%, calc(100% - 116px))`, top: `${p.t}%`, transform: p.t < 45 ? "translate(-50%, 12px)" : "translate(-50%, calc(-100% - 14px))", borderColor: "var(--color-copperdeep)", background: "var(--color-panel)", boxShadow: "0 14px 30px rgba(40,25,8,.42)" }}>{body}</div>
-                </>
-              );
+              // DW-079: top-layer popover anchored to the parcel (bottom sheet on a phone). Inside the map
+              // it sat under the sticky tab bar whenever it rose above the map — see AnchoredPopover.
+              return <AnchoredPopover stage={stageRef} at={p} width={224} label={`Lease · ${d?.label ?? st.district}`} onClose={() => setSiting(null)}>{body}</AnchoredPopover>;
             })()}
 
             {sel.entered && facOn && selSites === 0 && !siting && !facPop && (
-              <div className="absolute bottom-3 left-1/2 z-[7] flex -translate-x-1/2 items-center gap-2 rounded-lg px-4 py-2 text-sm" style={{ background: "var(--color-ink)", color: "var(--color-paper)" }}>
+              <div className="absolute bottom-3 left-1/2 z-[7] hidden -translate-x-1/2 items-center gap-2 rounded-lg px-4 py-2 text-sm sm:flex" style={{ background: "var(--color-ink)", color: "var(--color-paper)" }}>
                 <span className="font-mono text-[0.55rem] font-semibold uppercase tracking-wide text-gold">New market</span>
                 You're in {sel.name} — click a FOR LEASE lot to site your first facility.
               </div>
@@ -735,6 +755,12 @@ export function CityView({ view, actions, setActions, onInspect, extraBuilds = [
           </div>
         </div>
 
+        {sel.entered && facOn && selSites === 0 && !siting && !facPop && (
+          <div className="flex items-start gap-2 rounded-lg px-3 py-2 text-sm sm:hidden" style={{ background: "var(--color-ink)", color: "var(--color-paper)" }}>
+            <span className="mt-0.5 font-mono text-[0.55rem] font-semibold uppercase tracking-wide text-gold">New market</span>
+            <span>You're in {sel.name} — tap a lease pin to site your first facility.</span>
+          </div>
+        )}
         {/* legend */}
         <div className="flex flex-wrap items-center gap-3.5 text-sm text-inksoft">
           <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm" style={{ background: firmColor(youId) }} />Your sites</span>
@@ -923,7 +949,7 @@ export function CityView({ view, actions, setActions, onInspect, extraBuilds = [
       {/* ░░ overlays ░░ */}
       {/* entry modal */}
       {entering && (() => { const ec = cities.find((c) => c.id === entering); if (!ec) return null; const can = view.own.cash >= ec.entryCost; return (
-        <div onClick={() => setEntering(null)} className="fixed inset-0 z-50 grid place-items-center p-4" style={{ background: "rgba(44,29,17,.4)", backdropFilter: "blur(3px)" }}>
+        <div role="dialog" aria-modal="true" onClick={() => setEntering(null)} className="fixed inset-0 z-50 grid place-items-center p-4" style={{ background: "rgba(44,29,17,.4)", backdropFilter: "blur(3px)" }}>
           <div onClick={(e) => e.stopPropagation()} className="w-[420px] max-w-[94vw] overflow-hidden rounded-2xl border border-line2 bg-panel" style={{ boxShadow: "0 18px 50px rgba(40,25,8,.4)" }}>
             <div className="h-1.5" style={{ background: "linear-gradient(90deg,var(--color-gold),var(--color-copper))" }} />
             <div className="px-5 py-5">
@@ -963,7 +989,7 @@ export function CityView({ view, actions, setActions, onInspect, extraBuilds = [
         return (
         <>
           <div onClick={() => setDrawerOpen(false)} className="fixed inset-0 z-50" style={{ background: "rgba(44,29,17,.3)" }} />
-          <aside className="dwslide scl fixed bottom-0 right-0 top-0 z-50 w-[360px] max-w-[94vw] overflow-y-auto border-l border-line2 bg-panel" style={{ boxShadow: "-14px 0 40px rgba(40,25,8,.24)" }}>
+          <aside role="dialog" aria-modal="true" className="dwslide scl fixed bottom-0 right-0 top-0 z-50 w-[360px] max-w-[94vw] overflow-y-auto border-l border-line2 bg-panel" style={{ boxShadow: "-14px 0 40px rgba(40,25,8,.24)" }}>
             <div className="sticky top-0 z-[2] flex items-start gap-2.5 border-b border-line bg-panel px-5 py-4">
               <div className="flex-1"><div className="font-mono text-[0.55rem] uppercase tracking-[0.16em] text-copperdeep">Distribution · transportation</div><div className="display text-xl text-ink">Supply &amp; lanes</div></div>
               <button onClick={() => setDrawerOpen(false)} className="border-none bg-none text-lg text-inksoft">✕</button>

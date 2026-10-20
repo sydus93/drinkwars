@@ -97,6 +97,20 @@ export interface MemberDecisionRecord {
   updated_at: number;
 }
 
+/** One call a seat logged (DW-074): the value, plus the segment / rival it is about. */
+export interface ForecastCall { value: number | string; target?: string }
+/** One seat's calls for one round (forecast commitment, DW-074). Mutable until the round locks;
+ *  a channel of its own — never read by the merge, compose, lock or resolve. */
+export interface ForecastRecord {
+  game_id: string;
+  round: number;
+  team_id: string;
+  user_id: string;
+  role: string | null; // the seat held when the call was made
+  calls: Record<string, ForecastCall>; // keyed by catalog item id (server/src/forecasts.ts)
+  updated_at: number;
+}
+
 export interface RoundResultRecord {
   game_id: string;
   round: number;
@@ -261,4 +275,9 @@ export interface StorageAdapter {
   getReflections(gameId: string): Promise<ReflectionRow[]>;
   appendDistinctiveness(rows: DistinctivenessRow[]): Promise<void>;
   getDistinctiveness(gameId: string): Promise<DistinctivenessRow[]>;
+
+  // Calls / forecast commitment (DW-074; table `forecasts`, migration 0009). Only ever touched
+  // for a game with config.classroom.forecasts.enabled — a game without the flag never reads it.
+  upsertForecast(rec: ForecastRecord): Promise<void>;
+  getForecasts(gameId: string): Promise<ForecastRecord[]>;
 }

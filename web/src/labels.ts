@@ -1,4 +1,5 @@
 import type { FacilityTypeConfig, DistrictConfig } from "drinkwars-engine";
+import { defaultModules } from "drinkwars-engine";
 
 /** Beverage vocabulary for the UI (presentation layer only — engine keys stay generic). */
 export const SEG_LABEL: Record<string, string> = {
@@ -98,13 +99,14 @@ export const toDisplayMoney = (n: number): number => n * MONEY_DISPLAY;
 export const toEngineMoney = (n: number): number => n / MONEY_DISPLAY;
 
 export const fmt = {
-  money: (n: number) => `$${money0.format(Math.round(n * MONEY_DISPLAY))}`,
+  // A loss reads "−$167,000" (true minus, sign before the $), never "$-167,000".
+  money: (n: number) => { const v = Math.round(n * MONEY_DISPLAY) || 0; return v < 0 ? `−$${money0.format(-v)}` : `$${money0.format(v)}`; },
   price: (n: number) => `$${n.toFixed(2)}`, // per-drink, engine-native scale (real ≈ $7.65)
   int: (n: number) => money0.format(Math.round(n * VOLUME_DISPLAY)), // drink VOLUME (see note)
   pct: (n: number) => `${(n * 100).toFixed(0)}%`,
   pct1: (n: number) => `${(n * 100).toFixed(1)}%`,
   num: (n: number, d = 1) => n.toFixed(d),
-  signed: (n: number) => { const v = Math.round(n * MONEY_DISPLAY); return v >= 0 ? `+$${money0.format(v)}` : `-$${money0.format(Math.abs(v))}`; },
+  signed: (n: number) => { const v = Math.round(n * MONEY_DISPLAY) || 0; return v >= 0 ? `+$${money0.format(v)}` : `-$${money0.format(Math.abs(v))}`; },
 };
 
 /** City/market presentation for the City View — a fictional city name, region, globe
@@ -117,6 +119,17 @@ export const MARKET_META: Record<string, { city: string; region: string; geo: [n
   export_eu: { city: "London", region: "Northwest Europe", geo: [-0.1, 51.5], coast: "right", seed: 88 },
   export_asia: { city: "Shanghai", region: "East Asia", geo: [121.5, 31.2], coast: "right", seed: 103 },
 };
+
+/** DW-078: the student-facing name of a market — the City View's city ("Cedar Falls") for an engine
+ *  market id, OR for the engine's own label as printed in event lines and shock views ("Heartland",
+ *  "Coastal cities"). Events said "expanded into Heartland" while the map said Cedar Falls; every
+ *  student surface now goes through this. Unknown ids/labels pass through unchanged. */
+const ENGINE_LABEL_TO_ID: Record<string, string> = Object.fromEntries((defaultModules.geography?.markets ?? []).map((m) => [m.label.toLowerCase(), m.id]));
+export function marketName(idOrLabel: string | null | undefined, fallback?: string): string {
+  if (!idOrLabel) return fallback ?? "";
+  const id = MARKET_META[idOrLabel] ? idOrLabel : ENGINE_LABEL_TO_ID[idOrLabel.toLowerCase()];
+  return (id && MARKET_META[id]?.city) || fallback || idOrLabel;
+}
 
 /** Zoning per district kind — which facility types its land use permits (City View siting
  *  guidance). Reinforces each district's economics: production breweries belong in the

@@ -6,6 +6,7 @@
  * Play (init/reset), CityView (edit), and DecisionForm (merge) all agree on one source of truth.
  */
 import type { FirmDecision } from "drinkwars-engine";
+import { sameLever } from "drinkwars-engine";
 import type { GameView } from "./controller.js";
 
 export interface CityBuildOrder {
@@ -36,6 +37,39 @@ export const emptyCityActions = (view: GameView): CityActions => ({
   maintain: {},
   supply: {},
 });
+
+/** DW-076: the inverse of `mergeDecision` for a slice this seat already SENT this round (team: the
+ *  seat's stored partial; solo: the draft). A reload re-seeds the form from that slice, but the
+ *  City View queue and the poach list restarted empty — so the page showed no builds / markets /
+ *  raids, and a resubmit (even unchanged) re-sent the slice without them (`mergeDecision` writes
+ *  `poach_employees: []` over the form; a later market toggle recomputed presence from a set that
+ *  had forgotten the entry). Rebuilding the queue from the slice makes the screen and the next
+ *  submit agree with what the server holds.
+ *  Markets: `market_presence` is adopted only when it is EXACTLY what the City View would generate
+ *  for its market set right now (`marketPresenceFrom` is deterministic within a round) — i.e. this
+ *  browser entered a market this round. A standing-plan presence (weights from past rounds, or a
+ *  market whose entry failed) is left to the form verbatim, so `marketsTouched` stays false and no
+ *  phantom "markets served" edit is sent (DW-073 would then let it override the CMO). */
+export function cityActionsFrom(view: GameView, stored: Partial<FirmDecision> | null | undefined): CityActions {
+  const base = emptyCityActions(view);
+  if (!stored) return base;
+  const ids = (xs: unknown): string[] => (Array.isArray(xs) ? xs.filter((x): x is string => typeof x === "string") : []);
+  const money = (o: unknown): Record<string, number> => Object.fromEntries(Object.entries((o && typeof o === "object" ? o : {}) as Record<string, unknown>).filter(([, v]) => typeof v === "number" && v > 0) as [string, number][]);
+  const builds = ((stored.build_facilities ?? []) as Partial<CityBuildOrder>[]).filter((b): b is CityBuildOrder => typeof b.type === "string" && typeof b.location === "string" && typeof b.market === "string");
+  let markets = base.markets;
+  const mp = stored.market_presence;
+  if (mp && typeof mp === "object") {
+    const set = Array.from(new Set(["home", ...Object.entries(mp).filter(([, w]) => (w ?? 0) > 0).map(([id]) => id)]));
+    if (sameLever(mp, marketPresenceFrom(view, set))) markets = set;
+  }
+  return { markets, builds: dedupeBuilds(builds), mothballs: ids(stored.mothball_facilities), reactivations: ids(stored.reactivate_facilities), divests: ids(stored.divest_facilities), maintain: money(stored.maintain_facilities), supply: money(stored.market_supply) };
+}
+/** DW-076: the poach list from a stored slice (same reload story as cityActionsFrom). */
+export function poachesFrom(stored: Partial<FirmDecision> | null | undefined): { firm: string; employee: string; offer: number }[] {
+  return ((stored?.poach_employees ?? []) as { firm?: unknown; employee?: unknown; offer?: unknown }[])
+    .filter((p): p is { firm: string; employee: string; offer: number } => typeof p.firm === "string" && typeof p.employee === "string" && typeof p.offer === "number" && p.offer > 0)
+    .map((p) => ({ firm: p.firm, employee: p.employee, offer: p.offer }));
+}
 
 /** Output (this round's online capacity) the firm has sited in a given market — used to
  *  weight how much supply routes there. Mirrors the engine's facilityCapacity, per market. */
@@ -90,6 +124,16 @@ export function mergeDecision(
     // Stage 2: explicit per-market supply overrides the presence split (only when the player set any).
     market_supply: Object.keys(cityActions.supply ?? {}).length ? cityActions.supply : base.market_supply,
   };
+}
+
+/** Team firms: `mergeDecision` recomputes "markets served" from THIS browser's City View on every
+ *  submit — a value nobody chose, different from the standing plan, which the merge would read as
+ *  this seat changing the lever (and so overriding the chair who really did). Unless the player
+ *  actually changed the committed set, the form's own value stands. */
+export function keepUntouchedMarkets(view: GameView, merged: FirmDecision, form: FirmDecision, cityActions?: CityActions): FirmDecision {
+  if (!cityActions || marketsTouched(view, cityActions)) return merged;
+  const { market_presence: _recomputed, ...rest } = merged;
+  return (form.market_presence !== undefined ? { ...rest, market_presence: form.market_presence } : rest) as FirmDecision;
 }
 
 /** Did the player change the committed-markets set away from what the firm already has?

@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>body{margin:0;background:#120d08}a{color:#ecb54a}a:hover{color:#f3d08a}*{box-sizing:border-box}</style>
+</helmet>
+<div style="padding:56px;display:flex;flex-direction:column;gap:40px;font-family:'EB Garamond',serif;color:#f3e6cf;min-width:1960px">
+  <div style="display:flex;flex-direction:column;gap:14px;max-width:1100px">
+    <div style="font:600 14px 'IBM Plex Sans';letter-spacing:.14em;color:#ecb54a">A · EVENT MOMENT</div>
+    <div style="font-size:44px;font-weight:600;line-height:1.05">A shock can't hide in a pill</div>
+    <div style="font-size:19px;color:#cdb898;line-height:1.45;text-wrap:pretty">Announced and active events get one takeover card with what it means for this seat, dismissed in one tap. After that the event stays on a full-width wire strip under the header, not a pill.</div>
+    <div style="display:flex;gap:28px;flex-wrap:wrap;align-items:center;margin-top:8px">
+      <div style="display:flex;gap:8px;align-items:center"><span style="font:500 13px 'IBM Plex Sans';letter-spacing:.1em;color:#a8916f;margin-right:6px">STATE</span>
+        <sc-for list="{{ stateOpts }}" as="o" hint-placeholder-count="4"><button onClick="{{ o.pick }}" style="font:600 14px 'IBM Plex Sans';padding:9px 14px;border-radius:999px;border:1px solid #5a4630;background:{{ o.bg }};color:{{ o.fg }};cursor:pointer;white-space:nowrap;flex-shrink:0">{{ o.label }}</button></sc-for>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center"><span style="font:500 13px 'IBM Plex Sans';letter-spacing:.1em;color:#a8916f;margin-right:6px">SEAT</span>
+        <sc-for list="{{ seatOpts }}" as="o" hint-placeholder-count="5"><button onClick="{{ o.pick }}" style="font:600 14px 'IBM Plex Sans';padding:9px 14px;border-radius:999px;border:1px solid #5a4630;background:{{ o.bg }};color:{{ o.fg }};cursor:pointer;white-space:nowrap;flex-shrink:0">{{ o.label }}</button></sc-for>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center"><span style="font:500 13px 'IBM Plex Sans';letter-spacing:.1em;color:#a8916f;margin-right:6px">CARD</span>
+        <sc-for list="{{ dismissOpts }}" as="o" hint-placeholder-count="2"><button onClick="{{ o.pick }}" style="font:600 14px 'IBM Plex Sans';padding:9px 14px;border-radius:999px;border:1px solid #5a4630;background:{{ o.bg }};color:{{ o.fg }};cursor:pointer;white-space:nowrap;flex-shrink:0">{{ o.label }}</button></sc-for>
+      </div>
+    </div>
+  </div>
+
+  <sc-for list="{{ themes }}" as="t" hint-placeholder-count="2">
+  <div style="--bg:{{ t.bg }};--bg2:{{ t.bg2 }};--card:{{ t.card }};--card2:{{ t.card2 }};--line:{{ t.line }};--ink:{{ t.ink }};--ink2:{{ t.ink2 }};--gold:{{ t.gold }};--red:{{ t.red }};--redbg:{{ t.redbg }};--amber:{{ t.amber }};--amberbg:{{ t.amberbg }};--btn:{{ t.btn }};--btnInk:{{ t.btnInk }};--seat:{{ t.seat }};--seatInk:{{ t.seatInk }};--field:{{ t.field }};display:flex;gap:48px;align-items:flex-start">
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div style="font:600 14px 'IBM Plex Sans';letter-spacing:.12em;color:#a8916f">1440 · {{ t.label }}</div>
+      <div style="width:1440px;height:900px;position:relative;overflow:hidden;background:var(--bg);color:var(--ink);border-radius:6px">
+        <div style="display:flex;align-items:center;gap:28px;padding:18px 32px;background:var(--bg2);border-bottom:1px solid var(--line)">
+          <div style="display:flex;flex-direction:column;gap:2px">
+            <div style="font:600 13px 'IBM Plex Sans';letter-spacing:.14em;color:var(--ink2)">DRINK WARS · HOP THEORY</div>
+            <div style="font-size:36px;font-weight:600;line-height:1">Round 3 <span style="color:var(--ink2)">/ 8</span></div>
+          </div>
+          <div style="display:flex;align-items:stretch;border-radius:12px;overflow:hidden;border:2px solid var(--seat)">
+            <div style="background:var(--seat);color:var(--seatInk);font:700 22px 'IBM Plex Sans';padding:0 16px;display:flex;align-items:center;letter-spacing:.04em">{{ seat.role }}</div>
+            <div style="padding:8px 16px;display:flex;flex-direction:column"><span style="font-size:21px;font-weight:600;line-height:1.1">{{ seat.name }}</span><span style="font:500 13px 'IBM Plex Sans';letter-spacing:.08em;color:var(--ink2)">{{ seat.deskCaps }} · YOUR SEAT</span></div>
+          </div>
+          <div style="flex:1"></div>
+          <div style="display:flex;gap:28px;align-items:flex-end">
+            <div style="display:flex;flex-direction:column"><span style="font:500 13px 'IBM Plex Sans';letter-spacing:.12em;color:var(--ink2)">CASH</span><span style="font-size:26px;font-weight:600">$616,055</span></div>
+            <div style="display:flex;flex-direction:column"><span style="font:500 13px 'IBM Plex Sans';letter-spacing:.12em;color:var(--ink2)">YOUR RANK</span><span style="font-size:26px;font-weight:600;color:var(--gold)">#4</span></div>
+            <div style="display:flex;flex-direction:column;align-items:flex-end;padding:8px 14px;border:1px solid var(--line);border-radius:10px"><span style="font:500 13px 'IBM Plex Sans';letter-spacing:.12em;color:var(--ink2)">ROUND CLOSES</span><span style="font:600 22px 'IBM Plex Sans'">7:42</span></div>
+          </div>
+        </div>
+        <sc-if value="{{ hasEvents }}" hint-placeholder-val="{{ true }}">
+          <div style="display:flex;flex-direction:column">
+            <sc-for list="{{ events }}" as="ev" hint-placeholder-count="1">
+              <div style="display:grid;grid-template-columns:150px minmax(0,1fr) auto;gap:20px;align-items:center;padding:14px 32px;background:{{ ev.bg }};border-bottom:1px solid var(--line);border-top:3px solid {{ ev.c }}">
+                <span style="font:700 13px 'IBM Plex Sans';letter-spacing:.12em;background:{{ ev.c }};color:var(--bg);padding:6px 10px;border-radius:6px;text-align:center">{{ ev.tag }}</span>
+                <div style="display:flex;flex-direction:column;gap:2px;min-width:0"><span style="font-size:21px;font-weight:600">{{ ev.title }} <span style="font-weight:400;color:var(--ink2)">· {{ ev.line }}</span></span><span style="font-size:18px"><b style="color:{{ ev.c }}">For your desk:</b> {{ ev.short }}</span></div>
+                <span style="font:600 14px 'IBM Plex Sans';letter-spacing:.08em;color:var(--ink2)">IN EFFECT · {{ ev.when }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </sc-if>
+        <sc-if value="{{ noEvents }}" hint-placeholder-val="{{ false }}">
+          <div style="padding:12px 32px;border-bottom:1px solid var(--line);font-size:18px;color:var(--ink2)">The wire is quiet. No market events this round.</div>
+        </sc-if>
+        <div style="display:flex;gap:8px;padding:14px 32px;border-bottom:1px solid var(--line)">
+          <span style="font:600 15px 'IBM Plex Sans';letter-spacing:.08em;padding:10px 18px;border-radius:999px;border:1px solid var(--line);background:var(--card)">DECIDE</span>
+          <span style="font:600 15px 'IBM Plex Sans';letter-spacing:.08em;padding:10px 18px;color:var(--ink2)">REVIEW</span>
+          <span style="font:600 15px 'IBM Plex Sans';letter-spacing:.08em;padding:10px 18px;color:var(--ink2)">MAP</span>
+        </div>
+        <div style="display:grid;grid-template-columns:minmax(0,1fr) 420px;gap:24px;padding:24px 32px">
+          <div style="background:var(--card);border:1px solid var(--line);border-radius:14px;padding:24px;display:flex;flex-direction:column;gap:18px">
+            <div style="font:600 13px 'IBM Plex Sans';letter-spacing:.14em;color:var(--seat)">{{ seat.deskCaps }}</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px">
+              <sc-for list="{{ seat.levers }}" as="l" hint-placeholder-count="4">
+                <div style="display:flex;flex-direction:column;gap:8px"><span style="font-size:19px;font-weight:600">{{ l.label }}</span><span style="font-size:19px;padding:10px 14px;border-radius:8px;background:var(--field);border:1px solid var(--line);width:220px">{{ l.value }}</span></div>
+              </sc-for>
+            </div>
+          </div>
+          <div style="background:var(--card);border:1px solid var(--line);border-radius:14px;padding:24px;display:flex;flex-direction:column;gap:12px">
+            <div style="font:600 13px 'IBM Plex Sans';letter-spacing:.14em;color:var(--gold)">COMMIT THE ROUND</div>
+            <div style="font-size:42px;font-weight:600">$516,055</div>
+            <div style="font-size:17px;color:var(--ink2)">Projected cash, pre-sales</div>
+            <div style="font:700 15px 'IBM Plex Sans';letter-spacing:.06em;background:var(--btn);color:var(--btnInk);padding:16px;border-radius:10px;text-align:center;margin-top:8px">SUBMIT MY DESK (ROUND 3)</div>
+          </div>
+        </div>
+        <sc-if value="{{ takeover }}" hint-placeholder-val="{{ true }}">
+          <div style="position:absolute;inset:0;background:rgba(12,7,3,.62)"></div>
+          <div style="position:absolute;left:50%;top:110px;transform:translateX(-50%);width:820px;background:var(--card);border:1px solid var(--line);border-radius:18px;overflow:hidden;box-shadow:0 30px 80px rgba(0,0,0,.45)">
+            <div style="height:14px;background:repeating-linear-gradient(135deg,{{ lead.c }} 0 14px,transparent 14px 28px)"></div>
+            <div style="padding:34px 44px 36px;display:flex;flex-direction:column;gap:20px">
+              <div style="display:flex;justify-content:space-between;align-items:center"><span style="font:700 14px 'IBM Plex Sans';letter-spacing:.16em;color:{{ lead.c }}">{{ lead.kicker }}</span><span style="font:600 14px 'IBM Plex Sans';letter-spacing:.08em;color:var(--ink2)">INDUSTRY-WIDE</span></div>
+              <div style="display:flex;flex-direction:column;gap:8px"><div style="font-size:62px;font-weight:700;line-height:1">{{ lead.headline }}</div><div style="font-size:22px;color:var(--ink2)">{{ lead.sub }}</div></div>
+              <div style="background:var(--card2);border-radius:12px;padding:20px 24px;display:flex;flex-direction:column;gap:10px;border:1px solid var(--line)">
+                <div style="display:flex;align-items:center;gap:10px"><span style="font:700 14px 'IBM Plex Sans';background:var(--seat);color:var(--seatInk);padding:4px 10px;border-radius:6px">{{ seat.role }}</span><span style="font:600 14px 'IBM Plex Sans';letter-spacing:.12em;color:var(--ink2)">WHAT IT MEANS FOR YOUR DESK, {{ seat.firstCaps }}</span></div>
+                <div style="font-size:21px;line-height:1.4;text-wrap:pretty">{{ lead.forYou }}</div>
+              </div>
+              <sc-for list="{{ others }}" as="o" hint-placeholder-count="0">
+                <div style="display:flex;gap:14px;align-items:baseline;font-size:19px;padding-top:4px;border-top:1px solid var(--line)"><span style="font:700 13px 'IBM Plex Sans';letter-spacing:.12em;color:{{ o.c }};padding-top:14px">ALSO ON THE WIRE</span><span style="padding-top:12px"><b>{{ o.title }}</b> · {{ o.line }}</span></div>
+              </sc-for>
+              <div style="display:flex;align-items:center;gap:20px;margin-top:6px">
+                <div style="flex:1;font:700 17px 'IBM Plex Sans';letter-spacing:.04em;background:var(--ink);color:var(--bg);padding:20px;border-radius:12px;text-align:center">Got it, back to my desk</div>
+                <div style="font-size:17px;color:var(--ink2);width:220px;line-height:1.3">7:42 left in Round 3. The clock keeps running.</div>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div style="font:600 14px 'IBM Plex Sans';letter-spacing:.12em;color:#a8916f">390 · {{ t.label }}</div>
+      <div style="width:390px;height:844px;position:relative;overflow:hidden;background:var(--bg);color:var(--ink);border-radius:28px;display:flex;flex-direction:column">
+        <div style="background:var(--seat);color:var(--seatInk);padding:12px 18px;display:flex;align-items:center;gap:10px">
+          <span style="font:700 20px 'IBM Plex Sans'">{{ seat.role }}</span><span style="font-size:19px;font-weight:600">{{ seat.name }}</span><span style="flex:1"></span><span style="font:600 13px 'IBM Plex Sans';letter-spacing:.08em">{{ seat.deskShortCaps }}</span>
+        </div>
+        <div style="padding:14px 18px;display:flex;align-items:flex-end;gap:16px;background:var(--bg2);border-bottom:1px solid var(--line)">
+          <div style="display:flex;flex-direction:column"><span style="font:600 13px 'IBM Plex Sans';letter-spacing:.12em;color:var(--ink2)">HOP THEORY</span><span style="font-size:30px;font-weight:600;line-height:1">Round 3 <span style="color:var(--ink2)">/ 8</span></span></div>
+          <span style="flex:1"></span>
+          <div style="display:flex;flex-direction:column;align-items:flex-end"><span style="font:500 13px 'IBM Plex Sans';letter-spacing:.1em;color:var(--ink2)">CLOSES</span><span style="font:600 20px 'IBM Plex Sans'">7:42</span></div>
+        </div>
+        <sc-if value="{{ hasEvents }}" hint-placeholder-val="{{ true }}">
+          <sc-for list="{{ events }}" as="ev" hint-placeholder-count="1">
+            <div style="padding:12px 18px;background:{{ ev.bg }};border-top:3px solid {{ ev.c }};border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:4px">
+              <div style="display:flex;align-items:center;gap:10px"><span style="font:700 12px 'IBM Plex Sans';letter-spacing:.12em;background:{{ ev.c }};color:var(--bg);padding:4px 8px;border-radius:5px">{{ ev.tag }}</span><span style="font-size:19px;font-weight:600">{{ ev.title }}</span></div>
+              <span style="font-size:17px;line-height:1.35"><b style="color:{{ ev.c }}">Your desk:</b> {{ ev.short }}</span>
+            </div>
+          </sc-for>
+        </sc-if>
+        <sc-if value="{{ noEvents }}" hint-placeholder-val="{{ false }}">
+          <div style="padding:10px 18px;border-bottom:1px solid var(--line);font-size:17px;color:var(--ink2)">The wire is quiet this round.</div>
+        </sc-if>
+        <div style="padding:16px 18px;display:flex;flex-direction:column;gap:14px;flex:1;overflow:hidden">
+          <div style="font:600 13px 'IBM Plex Sans';letter-spacing:.14em;color:var(--seat)">{{ seat.deskCaps }}</div>
+          <sc-for list="{{ seat.levers }}" as="l" hint-placeholder-count="4">
+            <div style="display:flex;flex-direction:column;gap:6px"><span style="font-size:18px;font-weight:600">{{ l.label }}</span><span style="font-size:18px;padding:10px 14px;border-radius:8px;background:var(--field);border:1px solid var(--line)">{{ l.value }}</span></div>
+          </sc-for>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;padding:12px 16px 26px;background:var(--bg2);border-top:1px solid var(--line)">
+          <div style="display:flex;flex-direction:column"><span style="font:500 12px 'IBM Plex Sans';letter-spacing:.1em;color:var(--ink2)">PROJECTED CASH</span><span style="font-size:22px;font-weight:600">$516,055</span></div>
+          <div style="flex:1;font:700 15px 'IBM Plex Sans';background:var(--btn);color:var(--btnInk);padding:14px;border-radius:10px;text-align:center">SUBMIT MY DESK</div>
+        </div>
+        <sc-if value="{{ takeover }}" hint-placeholder-val="{{ true }}">
+          <div style="position:absolute;inset:0;background:rgba(12,7,3,.6)"></div>
+          <div style="position:absolute;left:0;right:0;bottom:0;top:70px;background:var(--card);border-radius:24px 24px 0 0;overflow:hidden;display:flex;flex-direction:column">
+            <div style="height:12px;background:repeating-linear-gradient(135deg,{{ lead.c }} 0 12px,transparent 12px 24px)"></div>
+            <div style="padding:22px 22px 0;display:flex;flex-direction:column;gap:14px;flex:1;overflow:hidden">
+              <span style="font:700 13px 'IBM Plex Sans';letter-spacing:.14em;color:{{ lead.c }}">{{ lead.kicker }}</span>
+              <div style="font-size:42px;font-weight:700;line-height:1">{{ lead.headline }}</div>
+              <div style="font-size:19px;color:var(--ink2);line-height:1.35">{{ lead.sub }}</div>
+              <div style="background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:8px">
+                <div style="display:flex;align-items:center;gap:8px"><span style="font:700 13px 'IBM Plex Sans';background:var(--seat);color:var(--seatInk);padding:3px 8px;border-radius:5px">{{ seat.role }}</span><span style="font:600 13px 'IBM Plex Sans';letter-spacing:.1em;color:var(--ink2)">FOR YOUR DESK</span></div>
+                <div style="font-size:19px;line-height:1.4;text-wrap:pretty">{{ lead.forYou }}</div>
+              </div>
+              <sc-for list="{{ others }}" as="o" hint-placeholder-count="0">
+                <div style="font-size:17px;line-height:1.35;border-top:1px solid var(--line);padding-top:12px"><span style="font:700 12px 'IBM Plex Sans';letter-spacing:.12em;color:{{ o.c }}">ALSO ON THE WIRE</span><br><b>{{ o.title }}</b> · {{ o.line }}</div>
+              </sc-for>
+            </div>
+            <div style="padding:16px 18px 28px;display:flex;flex-direction:column;gap:10px">
+              <div style="font:700 17px 'IBM Plex Sans';background:var(--ink);color:var(--bg);padding:18px;border-radius:12px;text-align:center">Got it, back to my desk</div>
+              <div style="font-size:16px;color:var(--ink2);text-align:center">7:42 left. The clock keeps running.</div>
+            </div>
+          </div>
+        </sc-if>
+      </div>
+    </div>
+  </div>
+  </sc-for>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+const SEATS = {
+  CEO: { role: 'CEO', name: 'Ana Reyes', desk: 'Whole-firm desk', short: 'WHOLE FIRM', c: ['#bf9ae0', '#6c4294'],
+    levers: [['Recipe quality', '$20,000'], ['Water efficiency', '$0'], ['Investors & lenders', '$0'], ['Distributors & regulators', '$0']] },
+  CFO: { role: 'CFO', name: 'Ben Okafor', desk: 'Finance desk', short: 'FINANCE', c: ['#9bcb5e', '#3d6b18'],
+    levers: [['Draw debt', '$50,000'], ['Repay debt', '$0'], ['Raise equity', '$0'], ['Pay dividend', '$10,000']] },
+  COO: { role: 'COO', name: 'Cy Tran', desk: 'Operations desk', short: 'OPERATIONS', c: ['#4cc0cb', '#1d7a83'],
+    levers: [['Capacity capex', '$80,000'], ['Quality', '$15,000'], ['Brewing operations', '$0'], ['Water efficiency', '$0']] },
+  CMO: { role: 'CMO', name: 'Dee Marsh', desk: 'Marketing desk', short: 'MARKETING', c: ['#ee9a4a', '#a65424'],
+    levers: [['Lagers & Light price', '$7.65'], ['Craft Premium price', '$7.65'], ['Brand', '$0'], ['Taproom community', '$0']] },
+  CHRO: { role: 'CHRO', name: 'Jo Imani', desk: 'People desk', short: 'PEOPLE', c: ['#edbe48', '#855a08'],
+    levers: [['Head brewer', 'Not hired'], ['Sales director', 'Not hired'], ['Operations manager', 'Not hired'], ['Taproom community', '$0']] }
+};
+const THEMES = [
+  { id: 'dark', label: 'DARK', bg: '#1b130c', bg2: '#22180f', card: '#2c2117', card2: '#36291c', line: '#4d3b28', ink: '#f4e8d2', ink2: '#c4ad8c', gold: '#ecb54a', red: '#e8735d', redbg: '#3b1f16', amber: '#eab84c', amberbg: '#362a13', btn: '#7fb544', btnInk: '#15230a', field: '#1a120b', seatInk: '#1a120a' },
+  { id: 'light', label: 'LIGHT', bg: '#f2e6cd', bg2: '#ebdbbb', card: '#fcf6ea', card2: '#f5ead6', line: '#d6bf98', ink: '#2a1b0f', ink2: '#65503a', gold: '#9a5512', red: '#a3321f', redbg: '#f7ddd2', amber: '#8f5c06', amberbg: '#f6e6bf', btn: '#6ea83a', btnInk: '#13210a', field: '#efdfc0', seatInk: '#fdf8ee' }
+];
+const FOR = {
+  water: {
+    CEO: ['Every desk pays more per drink this round.', 'Every desk\u2019s unit cost rises this round. Water efficiency, on your desk under Plays & programs, is the lever that softens the hit.'],
+    CFO: ['Margins compress before sales land.', 'Margins compress before sales come in. Projected cash already carries the higher cost, so check interest coverage before you draw more debt.'],
+    COO: ['Est. unit cost rises to $5.21.', 'Est. unit cost rises from $4.25 to $5.21. Idle tanks still cost $0.40 each, so add capacity only for volume you can sell.'],
+    CMO: ['Rivals face the same cost spike.', 'Rivals face the same cost spike. Holding price protects share; raising it protects margin. That trade is yours.'],
+    CHRO: ['No direct hit on your levers.', 'No direct hit on your levers. A head brewer adds recipe quality, which holds share while rivals cut corners.']
+  },
+  recession: {
+    CEO: ['One round to build resilience.', 'Demand softens next round. You have this round to build resilience: process, community and water efficiency.'],
+    CFO: ['Revenue likely drops next round.', 'Revenue likely drops next round. A cash buffer now beats drawing debt when sales are down.'],
+    COO: ['New tanks come online as demand falls.', 'Capacity you buy now comes online just as demand falls. Holding level is the cautious call.'],
+    CMO: ['Shoppers trade down.', 'Shoppers trade down in a recession. Value pricing on Lagers & Light matters more next round.'],
+    CHRO: ['Retention gets harder.', 'Taproom community supports retention when demand dips. Hires signed now still cost the same next round.']
+  }
+};
+class Component extends DCLogic {
+  state = { st: 'hits', seat: 'CFO', dismissed: false };
+  ev(id) {
+    const s = this.state.seat;
+    if (id === 'water') return { id, tone: 'red', c: 'var(--red)', bg: 'var(--redbg)', tag: 'HITTING NOW', title: 'Water shortage', line: 'input costs spike sharply this round', when: 'ROUND 3', kicker: 'ON THE WIRE \u00b7 ROUND 3 \u00b7 HITTING NOW', headline: 'The water shortage is here', sub: 'It hits every brewery this round. Input costs spike sharply.', short: FOR.water[s][0], forYou: FOR.water[s][1] };
+    return { id, tone: 'amber', c: 'var(--amber)', bg: 'var(--amberbg)', tag: 'NEXT ROUND', title: 'Recession', line: 'expected about one round out', when: '~ROUND 4', kicker: 'ON THE WIRE \u00b7 ANNOUNCED', headline: 'A recession is coming', sub: 'Expected to land next round. Demand softens across the board.', short: FOR.recession[s][0], forYou: FOR.recession[s][1] };
+  }
+  renderVals() {
+    const { st, seat, dismissed } = this.state;
+    const ids = st === 'none' ? [] : st === 'announced' ? ['recession'] : st === 'hits' ? ['water'] : ['water', 'recession'];
+    const events = ids.map(i => this.ev(i));
+    const S = SEATS[seat];
+    const chip = (on) => ({ bg: on ? '#f4e8d2' : 'transparent', fg: on ? '#1b130c' : '#e7d6b8' });
+    return {
+      stateOpts: [['none', 'No event'], ['announced', 'Announced'], ['hits', 'It hits'], ['multi', 'Two at once']].map(([k, l]) => ({ label: l, ...chip(st === k), pick: () => this.setState({ st: k }) })),
+      seatOpts: Object.keys(SEATS).map(k => ({ label: k, ...chip(seat === k), pick: () => this.setState({ seat: k }) })),
+      dismissOpts: [[false, 'Takeover'], [true, 'After the tap']].map(([k, l]) => ({ label: l, ...chip(dismissed === k), pick: () => this.setState({ dismissed: k }) })),
+      themes: THEMES.map((t, i) => ({ ...t, seat: S.c[i] })),
+      seat: { ...S, deskCaps: S.desk.toUpperCase(), deskShortCaps: S.short, firstCaps: S.name.split(' ')[0].toUpperCase(), levers: S.levers.map(([label, value]) => ({ label, value })) },
+      events, hasEvents: events.length > 0, noEvents: events.length === 0,
+      takeover: events.length > 0 && !dismissed,
+      lead: events[0] || this.ev('water'), others: events.slice(1)
+    };
+  }
+}
+</script>
+</body>
+</html>

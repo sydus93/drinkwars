@@ -29,7 +29,7 @@ const CACHEABLE: ReadonlySet<string> = new Set([
   "getRoundResult", "getRoundResults",
   "getPublicRound", "getPublicRounds",
   "getFirmRounds", "getAgreements", "getBeliefs", "getTelemetry", "getReflections",
-  "getDistinctiveness",
+  "getDistinctiveness", "getForecasts",
 ]);
 
 /** Wrap a store so repeated identical reads within one request hit memory. */

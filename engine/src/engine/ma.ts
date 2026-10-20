@@ -11,11 +11,13 @@
  * on next round's statements; the event log announces it this round.
  */
 import type { Config, FirmDecision, FirmId, WorldState } from "../types.js";
-import { firmValuation } from "./finance.js";
+import { firmValuation, ledgerAdd, type PostCloseLedger } from "./finance.js";
 
 const fmNum = (n: number): string => Math.round(n).toLocaleString("en-US"); // comma-grouped for event prose
 
-export function resolveMa(world: WorldState, decisions: Map<FirmId, FirmDecision>, c: Config): string[] {
+/** `ledger` (DW-076, optional): every cash move is also written to the post-close ledger so the
+ *  acquirer's and the target's cash-flow statements can show why opening cash differs from closing. */
+export function resolveMa(world: WorldState, decisions: Map<FirmId, FirmDecision>, c: Config, ledger?: PostCloseLedger): string[] {
   const cfg = c.modules?.ma;
   if (!cfg?.enabled) return [];
   const events: string[] = [];
@@ -50,6 +52,9 @@ export function resolveMa(world: WorldState, decisions: Map<FirmId, FirmDecision
     // What the acquirer takes on (integration losses shrink the productive assets).
     const ppeGain = t.ppe_book * disc;
     a.cash += t.cash - price;
+    ledgerAdd(ledger, a.id, "acquisition_paid", -price); // DW-076: the two legs, separately — paid out, cash taken on
+    ledgerAdd(ledger, a.id, "acquired_cash", t.cash);
+    ledgerAdd(ledger, t.id, "sold_to_acquirer", -t.cash); // the target's books are frozen at 0
     a.cap += t.cap * disc;
     a.Q += t.Q * disc * 0.5; // capabilities transfer at a deeper discount than hardware
     a.B += t.B * disc * 0.5;

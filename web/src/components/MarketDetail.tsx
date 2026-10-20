@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import type { MarketConfig } from "drinkwars-engine";
-import { fmt } from "../labels.js";
+import { fmt, marketName } from "../labels.js";
 import { Row, Tag } from "./ui.js";
 
 /** Map a coefficient multiplier (1 = same as home) to a plain-language read for
@@ -50,6 +50,8 @@ export function MarketDetail({
 
   return (
     <div
+      role="dialog"
+      aria-modal="true"
       className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4 backdrop-blur-sm"
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
@@ -57,7 +59,7 @@ export function MarketDetail({
         <div className="flex items-start justify-between gap-3 border-b border-line px-5 pt-4 pb-3">
           <div className="min-w-0">
             <div className="text-[0.6rem] font-semibold uppercase tracking-[0.16em] text-copperdeep">{kindLabel}</div>
-            <h3 className="display truncate text-xl font-semibold leading-tight text-ink">{market.label}</h3>
+            <h3 className="display truncate text-xl font-semibold leading-tight text-ink">{marketName(market.id, market.label)}</h3>
           </div>
           <button onClick={onClose} className="shrink-0 text-inksoft transition-colors hover:text-ink" aria-label="Close">✕</button>
         </div>

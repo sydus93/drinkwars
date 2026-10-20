@@ -8,16 +8,17 @@
 // Game logic comes from ./drinkwars-core.js (esbuild bundle of the orchestrator
 // + Supabase adapter + engine). Rebuild it with `npm run build:edge` in server/.
 import { createClient } from "@supabase/supabase-js";
-import { GameOrchestrator, SupabaseAdapter, buildInstructorDashboard, dashboardToCsv, randomBreweryNames, renameFirms, visibleEvents, resolveConfig, roleBriefings, summarizeAgreementsFor, summarizeLobbying, withRequestCache, deepMerge, generateHiringMarket, projectMarkets, projectFirms, projectShocks, projectHistory } from "./drinkwars-core.js";
+import { GameOrchestrator, SupabaseAdapter, buildInstructorDashboard, dashboardToCsv, randomBreweryNames, renameFirms, visibleEvents, resolveConfig, roleBriefings, summarizeAgreementsFor, summarizeLobbying, withRequestCache, deepMerge, generateHiringMarket, projectMarkets, projectFirms, projectShocks, projectHistory, getSeatForecasts, submitForecasts, getGameForecasts } from "./drinkwars-core.js";
 
 const url = Deno.env.get("SUPABASE_URL")!;
 const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const PASS = Deno.env.get("DW_INSTRUCTOR_PASS") ?? "letmein";
+// Fail closed: an unset secret (new project, staging slug) must not fall back to a guessable default.
+const PASS = Deno.env.get("DW_INSTRUCTOR_PASS") ?? "";
 // Optional secondary passcode (full access, same as the main one) for a colleague
 // to test with, without sharing the primary credential. Unset = disabled.
 const TEST_PASS = Deno.env.get("DW_INSTRUCTOR_PASS_TEST") ?? "";
 const PASSES = [PASS, ...(TEST_PASS ? [TEST_PASS] : [])];
-const validInstructorPass = (p: string | null): boolean => p !== null && PASSES.includes(p);
+const validInstructorPass = (p: string | null): boolean => !!p && PASSES.includes(p);
 // Map a passcode to its control tier. Games are owned by the tier that created
 // them; the primary tier is a super-user over all games, the test tier only its own.
 type InstructorTier = "primary" | "test";
@@ -25,6 +26,9 @@ const instructorTier = (p: string | null): InstructorTier | null =>
   p === null ? null : p === PASS ? "primary" : TEST_PASS && p === TEST_PASS ? "test" : null;
 const ownsGame = (tier: InstructorTier | null, game: { owner_tag: string | null }): boolean =>
   tier === "primary" || (tier != null && game.owner_tag === tier);
+
+// The seed (with the public engine) reproduces every future shock + demand draw — never ship it.
+const publicConfig = (c: any) => c?.game ? { ...c, game: { ...c.game, seed: undefined } } : c;
 
 const db = createClient(url, serviceKey, { auth: { persistSession: false } });
 const store = new SupabaseAdapter(db);
@@ -129,10 +133,10 @@ async function viewFor(gameId: string, teamId: string, userId?: string) {
   let hiringMarket: any[] = []; // MOD-B12 candidate pool (shared/public — same for every firm)
   const seats = own && game?.firm_mode === "team" ? await orch.getTeamSeats(gameId, teamId) : []; // team firms: C-suite seats + submit status
   // Team firms: the live plan — each seat's submitted slice + the composed decision (same-firm eyes only).
-  const teamPlan = own && game?.firm_mode === "team" && userId ? await orch.getTeamPlan(gameId, teamId, userId) : undefined;
-  const history = own ? projectHistory(allResults, own.id) : []; // own trend + public field aggregate
   // DW-048 draft seeds (twin of transport.ts): standing plan + this round's own solo decision.
   const standing = own ? await orch.getStandingDecision(gameId, teamId) : null;
+  const teamPlan = own && game?.firm_mode === "team" && userId ? await orch.getTeamPlan(gameId, teamId, userId, standing) : undefined; // DW-080: composed live from the slices
+  const history = own ? projectHistory(allResults, own.id) : []; // own trend + public field aggregate
   const draft = own && game?.firm_mode !== "team" && decision?.submitted ? decision.decision : null;
   if (own) {
     const ws = await store.getLatestWorldState(gameId);
@@ -147,7 +151,7 @@ async function viewFor(gameId: string, teamId: string, userId?: string) {
         firms = projectFirms(ws.state, config, own.id, lastFull?.result.firm_results ?? [], !!decision?.decision?.buy_info, nameOf);
         hiringMarket = generateHiringMarket(config, ws.state.seed, pub.round);
       }
-      shocks = projectShocks(ws.state, pub.round);
+      shocks = projectShocks(ws.state, pub.round, config ?? undefined, own.id);
     }
   }
   return {
@@ -232,7 +236,7 @@ Deno.serve(async (req: Request) => {
       }
       const joined = await orch.joinGame(codeUp, displayName, userId, { teamId, role, teamName: teamName ? String(teamName).slice(0, 40) : undefined, style: color || emblem ? { color, emblem } : undefined });
       const token = await mintToken({ gameId: joined.gameId, teamId: joined.teamId, userId, role: joined.role });
-      return json(200, { token, gameId: joined.gameId, teamId: joined.teamId, firmId: joined.firmId, nRounds: game.n_rounds, config: game.config, firmMode: game.firm_mode ?? "solo", role: joined.role ?? null, claim: joined.claim ?? null });
+      return json(200, { token, gameId: joined.gameId, teamId: joined.teamId, firmId: joined.firmId, nRounds: game.n_rounds, config: publicConfig(game.config), firmMode: game.firm_mode ?? "solo", role: joined.role ?? null, claim: joined.claim ?? null });
     }
     // A player's games (return-to-game / career), resolved by their durable claim code.
     if (method === "GET" && path === "/me/games") {
@@ -240,6 +244,12 @@ Deno.serve(async (req: Request) => {
       const usr = claim ? await store.getUserByClaim(claim) : null;
       if (!usr) return json(401, { error: "unknown claim code" });
       return json(200, { player: { name: usr.display_name, external_id: usr.external_id }, games: await orch.getMyGames(usr.id) });
+    }
+    // DW-074 calls (forecast commitment): a channel of its own (twin of transport.ts). Flag-gated per game.
+    if (path === "/forecasts" && (method === "GET" || method === "POST")) {
+      const s = await readToken(method === "POST" ? body.token : u.searchParams.get("token") ?? "");
+      if (!s) return json(401, { error: "invalid or expired token" });
+      return json(200, method === "POST" ? await submitForecasts(store, Date.now, s, body.calls) : await getSeatForecasts(store, s));
     }
     if (method === "GET" && path === "/view") {
       const s = await readToken(u.searchParams.get("token") ?? "");
@@ -265,8 +275,9 @@ Deno.serve(async (req: Request) => {
       if (!s) return json(401, { error: "invalid or expired token" });
       const game = await store.getGame(s.gameId);
       // Team firms: a submit is this SEAT's slice, merged server-side. Solo: full decision.
-      if (game?.firm_mode === "team") await orch.submitMemberDecision(s.gameId, s.teamId, s.userId, body.decision, s.role);
-      else await orch.submitDecision(s.gameId, s.teamId, body.decision);
+      const forRound = typeof body.round === "number" ? body.round : undefined; // DW-080: the form's own round
+      if (game?.firm_mode === "team") await orch.submitMemberDecision(s.gameId, s.teamId, s.userId, body.decision, s.role, body.touched, forRound);
+      else await orch.submitDecision(s.gameId, s.teamId, body.decision, s.userId, forRound);
       return json(200, { ok: true });
     }
 
@@ -280,7 +291,8 @@ Deno.serve(async (req: Request) => {
         const nFirms = Number(body.nFirms ?? 6);
         const nRounds = Number(body.nRounds ?? 16);
         // Fresh seed per game (DW-046) — see transport.ts; a configOverride.game.seed still wins via deepMerge.
-        let override: Record<string, unknown> = { game: { n_firms: nFirms, n_rounds: nRounds, seed: 1 + Math.floor(Math.random() * 2_000_000_000) } };
+        // DW-078: calls default ON (as on the create form); configOverride classroom.forecasts.enabled:false turns them off.
+        let override: Record<string, unknown> = { game: { n_firms: nFirms, n_rounds: nRounds, seed: 1 + Math.floor(Math.random() * 2_000_000_000) }, classroom: { forecasts: { enabled: true } } };
         // Expansion modules (instructor selector) + legacy inventory boolean.
         const mods: Record<string, unknown> = body.modules && typeof body.modules === "object" ? { ...body.modules } : {};
         if (body.inventory) mods.inventory = { enabled: true };
@@ -298,6 +310,9 @@ Deno.serve(async (req: Request) => {
 
       // Roster provisioning: persistent users (NetID = career key) + durable claim codes.
       if (method === "POST" && path === "/instructor/roster") {
+        // Roster rows resolve to EXISTING users by NetID/email and hand back their claim codes —
+        // effectively an account-takeover tool, so it stays with the primary (owner) passcode.
+        if (tier !== "primary") return json(403, { error: "roster provisioning needs the primary instructor passcode" });
         const roster = body.roster;
         if (!Array.isArray(roster) || !roster.length) return json(400, { error: "roster array required" });
         // DW-046 (twin of transport.ts): dedupe by case-insensitive NetID, provision one row at
@@ -362,6 +377,9 @@ Deno.serve(async (req: Request) => {
         if (format === "json") return attachment(200, "application/json", JSON.stringify(dash, null, 2), `drinkwars-${gameId}.json`);
         return attachment(200, "text/csv", dashboardToCsv(dash), `drinkwars-${gameId}.csv`);
       }
+      const fc = path.match(/^\/instructor\/games\/([^/]+)\/forecasts$/); // DW-074 calls read-out
+      if (fc && method === "GET") return json(200, await getGameForecasts(store, fc[1]));
+
       // Gamemaster: the forward shock schedule + live triggers (DW-037).
       const tl = path.match(/^\/instructor\/games\/([^/]+)\/timeline$/);
       if (tl) {
@@ -376,10 +394,11 @@ Deno.serve(async (req: Request) => {
       }
 
       // DW-048: per-chair roster + member remove/move + round deadline (twin of transport.ts).
-      const rm = path.match(/^\/instructor\/games\/([^/]+)\/(roster|members|deadline|seats)$/);
+      const rm = path.match(/^\/instructor\/games\/([^/]+)\/(roster|members|deadline|seats|decisions)$/);
       if (rm) {
         const [, gameId, what] = rm;
         if (what === "roster" && method === "GET") return json(200, { teams: await orch.getRoster(gameId) });
+        if (what === "decisions" && method === "GET") return json(200, await orch.getTeamDecisions(gameId)); // DW-072 #5
         if (what === "members" && method === "POST") {
           if (body.op === "remove") { await orch.removeMember(gameId, String(body.teamId ?? ""), String(body.userId ?? "")); return json(200, { ok: true }); }
           if (body.op === "move") { await orch.moveMember(gameId, String(body.userId ?? ""), String(body.toTeamId ?? ""), String(body.role ?? "")); return json(200, { ok: true }); }

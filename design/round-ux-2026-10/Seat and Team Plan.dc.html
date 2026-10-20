@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>body{margin:0;background:#120d08}a{color:#ecb54a}a:hover{color:#f3d08a}*{box-sizing:border-box}</style>
+</helmet>
+<div style="padding:56px;display:flex;flex-direction:column;gap:40px;font-family:'EB Garamond',serif;color:#f3e6cf;min-width:1960px">
+  <div style="display:flex;flex-direction:column;gap:14px;max-width:1100px">
+    <div style="font:600 14px 'IBM Plex Sans';letter-spacing:.14em;color:#ecb54a">B · SEAT IDENTITY &nbsp;&nbsp; C · TEAM PLAN DIFFERS</div>
+    <div style="font-size:44px;font-weight:600;line-height:1.05">You always know whose chair you're in, and what will actually lock</div>
+    <div style="font-size:19px;color:#cdb898;line-height:1.45;text-wrap:pretty">The seat plate sits in the header on every tab, in your desk colour, and the page edge carries the same colour. The commit dial now leads with the number the team will lock. Where your form differs, each lever shows as a row: what locks, what you typed, who decides. The submit button says how many levers follow a teammate.</div>
+    <div style="display:flex;gap:28px;flex-wrap:wrap;align-items:center;margin-top:8px">
+      <div style="display:flex;gap:8px;align-items:center"><span style="font:500 13px 'IBM Plex Sans';letter-spacing:.1em;color:#a8916f;margin-right:6px">DIFFERENCES</span>
+        <sc-for list="{{ diffOpts }}" as="o" hint-placeholder-count="3"><button onClick="{{ o.pick }}" style="font:600 14px 'IBM Plex Sans';padding:9px 14px;border-radius:999px;border:1px solid #5a4630;background:{{ o.bg }};color:{{ o.fg }};cursor:pointer;white-space:nowrap;flex-shrink:0">{{ o.label }}</button></sc-for>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center"><span style="font:500 13px 'IBM Plex Sans';letter-spacing:.1em;color:#a8916f;margin-right:6px">SEAT</span>
+        <sc-for list="{{ seatOpts }}" as="o" hint-placeholder-count="2"><button onClick="{{ o.pick }}" style="font:600 14px 'IBM Plex Sans';padding:9px 14px;border-radius:999px;border:1px solid #5a4630;background:{{ o.bg }};color:{{ o.fg }};cursor:pointer;white-space:nowrap;flex-shrink:0">{{ o.label }}</button></sc-for>
+      </div>
+    </div>
+  </div>
+
+  <sc-for list="{{ themes }}" as="t" hint-placeholder-count="2">
+  <div style="--bg:{{ t.bg }};--bg2:{{ t.bg2 }};--card:{{ t.card }};--card2:{{ t.card2 }};--line:{{ t.line }};--ink:{{ t.ink }};--ink2:{{ t.ink2 }};--gold:{{ t.gold }};--red:{{ t.red }};--redbg:{{ t.redbg }};--green:{{ t.green }};--btn:{{ t.btn }};--btnInk:{{ t.btnInk }};--seat:{{ t.seat }};--seatInk:{{ t.seatInk }};--seatbg:{{ t.seatbg }};--field:{{ t.field }};display:flex;gap:48px;align-items:flex-start">
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div style="font:600 14px 'IBM Plex Sans';letter-spacing:.12em;color:#a8916f">1440 · {{ t.label }}</div>
+      <div style="width:1440px;position:relative;background:var(--bg);color:var(--ink);border-radius:6px;overflow:hidden;border-left:8px solid var(--seat)">
+        <div style="display:flex;align-items:center;gap:28px;padding:18px 32px;background:var(--bg2);border-bottom:1px solid var(--line)">
+          <div style="display:flex;flex-direction:column;gap:2px">
+            <div style="font:600 13px 'IBM Plex Sans';letter-spacing:.14em;color:var(--ink2)">DRINK WARS · HOP THEORY</div>
+            <div style="font-size:36px;font-weight:600;line-height:1">Round 1 <span style="color:var(--ink2)">/ 8</span></div>
+          </div>
+          <div style="display:flex;align-items:stretch;border-radius:12px;overflow:hidden;border:2px solid var(--seat);background:var(--seatbg)">
+            <div style="background:var(--seat);color:var(--seatInk);font:700 24px 'IBM Plex Sans';padding:0 18px;display:flex;align-items:center;letter-spacing:.04em">{{ seat.role }}</div>
+            <div style="padding:8px 18px;display:flex;flex-direction:column"><span style="font-size:22px;font-weight:600;line-height:1.1">{{ seat.name }}</span><span style="font:500 13px 'IBM Plex Sans';letter-spacing:.08em;color:var(--ink2)">YOUR SEAT · {{ seat.deskCaps }}</span></div>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center">
+            <sc-for list="{{ table }}" as="m" hint-placeholder-count="5">
+              <span style="font:600 13px 'IBM Plex Sans';padding:6px 9px;border-radius:6px;border:1px solid var(--line);color:var(--ink2);opacity:{{ m.op }}">{{ m.role }}{{ m.mark }}</span>
+            </sc-for>
+          </div>
+          <div style="flex:1"></div>
+          <div style="display:flex;gap:28px;align-items:flex-end">
+            <div style="display:flex;flex-direction:column"><span style="font:500 13px 'IBM Plex Sans';letter-spacing:.12em;color:var(--ink2)">CASH</span><span style="font-size:26px;font-weight:600">$460,000</span></div>
+            <div style="display:flex;flex-direction:column;align-items:flex-end;padding:8px 14px;border:1px solid var(--line);border-radius:10px"><span style="font:500 13px 'IBM Plex Sans';letter-spacing:.12em;color:var(--ink2)">ROUND CLOSES</span><span style="font:600 22px 'IBM Plex Sans'">4:18</span></div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;padding:14px 32px;border-bottom:1px solid var(--line)">
+          <span style="font:600 15px 'IBM Plex Sans';letter-spacing:.08em;padding:10px 18px;border-radius:999px;border:1px solid var(--line);background:var(--card)">DECIDE</span>
+          <span style="font:600 15px 'IBM Plex Sans';letter-spacing:.08em;padding:10px 18px;color:var(--ink2)">REVIEW</span>
+          <span style="font:600 15px 'IBM Plex Sans';letter-spacing:.08em;padding:10px 18px;color:var(--ink2)">MAP</span>
+        </div>
+        <div style="display:grid;grid-template-columns:minmax(0,1fr) 520px;gap:24px;padding:24px 32px 32px;align-items:start">
+          <div style="background:var(--card);border:1px solid var(--line);border-top:5px solid var(--seat);border-radius:14px;padding:24px;display:flex;flex-direction:column;gap:20px">
+            <div style="display:flex;align-items:baseline;gap:12px"><span style="font:700 14px 'IBM Plex Sans';letter-spacing:.14em;color:var(--seat)">{{ seat.deskCaps }}</span><span style="font-size:18px;color:var(--ink2)">{{ seat.mandate }}</span></div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+              <sc-for list="{{ levers }}" as="l" hint-placeholder-count="4">
+                <div style="display:flex;flex-direction:column;gap:8px">
+                  <span style="font-size:19px;font-weight:600">{{ l.label }}</span>
+                  <span style="font-size:19px;padding:10px 14px;border-radius:8px;background:var(--field);border:2px solid {{ l.border }};width:240px">{{ l.mine }}</span>
+                  <sc-if value="{{ l.diff }}" hint-placeholder-val="{{ false }}"><span style="font-size:17px;color:{{ l.c }}"><b>{{ l.verb }} {{ l.locks }}</b> · {{ l.who }}</span></sc-if>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+          <div style="background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden">
+            <div style="padding:22px 24px 18px;display:flex;flex-direction:column;gap:6px">
+              <div style="display:flex;justify-content:space-between"><span style="font:600 13px 'IBM Plex Sans';letter-spacing:.14em;color:var(--gold)">WHAT LOCKS AT ROUND END</span><span style="font:600 13px 'IBM Plex Sans';letter-spacing:.1em;color:var(--ink2)">ROUND 1</span></div>
+              <div style="font-size:18px;color:var(--ink2)">Projected cash on the team's plan</div>
+              <div style="font-size:50px;font-weight:600;line-height:1">{{ teamCash }}</div>
+              <sc-if value="{{ any }}" hint-placeholder-val="{{ true }}"><div style="font-size:18px;color:var(--ink2)">Your form alone would give <b style="color:var(--ink)">{{ myCash }}</b></div></sc-if>
+            </div>
+            <sc-if value="{{ any }}" hint-placeholder-val="{{ true }}">
+              <div style="background:var(--redbg);border-top:3px solid var(--red);padding:18px 24px;display:flex;flex-direction:column;gap:12px">
+                <div style="display:flex;align-items:center;gap:12px"><span style="font:700 26px 'IBM Plex Sans';background:var(--red);color:var(--bg);width:40px;height:40px;border-radius:20px;display:flex;align-items:center;justify-content:center">{{ count }}</span><span style="font-size:22px;font-weight:600;line-height:1.15">{{ headline }}</span></div>
+                <div style="display:grid;grid-template-columns:minmax(0,1fr) auto auto;column-gap:16px;row-gap:0;font-size:18px">
+                  <span style="font:600 12px 'IBM Plex Sans';letter-spacing:.1em;color:var(--ink2);padding-bottom:6px">LEVER · WHO DECIDES</span><span style="font:600 12px 'IBM Plex Sans';letter-spacing:.1em;color:var(--ink2);text-align:right">LOCKS</span><span style="font:600 12px 'IBM Plex Sans';letter-spacing:.1em;color:var(--ink2);text-align:right">YOU TYPED</span>
+                  <sc-for list="{{ diffs }}" as="d" hint-placeholder-count="2">
+                    <span style="border-top:1px solid var(--line);padding:9px 0;display:flex;flex-direction:column"><b>{{ d.label }}</b><span style="font-size:16px;color:var(--ink2)">{{ d.who }}</span></span>
+                    <span style="border-top:1px solid var(--line);padding:9px 0;text-align:right;font-weight:700;color:{{ d.c }}">{{ d.locks }}</span>
+                    <span style="border-top:1px solid var(--line);padding:9px 0;text-align:right;text-decoration:{{ d.strike }};color:var(--ink2)">{{ d.mine }}</span>
+                  </sc-for>
+                </div>
+                <sc-if value="{{ canAct }}" hint-placeholder-val="{{ false }}">
+                  <div style="display:flex;gap:10px"><span style="flex:1;font:700 15px 'IBM Plex Sans';text-align:center;padding:12px;border-radius:10px;border:2px solid var(--ink)">Take the CEO's numbers</span><span style="flex:1;font:700 15px 'IBM Plex Sans';text-align:center;padding:12px;border-radius:10px;border:1px solid var(--line);color:var(--ink2)">Keep mine</span></div>
+                </sc-if>
+                <div style="font-size:17px;color:var(--ink2);line-height:1.35">{{ rule }}</div>
+              </div>
+            </sc-if>
+            <sc-if value="{{ none }}" hint-placeholder-val="{{ false }}">
+              <div style="border-top:1px solid var(--line);padding:16px 24px;font-size:18px;display:flex;gap:10px;align-items:center"><span style="width:12px;height:12px;border-radius:6px;background:var(--green)"></span>Your form matches the team's plan.</div>
+            </sc-if>
+            <div style="padding:18px 24px 22px;display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--line)">
+              <div style="font:700 16px 'IBM Plex Sans';letter-spacing:.05em;background:var(--btn);color:var(--btnInk);padding:16px;border-radius:10px;text-align:center">{{ submit }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div style="font:600 14px 'IBM Plex Sans';letter-spacing:.12em;color:#a8916f">390 · {{ t.label }}</div>
+      <div style="width:390px;height:844px;position:relative;overflow:hidden;background:var(--bg);color:var(--ink);border-radius:28px;display:flex;flex-direction:column;border:4px solid var(--seat)">
+        <div style="background:var(--seat);color:var(--seatInk);padding:12px 18px;display:flex;align-items:center;gap:10px">
+          <span style="font:700 20px 'IBM Plex Sans'">{{ seat.role }}</span><span style="font-size:19px;font-weight:600">{{ seat.name }}</span><span style="flex:1"></span><span style="font:600 13px 'IBM Plex Sans';letter-spacing:.08em">{{ seat.shortCaps }}</span>
+        </div>
+        <div style="padding:12px 18px;display:flex;align-items:flex-end;background:var(--bg2);border-bottom:1px solid var(--line)">
+          <span style="font-size:28px;font-weight:600;line-height:1">Round 1 <span style="color:var(--ink2)">/ 8</span></span><span style="flex:1"></span><span style="font:600 19px 'IBM Plex Sans'">4:18</span>
+        </div>
+        <div style="padding:16px;display:flex;flex-direction:column;gap:14px;flex:1;overflow:hidden">
+          <div style="font:700 13px 'IBM Plex Sans';letter-spacing:.14em;color:var(--seat)">{{ seat.deskCaps }}</div>
+          <sc-for list="{{ levers }}" as="l" hint-placeholder-count="3">
+            <div style="display:flex;flex-direction:column;gap:6px"><span style="font-size:18px;font-weight:600">{{ l.label }}</span><span style="font-size:18px;padding:10px 14px;border-radius:8px;background:var(--field);border:2px solid {{ l.border }}">{{ l.mine }}</span>
+            <sc-if value="{{ l.diff }}" hint-placeholder-val="{{ false }}"><span style="font-size:16px;color:{{ l.c }}"><b>{{ l.verb }} {{ l.locks }}</b> · {{ l.who }}</span></sc-if></div>
+          </sc-for>
+        </div>
+        <div style="background:var(--card);border-top:1px solid var(--line);border-radius:20px 20px 0 0;box-shadow:0 -10px 30px rgba(0,0,0,.25)">
+          <sc-if value="{{ any }}" hint-placeholder-val="{{ true }}">
+            <div style="background:var(--redbg);border-top:3px solid var(--red);border-radius:20px 20px 0 0;padding:14px 16px;display:flex;flex-direction:column;gap:8px">
+              <div style="display:flex;align-items:center;gap:10px"><span style="font:700 20px 'IBM Plex Sans';background:var(--red);color:var(--bg);width:32px;height:32px;border-radius:16px;display:flex;align-items:center;justify-content:center">{{ count }}</span><span style="font-size:19px;font-weight:600;line-height:1.15">{{ headline }}</span></div>
+              <sc-for list="{{ diffsMobile }}" as="d" hint-placeholder-count="2">
+                <div style="display:flex;justify-content:space-between;font-size:17px;border-top:1px solid var(--line);padding-top:6px"><span><b>{{ d.label }}</b> <span style="color:var(--ink2)">{{ d.whoShort }}</span></span><span><b style="color:{{ d.c }}">{{ d.locks }}</b> <span style="color:var(--ink2);text-decoration:{{ d.strike }}">{{ d.mine }}</span></span></div>
+              </sc-for>
+              <sc-if value="{{ moreMobile }}" hint-placeholder-val="{{ false }}"><span style="font:600 15px 'IBM Plex Sans';color:var(--ink2)">+{{ moreCount }} more · see all</span></sc-if>
+            </div>
+          </sc-if>
+          <div style="padding:14px 16px 24px;display:flex;align-items:center;gap:12px">
+            <div style="display:flex;flex-direction:column"><span style="font:500 12px 'IBM Plex Sans';letter-spacing:.1em;color:var(--ink2)">TEAM LOCKS</span><span style="font-size:22px;font-weight:600">{{ teamCash }}</span></div>
+            <div style="flex:1;font:700 15px 'IBM Plex Sans';background:var(--btn);color:var(--btnInk);padding:14px 10px;border-radius:10px;text-align:center">{{ submitShort }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  </sc-for>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+const THEMES = [
+  { label: 'DARK', bg: '#1b130c', bg2: '#22180f', card: '#2c2117', card2: '#36291c', line: '#4d3b28', ink: '#f4e8d2', ink2: '#c4ad8c', gold: '#ecb54a', red: '#ef8a64', redbg: '#3a2015', green: '#8ec95a', btn: '#7fb544', btnInk: '#15230a', field: '#1a120b', seatInk: '#1a120a' },
+  { label: 'LIGHT', bg: '#f2e6cd', bg2: '#ebdbbb', card: '#fcf6ea', card2: '#f5ead6', line: '#d6bf98', ink: '#2a1b0f', ink2: '#65503a', gold: '#9a5512', red: '#a3321f', redbg: '#f8e0d3', green: '#3d6b18', btn: '#6ea83a', btnInk: '#13210a', field: '#efdfc0', seatInk: '#fdf8ee' }
+];
+const SEATS = {
+  CEO: { role: 'CEO', name: 'Ana Reyes', desk: 'Whole-firm desk', short: 'WHOLE FIRM', mandate: 'Integrate all five desks into one bet.', c: ['#bf9ae0', '#6c4294'], sb: ['#2b2030', '#f2e8f6'],
+    levers: [['Capacity capex', '$200,000', '$80,000', 'COO Cy Tran\u2019s desk'], ['Quality', '$0', '$15,000', 'COO Cy Tran\u2019s desk'], ['Draw debt', '$120,000', '$50,000', 'CFO Ben Okafor\u2019s desk'], ['Dividend', '$0', '$10,000', 'CFO Ben Okafor\u2019s desk']],
+    rule: 'These levers sit on a seated teammate\u2019s desk, so their number is used. Ask them to change it and resubmit.' },
+  CFO: { role: 'CFO', name: 'Ben Okafor', desk: 'Finance desk', short: 'FINANCE', mandate: 'Fund the round. Set the envelope before others overspend it.', c: ['#9bcb5e', '#3d6b18'], sb: ['#1f2a17', '#e9f2dc'],
+    levers: [['Raise equity', '$0', '$60,000', 'CEO left this; you didn\u2019t touch it'], ['Draw debt', '$50,000', '$50,000', 'CEO set $120,000; yours is used'], ['Repay debt', '$0', '$0', ''], ['Pay dividend', '$10,000', '$10,000', '']],
+    rule: 'A lever you leave at last round\u2019s value follows the CEO. Change it yourself to override.' }
+};
+const fmt = n => '$' + n.toLocaleString('en-US');
+class Component extends DCLogic {
+  state = { n: 'many', seat: 'CEO' };
+  renderVals() {
+    const { n, seat } = this.state;
+    const S = SEATS[seat];
+    const chip = on => ({ bg: on ? '#f4e8d2' : 'transparent', fg: on ? '#1b130c' : '#e7d6b8' });
+    const k = n === 'none' ? 0 : n === 'one' ? 1 : seat === 'CEO' ? 4 : 1;
+    const isDiff = (row, i) => row[1] !== row[2] && i < k;
+    const levers = S.levers.map((r, i) => {
+      const diff = isDiff(r, i);
+      return { label: r[0], mine: r[1], locks: r[2], who: r[3], diff, border: diff ? 'var(--red)' : 'var(--line)', c: 'var(--red)', verb: 'Locks at' };
+    });
+    const diffs = levers.filter(l => l.diff).map(l => ({ ...l, strike: 'line-through', whoShort: '\u00b7 ' + l.who.split(' ')[0] }));
+    if (seat === 'CFO' && n === 'many') {
+      levers[1].diff = true; levers[1].verb = 'Yours is used:'; levers[1].locks = '$50,000'; levers[1].c = 'var(--green)'; levers[1].border = 'var(--green)';
+      diffs.push({ label: 'Draw debt', who: 'CEO set $120,000. You changed it, so yours is used', whoShort: '\u00b7 yours', locks: '$50,000', mine: '', strike: 'none', c: 'var(--green)' });
+    }
+    const count = diffs.length, any = count > 0, follow = diffs.filter(d => d.strike === 'line-through').length;
+    const base = 465000, gap = seat === 'CEO' ? [120000 - 200000 + 15000 - 0 + 0, 0][0] : 0;
+    const teamCash = fmt(base);
+    const myCash = seat === 'CEO' ? fmt(k >= 4 ? 465000 - 120000 + 70000 + 15000 + 10000 : 465000 - 120000) : fmt(465000 - 60000);
+    return {
+      diffOpts: [['none', 'None'], ['one', 'One'], ['many', 'Many']].map(([key, l]) => ({ label: l, ...chip(n === key), pick: () => this.setState({ n: key }) })),
+      seatOpts: Object.keys(SEATS).map(key => ({ label: key + ' view', ...chip(seat === key), pick: () => this.setState({ seat: key }) })),
+      themes: THEMES.map((t, i) => ({ ...t, seat: S.c[i], seatbg: S.sb[i] })),
+      seat: { ...S, deskCaps: S.desk.toUpperCase(), shortCaps: S.short },
+      table: ['CEO', 'CFO', 'COO', 'CMO', 'CHRO'].map(r => ({ role: r, mark: r === 'CHRO' ? ' \u00b7 empty' : ' \u2713', op: r === seat ? 0.35 : 1 })),
+      levers, diffs, diffsMobile: diffs.slice(0, 2), moreMobile: count > 2, moreCount: count - 2,
+      count, any, none: !any, canAct: seat === 'CFO' && any,
+      headline: count === 1 ? (follow ? '1 lever locks at a teammate\u2019s number' : '1 lever differs from a teammate') : `${count} levers lock at a teammate\u2019s number, not yours`,
+      teamCash, myCash, rule: S.rule,
+      submit: any && follow ? `SUBMIT MY DESK \u00b7 ${follow} LEVER${follow > 1 ? 'S' : ''} FOLLOW TEAMMATES` : 'SUBMIT MY DESK (ROUND 1)',
+      submitShort: any && follow ? `SUBMIT · ${follow} FOLLOW TEAM` : 'SUBMIT MY DESK'
+    };
+  }
+}
+</script>
+</body>
+</html>

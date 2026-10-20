@@ -31,7 +31,7 @@ export function FacilityDetail({ facility: f, type: t, round, maintainValue, onM
   const projCond = t ? Math.max(0, Math.min(1, f.condition - t.condition_decay + spendN * t.maintenance_effect)) : f.condition;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4 backdrop-blur-sm" onMouseDown={(ev) => { if (ev.target === ev.currentTarget) onClose(); }}>
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4 backdrop-blur-sm" onMouseDown={(ev) => { if (ev.target === ev.currentTarget) onClose(); }}>
       <div className="card w-full max-w-lg overflow-hidden">
         <div className="h-2 w-full" style={{ background: condTone }} />
         <div className="flex items-center gap-3 border-b border-line px-5 py-4">

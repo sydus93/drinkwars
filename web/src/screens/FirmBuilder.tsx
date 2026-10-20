@@ -334,7 +334,7 @@ export function FirmBuilder({ onStart, busy }: { onStart: (c: FoundingChoices) =
 
       {/* City View popup — choose WHERE the selected facility opens (district = rent/output/brand) */}
       {siteFor && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-3 backdrop-blur-sm sm:p-4" onMouseDown={(ev) => { if (ev.target === ev.currentTarget) setSiteFor(null); }}>
+        <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-3 backdrop-blur-sm sm:p-4" onMouseDown={(ev) => { if (ev.target === ev.currentTarget) setSiteFor(null); }}>
           <div className="relative flex max-h-[94vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-line2 bg-paper shadow-2xl">
             <header className="flex items-center gap-2.5 border-b border-line px-4 py-3">
               <FacilityChip type={siteFor} color={color} size={24} mine />

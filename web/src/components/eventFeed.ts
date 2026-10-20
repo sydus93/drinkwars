@@ -1,5 +1,5 @@
 import type { EventKind, GameEvent } from "./EventModal.js";
-import { SEG_LABEL } from "../labels.js";
+import { SEG_LABEL, marketName } from "../labels.js";
 
 /** Map a raw segment id (mass/niche/frontier) to its beverage label; tolerate the
  *  engine's "?"/"(unset)" placeholders so no code-style token reaches the player. */
@@ -28,6 +28,9 @@ const SHOCK_KIND: Record<string, string> = {
   cash_hit: "an unexpected cash hit lands",
 };
 const severity = (mag: number): string => (mag >= 0.3 ? "sharply" : mag >= 0.15 ? "moderately" : "mildly");
+/** DW-075: the loyalty a departure took with it, from the event's optional suffix ("" when none). */
+const LOYALTY_LOST = (quarters?: string, pct?: string): string =>
+  quarters ? `, taking ${quarters} quarter${quarters === "1" ? "" : "s"} of built-up loyalty (+${pct}% contribution) out the door` : "";
 
 /** Plain-language gloss for each contingent-clause trigger (MOD-A05). */
 const CLAUSE_COND: Record<string, string> = {
@@ -80,7 +83,7 @@ const RULES: Rule[] = [
   {
     test: /^EXPANSION:\s*(.+?)\s+enters\s+(.+)$/i,
     kind: "opportunity", title: "New market entered",
-    body: (_r, m) => `${m[1]} expanded into ${m[2]}.`,
+    body: (_r, m) => `${m[1]} expanded into ${marketName(m[2])}.`,
   },
   {
     test: /^HIRE:\s*(.+?)\s+brings on a\s+(.+)$/i,
@@ -88,10 +91,27 @@ const RULES: Rule[] = [
     body: (_r, m) => `${m[1]} brought on a ${m[2]}.`,
   },
   // DW-071: the labor-market attrition line (was "POACHED … to a rival offer" — no rival gains anyone).
+  // DW-075: may carry what the tenure bonus took with them.
   {
-    test: /^DEPARTURE:\s*(.+?)'s\s+(.+?)\s+leaves for another job/i,
+    test: /^DEPARTURE:\s*(.+?)'s\s+(.+?)\s+leaves for another job(?:\s+[—-]\s+took (\d+) quarters? of built-up tenure \(\+(\d+)% bonus\))?/i,
     kind: "shock", title: "Key hire leaves",
-    body: (_r, m) => `${m[1]}'s ${m[2]} left for another job. Investing in your people (employee relations) makes this rarer.`,
+    body: (_r, m) => `${m[1]}'s ${m[2]} left for another job${m[3] ? ` — and ${m[3]} quarter${m[3] === "1" ? "" : "s"} of built-up tenure (+${m[4]}% on their bonus) left with them` : ""}. Investing in your people (employee relations) makes this rarer.`,
+  },
+  // DW-075: the named-employee departures (MOD-B12), with the loyalty they took along.
+  {
+    test: /^DEPARTURE:\s*(.+?)\s+quits\s+(.+?)\s+[—-]\s+morale ran out(?:;\s+took (\d+) quarters? of built-up loyalty \(\+(\d+)% contribution\))?$/i,
+    kind: "shock", title: "Employee quits",
+    body: (_r, m) => `${m[2]} lost ${m[1]} — morale ran out${LOYALTY_LOST(m[3], m[4])}.`,
+  },
+  {
+    test: /^POACHED:\s*a rival hires\s+(.+?)\s+away from\s+(.+?)(?:\s+[—-]\s+took (\d+) quarters? of built-up loyalty \(\+(\d+)% contribution\))?$/i,
+    kind: "shock", title: "Talent poached",
+    body: (_r, m) => `${m[2]} lost ${m[1]} to a rival's offer${LOYALTY_LOST(m[3], m[4])}. Unhappy people jump easier; loyal ones are harder to pry loose.`,
+  },
+  {
+    test: /^POACHED:\s*(.+?)\s+lures\s+(.+?)\s+away from\s+(.+?)(?:\s+[—-]\s+took (\d+) quarters? of built-up loyalty \(\+(\d+)% contribution\))?$/i,
+    kind: "market", title: "Talent raid",
+    body: (_r, m) => `${m[1]} lured ${m[2]} away from ${m[3]}${LOYALTY_LOST(m[4], m[5])}. They start over at the new house.`,
   },
   {
     test: /^HIRE FAILED:\s*(.+?)\s+cannot cover a\s+(.+?)'s\s+(\$[\d,]+)/i,
@@ -276,7 +296,7 @@ const RULES: Rule[] = [
     title: (m) => SHOCK_LABEL[m[1].toLowerCase()] ?? "Market disruption",
     body: (_r, m) => {
       const label = SHOCK_LABEL[m[1].toLowerCase()] ?? "A market shock";
-      const where = m[4] ? ` in ${m[4]}` : "";
+      const where = m[4] ? ` in ${marketName(m[4])}` : "";
       if (!m[2]) return `${label} just hit${where ? where : " the market"}.`;
       return `${label}${where}: ${SHOCK_KIND[m[2]] ?? "the market is disrupted"} ${severity(+m[3])} this round${where ? " for producers there" : ""}.`;
     },
@@ -358,7 +378,9 @@ export function parseEvents(events: string[], youName = ""): GameEvent[] {
     const text = mine && youName && body.startsWith(youName + " ")
       ? "You" + secondPerson(body.slice(youName.length))
       : body;
-    out.push({ id: `${i}:${raw}`, kind, title, body: text, mine });
+    const struck = kind === "shock" ? raw.match(/^SHOCK fired:.*\)\s+in\s+(.+?)\s*$/i)?.[1] : undefined;
+    const region = struck ? marketName(struck) : undefined; // the map's city name
+    out.push({ id: `${i}:${raw}`, kind, title, body: text, mine, ...(region ? { region } : {}) });
   });
 
   for (const [name, h] of houses) {

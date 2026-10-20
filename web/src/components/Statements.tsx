@@ -12,10 +12,11 @@
  * read the sheets.
  */
 import { Fragment, useEffect, useMemo, useState } from "react";
-import type { BalanceSheet, CashFlow, PnL } from "drinkwars-engine";
+import { CF_LINE_KEYS, OPEX_LINE_KEYS, type BalanceSheet, type CashFlow, type CfSection, type PnL } from "drinkwars-engine";
 import type { GameView } from "../game/controller.js";
-import { SEG_LABEL, fmt } from "../labels.js";
+import { SEG_LABEL, STOCK_LABEL, fmt } from "../labels.js";
 import { bandIsMeaningful, bandsForRound } from "drinkwars-engine";
+import { CF_LINE_LABEL, DEBT_LINE_LABEL, OPEX_LINE_LABEL } from "../lib/statementLabels.js";
 import { RATIO_DEFS, RATIO_GROUPS, ratioDeltaUnit, ratioDisplay, type RatioDef, type RatioInput } from "../lib/ratios.js";
 import { Card, Eyebrow } from "./ui.js";
 import { InfoDot } from "./InfoDot.js";
@@ -28,6 +29,17 @@ interface Quarter {
   categories: Record<string, { price: number; sold: number; wanted: number; revenue: number; share: number }>;
 }
 
+/** DW-070: what a total is made of. `get` returns undefined for a quarter resolved before the
+ *  engine itemized (totals only); a missing key on an itemized quarter is $0. `sign` −1 carries
+ *  the items as costs, like their total. */
+interface Items {
+  get: (q: Quarter) => Partial<Record<string, number>> | undefined;
+  order: readonly string[];
+  label: Record<string, string>;
+  note?: Record<string, string>;
+  sign: 1 | -1;
+}
+
 /** One statement line. Costs are carried NEGATIVE so they print in parentheses and common-size
  *  to a negative share, exactly as on a printed statement. */
 interface Line {
@@ -36,14 +48,48 @@ interface Line {
   kind?: "total" | "sub"; // total = double rule, sub = single rule
   good?: "up" | "down"; // which direction of change is good news (colours the Δ column only)
   hideIfZero?: boolean;
+  /** DW-076: shown only when some quarter on screen satisfies this (a bridge row that exists only in quarters with post-close moves). */
+  showIf?: (q: Quarter) => boolean;
   note?: string | ((view: GameView) => string);
+  items?: Items; // DW-070: opens into its line items
 }
+
+// ── DW-070 line items. Keys = engine OPEX_LINE_KEYS / CF_LINE_KEYS; labels in the student app's
+// own vocabulary (labels.ts STOCK_LABEL for the six spending levers). ──
+const OPEX_ITEMS: Items = {
+  get: (q) => q.pnl.opex_lines,
+  order: OPEX_LINE_KEYS,
+  sign: -1,
+  label: OPEX_LINE_LABEL,
+  note: {
+    quality: "What you chose to spend on the recipe this quarter. It builds quality, which buyers feel from next quarter; quality fades without it.",
+    brand: "What you chose to spend on marketing. It builds brand, which fades without steady spending.",
+    community: "Spending on your taproom community and crew. It builds the trust that keeps people from leaving.",
+    investor_relations: "Spending on investors and lenders. It lowers your interest rate and the fee investors charge on new equity.",
+    regulator_relations: "Spending on distributors and regulators. It lowers the regulatory compliance line below.",
+    operations: "Spending on brewing operations. It lowers the cost to brew every drink.",
+    overhead: "The fixed cost every brewery pays to stay open, whatever it brews.",
+    tank_upkeep: "Upkeep on every tank you own, used or idle. Idle tanks cost the same as full ones.",
+    regulatory: "Compliance costs. They shrink as your distributor and regulator relationships grow.",
+    facilities: "Running costs of your facilities: rent, fixed costs, chosen maintenance, and any premium you bid to win a contested parcel.",
+    market_research: "What you paid for research on your rivals this quarter.",
+  },
+};
+const DEBT_ITEMS: Items = {
+  get: (q) => q.bs.debt_lines,
+  order: ["bank", "convertible", "rbf"],
+  sign: 1,
+  label: DEBT_LINE_LABEL,
+};
+const cfItems = (sec: CfSection, label: Record<string, string>, note?: Record<string, string>): Items => ({
+  get: (q) => q.cf.cf_lines?.[sec], order: CF_LINE_KEYS[sec], sign: 1, label, note,
+});
 
 const PNL: Line[] = [
   { key: "revenue", label: "Revenue", get: (q) => q.pnl.revenue, good: "up" },
   { key: "cogs", label: "Cost of goods sold", get: (q) => -q.pnl.cogs, good: "up", note: "Units sold × the cost to brew one drink." },
   { key: "gross", label: "Gross profit", get: (q) => q.pnl.gross, kind: "sub", good: "up" },
-  { key: "opex", label: "Operating expense", get: (q) => -q.pnl.opex, good: "up", note: "Tank upkeep, overhead, and everything you chose to fund this quarter: quality, brand, operations, people, investor and regulator relations, research. These are expensed, not capitalized." },
+  { key: "opex", label: "Operating expense", get: (q) => -q.pnl.opex, good: "up", items: OPEX_ITEMS, note: "Everything it cost to run the brewery this quarter apart from the beer itself: the fixed costs, and everything you chose to fund. Open the row to see each item. All of it is expensed, not capitalized, so this line is how your investments turn gross profit into net income." },
   { key: "spoilage", label: "Spoilage write-off", get: (q) => -q.pnl.spoilage, good: "up", hideIfZero: true },
   { key: "depreciation", label: "Depreciation", get: (q) => -q.pnl.depreciation, note: "Wear on tanks and plant. A cost on the P&L, but no cash leaves — which is why operating cash flow runs above net income." },
   { key: "ebit", label: "Operating income (EBIT)", get: (q) => q.pnl.ebit, kind: "sub", good: "up" },
@@ -65,12 +111,12 @@ const BS: Line[] = [
   { key: "inventory", label: "Inventory", get: (q) => q.bs.inventory, hideIfZero: true, note: "Finished beer on hand, at what it cost to brew." },
   { key: "ppe", label: "Net plant & equipment", get: (q) => q.bs.ppe, note: "What you have spent on tanks and plant, less depreciation to date." },
   { key: "assets", label: "Total assets", get: (q) => q.bs.assets, kind: "sub" },
-  { key: "debt", label: "Debt", get: (q) => q.bs.debt, good: "down" },
+  { key: "debt", label: "Debt", get: (q) => q.bs.debt, good: "down", items: DEBT_ITEMS },
   // Debt sat directly above the equity lines with nothing between them and no liabilities
   // subtotal, so the rule under "Total equity" appeared to close a block that STARTED with
   // Debt. On a page whose job is statement literacy, that is the one ordering mistake worth
   // spending a row on.
-  { key: "liabs", label: "Total liabilities", get: (q) => q.bs.debt, kind: "sub", good: "down", note: "Everything you owe. In this game that is your bank debt — there are no payables to carry." },
+  { key: "liabs", label: "Total liabilities", get: (q) => q.bs.debt, kind: "sub", good: "down", note: "Everything you owe: your bank loan, plus any convertible note or revenue-based financing. There are no payables to carry." },
   { key: "paidIn", label: "Paid-in capital", get: (q) => q.bs.paid_in, note: "Money owners have put in: seed capital plus any equity raised." },
   { key: "retained", label: "Retained earnings", get: (q) => q.bs.retained, good: "up", note: "Every quarter's net income to date, less dividends paid. This line is how the P&L flows onto the balance sheet." },
   { key: "equity", label: "Total equity", get: (q) => q.bs.equity, kind: "sub", good: "up" },
@@ -78,13 +124,32 @@ const BS: Line[] = [
 ];
 const CF: Line[] = [
   { key: "cfOpen", label: "Opening cash", get: (q) => q.bs.cash - q.cf.delta_cash },
-  { key: "cfOp", label: "From operations", get: (q) => q.cf.operating, good: "up", note: "Net income with depreciation added back (it was never a cash cost), adjusted for inventory." },
-  { key: "cfInv", label: "From investing", get: (q) => q.cf.investing, note: "Cash spent on tanks and plant (negative), or recovered by selling them." },
-  { key: "cfFin", label: "From financing", get: (q) => q.cf.financing, note: "Borrowing and equity raised, less repayments and dividends." },
+  { key: "cfOp", label: "From operations", get: (q) => q.cf.operating, good: "up", note: "Net income, adjusted for what was not cash. Open the row to see the adjustments.",
+    items: cfItems("operating", CF_LINE_LABEL.operating, {
+      depreciation: "Depreciation was a cost on the P&L, but no cash left the brewery for it, so it is added back.",
+      inventory_change: "Beer you brewed but have not sold yet. You paid to brew it, so the cash is gone, but it is not a cost until it sells. Negative when stock built up.",
+    }) },
+  { key: "cfInv", label: "From investing", get: (q) => q.cf.investing, note: "Cash spent on tanks, facilities and plant (negative), or recovered by selling them.",
+    items: cfItems("investing", CF_LINE_LABEL.investing) },
+  { key: "cfFin", label: "From financing", get: (q) => q.cf.financing, note: "Borrowing and equity raised, less repayments and dividends.",
+    items: cfItems("financing", CF_LINE_LABEL.financing, {
+      debt_draw: "What the bank actually lent. It can be less than you asked for: the bank lends up to a multiple of your equity.",
+      equity: "What reached the brewery after the fee investors charge. It can be less than you asked for once losses shrink what investors will fund.",
+    }) },
   { key: "cfOther", label: "Shock & other", get: (q) => q.cf.delta_cash - (q.cf.operating + q.cf.investing + q.cf.financing), hideIfZero: true },
   { key: "cfDelta", label: "Net change in cash", get: (q) => q.cf.delta_cash, kind: "sub", good: "up" },
   { key: "cfClose", label: "Closing cash", get: (q) => q.bs.cash, kind: "total", note: "Ties to Cash on the balance sheet." },
+  // DW-076: M&A settles and exits / rebuilds happen AFTER the books close, so in those quarters the
+  // cash the firm opens the next quarter with is not this quarter's closing cash. The bridge, itemized.
+  { key: "cfPost", label: "After the books closed", get: postCloseSum, hideIfZero: true, note: "Cash that moved after this quarter's statements were struck: buying a rival (or being bought), or a fresh start after a rebuild. It is not in the statement above — which is why next quarter opens with a different cash balance than this one closes with.",
+    items: cfItems("post_close", CF_LINE_LABEL.post_close, {
+      acquired_cash: "The acquired firm's closing cash, which came across with it.",
+      rebuild_fresh_capital: "A rebuilt brewery starts over on fresh books: the balance it closed with is surrendered and the founding capital is put up again.",
+    }) },
+  { key: "cfCarry", label: "Cash carried into next quarter", get: (q) => q.bs.cash + postCloseSum(q), kind: "total", showIf: (q) => Math.abs(postCloseSum(q)) >= 0.5, note: "Next quarter's opening cash." },
 ];
+/** DW-076: the sum of a quarter's post-close moves ($0 when none, or itemized before DW-076). */
+function postCloseSum(q: Quarter): number { return Object.values(q.cf.cf_lines?.post_close ?? {}).reduce((a: number, v) => a + (v ?? 0), 0); }
 
 const money0 = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 /** Accounting format: negatives in parentheses. */
@@ -129,6 +194,10 @@ export function StatementsAndRatios({ view }: { view: GameView }) {
   const [hover, setHover] = useState<string | null>(null);
   const [pinned, setPinned] = useState<string | null>(null);
   const hot = hover ?? pinned;
+  // DW-070: which itemized totals are open. Operating expense starts open: it is the line the
+  // itemizing exists for (which of your choices turned gross profit into net income).
+  const [open, setOpen] = useState<Set<string>>(() => new Set(["opex"]));
+  const toggle = (key: string) => setOpen((s) => { const n = new Set(s); if (n.has(key)) n.delete(key); else n.add(key); return n; });
 
   const all: Quarter[] = useMemo(() => {
     const fromHistory = view.history.flatMap((h) => {
@@ -171,27 +240,74 @@ export function StatementsAndRatios({ view }: { view: GameView }) {
     </tr>
   );
 
+  /** DW-070: a total's line items, indented beneath it. Zero lines are hidden; a quarter resolved
+   *  before itemizing prints "·" and the group ends with one hint naming those quarters. */
+  const itemRows = (l: Line, base: ((q: Quarter) => number) | null) => {
+    const it = l.items!;
+    const val = (q: Quarter, k: string): number | null => { const m = it.get(q); return m ? it.sign * (m[k] ?? 0) : null; };
+    const keys = it.order.filter((k) => shown.some((q) => Math.abs(val(q, k) ?? 0) >= 0.5));
+    const legacy = shown.filter((q) => !it.get(q));
+    return (
+      <>
+        {keys.map((k) => {
+          const cell = (q: Quarter) => { const v = val(q, k); return v == null ? "·" : common && base ? pct(base(q) ? v / base(q) : 0) : acct(v); };
+          const a = val(last, k), b = prev ? val(prev, k) : null;
+          const d = a != null && b != null ? (common && base ? (base(last) ? a / base(last) : 0) - (base(prev!) ? b / base(prev!) : 0) : a - b) : null;
+          const flat = d == null || (common && base ? Math.abs(d) < 0.0005 : Math.abs(d) < 0.5);
+          const tone = flat || !l.good ? "text-inksoft" : (d! > 0) === (l.good === "up") ? "text-hop" : "text-brick";
+          return (
+            <tr key={`${l.key}.${k}`} className="text-[0.74rem]">
+              <td className="sticky left-0 z-[1] bg-panel py-0.5 pl-4 pr-2 text-left text-ink/75">
+                {it.label[k] ?? k}
+                {it.note?.[k] && <InfoDot title={it.label[k] ?? k}>{it.note[k]}</InfoDot>}
+              </td>
+              {shown.map((q, i) => <td key={q.round} className={`whitespace-nowrap px-2 py-0.5 text-right ${val(q, k) == null ? "text-inksoft" : i === shown.length - 1 ? "text-ink/85" : "text-ink/60"}`} title={val(q, k) == null ? "Not itemized for this quarter" : undefined}>{cell(q)}</td>)}
+              {prev && <td className={`whitespace-nowrap px-2 py-0.5 text-right ${tone}`}>{flat ? (d == null ? "" : "—") : common && base ? `${d! > 0 ? "+" : "−"}${Math.abs(d! * 100).toFixed(1)} pt` : `${d! > 0 ? "+" : "−"}${money0.format(Math.round(Math.abs(d!)))}`}</td>}
+            </tr>
+          );
+        })}
+        {legacy.length > 0 && (
+          <tr><td colSpan={shown.length + 2} className="sticky left-0 pb-1 pl-4 text-left text-[0.66rem] italic text-inksoft">
+            Not itemized for {legacy.map((q) => `R${q.round + 1}`).join(", ")}: {legacy.length === 1 ? "that quarter was" : "those quarters were"} resolved before statements were itemized, so only the total is on record.
+          </td></tr>
+        )}
+      </>
+    );
+  };
+
   const table = (lines: Line[], base: ((q: Quarter) => number) | null) => (
     <div className="overflow-x-auto">
       <table className="w-full border-collapse text-[0.8rem]">
         <thead>{colHead()}</thead>
         <tbody className="tnum">
-          {lines.filter((l) => !l.hideIfZero || shown.some((q) => Math.abs(l.get(q)) >= 0.5)).map((l) => {
+          {lines.filter((l) => (!l.hideIfZero || shown.some((q) => Math.abs(l.get(q)) >= 0.5)) && (!l.showIf || shown.some(l.showIf))).map((l) => {
             const on = uses.has(l.key);
+            // Itemizable when any quarter on screen carries the breakdown (older quarters print "·").
+            // No chevron when every item on screen is zero (nothing to open).
+            const canOpen = !!l.items && shown.some((q) => Object.values(l.items!.get(q) ?? {}).some((v) => Math.abs(v ?? 0) >= 0.5));
+            const isOpen = canOpen && open.has(l.key);
             const cell = (q: Quarter) => (common && base ? pct(base(q) ? l.get(q) / base(q) : 0) : acct(l.get(q)));
             const d = prev ? (common && base ? (base(last) ? l.get(last) / base(last) : 0) - (base(prev) ? l.get(prev) / base(prev) : 0) : l.get(last) - l.get(prev)) : 0;
             const flat = common && base ? Math.abs(d) < 0.0005 : Math.abs(d) < 0.5;
             const tone = flat || !l.good ? "text-inksoft" : (d > 0) === (l.good === "up") ? "text-hop" : "text-brick";
             const rule = l.kind === "total" ? "border-t-2 border-ink/70 font-bold" : l.kind === "sub" ? "border-t border-ink/40 font-semibold" : "border-t border-line";
             return (
-              <tr key={l.key} className={`${rule} ${on ? "bg-gold/25" : ""} transition-colors`}>
+              <Fragment key={l.key}>
+              <tr className={`${rule} ${on ? "bg-gold/25" : ""} transition-colors`}>
                 <td className={`sticky left-0 z-[1] py-1 pr-2 text-left ${on ? "bg-[color-mix(in_srgb,var(--color-gold)_25%,var(--color-panel))] shadow-[inset_3px_0_0_var(--color-gold)] pl-1.5" : "bg-panel"} ${l.kind ? "text-ink" : "text-ink/85"}`}>
-                  {l.label}
+                  {canOpen ? (
+                    <button type="button" onClick={() => toggle(l.key)} aria-expanded={isOpen} className="inline-flex items-center gap-1 text-left hover:text-copperdeep">
+                      <span aria-hidden className={`inline-block w-2.5 text-[0.6rem] text-copperdeep transition-transform ${isOpen ? "rotate-90" : ""}`}>▶</span>
+                      {l.label}
+                    </button>
+                  ) : l.label}
                   {l.note && <InfoDot title={l.label}>{typeof l.note === "function" ? l.note(view) : l.note}</InfoDot>}
                 </td>
                 {shown.map((q, i) => <td key={q.round} className={`whitespace-nowrap px-2 py-1 text-right ${l.get(q) < -0.5 && l.kind ? "text-brick" : ""} ${i === shown.length - 1 ? "text-ink" : "text-ink/70"}`}>{cell(q)}</td>)}
                 {prev && <td className={`whitespace-nowrap px-2 py-1 text-right ${tone}`}>{flat ? "—" : common && base ? `${d > 0 ? "+" : "−"}${Math.abs(d * 100).toFixed(1)} pt` : `${d > 0 ? "+" : "−"}${money0.format(Math.round(Math.abs(d)))}`}</td>}
               </tr>
+              {isOpen && itemRows(l, base)}
+              </Fragment>
             );
           })}
         </tbody>

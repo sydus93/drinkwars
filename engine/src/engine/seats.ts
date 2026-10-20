@@ -62,6 +62,25 @@ export const ALL_LEVERS: (keyof FirmDecision)[] = [
   ...DESK_LEVERS.commercial, ...DESK_LEVERS.operations, ...DESK_LEVERS.people, ...DESK_LEVERS.finance, ...DESK_LEVERS.strategy,
 ];
 
+// "Empty" values are all the same absence: 0 / false / "" / [] / {} / null / undefined — so a
+// form default of 0 never reads as disagreeing with a plan that omits the lever. Numbers compare
+// to the cent. The ONE equality every merge + Reconcile comparison uses (DW-073).
+// DW-076: list levers (builds, hires, poach offers, facility ids) are SETS to the engine — the same
+// orders in another sequence are the same decision, so a client that rebuilds its queue from the
+// stored slice after a reload (City View, poaches) can never register a phantom "changed" lever.
+const norm = (v: unknown): unknown => {
+  if (v == null || v === false || v === "") return null;
+  // round FIRST, then test for zero — float dust (0.001) is the same absence as 0 (DW-080)
+  if (typeof v === "number") { const c = Math.round(v * 100) / 100; return c === 0 ? null : c; }
+  if (Array.isArray(v)) return v.length ? v.map(norm).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))) : null;
+  if (typeof v === "object") {
+    const ents = Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, norm(x)] as const).filter(([, x]) => x !== null).sort(([a], [b]) => a.localeCompare(b));
+    return ents.length ? Object.fromEntries(ents) : null;
+  }
+  return v;
+};
+export const sameLever = (a: unknown, b: unknown): boolean => JSON.stringify(norm(a)) === JSON.stringify(norm(b));
+
 /** One seat's contribution: the levers it set, plus its role (or an explicit desk). */
 export interface SeatPartial {
   role?: string | null;
@@ -69,56 +88,113 @@ export interface SeatPartial {
   partial: Partial<FirmDecision>;
   /** when this slice was submitted — among non-owners the LATER word wins (DW-051) */
   updated_at?: number | null;
+  /** DW-074: the levers this seat actually CHANGED this round (sticky across its resubmits).
+   *  A seat ships far more than it decides — its whole desk, seeded from the standing plan —
+   *  so presence in `partial` says nothing; this list is the record of intent. Absent (a
+   *  slice stored before DW-074, or an older client mid-deploy) ⇒ the merge infers it:
+   *  "differs from the standing plan". */
+  touched?: readonly string[] | null;
 }
+
+/** Did this seat deliberately set lever `f`? The explicit record when the slice carries one,
+ *  else inferred against the standing plan (see SeatPartial.touched). */
+export const seatTouched = (s: SeatPartial, f: keyof FirmDecision, base: FirmDecision): boolean =>
+  s.touched ? s.touched.includes(f as string) : !sameLever(s.partial[f], (base as unknown as Record<string, unknown>)[f as string]);
 
 const deskOf = (s: SeatPartial): SeatDesk | "all" =>
   s.desk ?? (s.role ? ROLE_DESK[s.role] ?? "all" : "all");
 
+/** The composed decision plus, per lever, which seat (index into `seats`) it came from.
+ *  A lever absent from `from` kept the base (standing-plan) value. */
+export interface Composition { decision: FirmDecision; from: Partial<Record<keyof FirmDecision, number>> }
+
 /**
- * Fold seat partials into one FirmDecision over a base (a complete default — e.g. the
- * zero-fill). Generalist ("all") seats are applied first so specialists win for their
- * own desk; a desk with no seat keeps the base value. Only fields a seat actually set
- * (≠ undefined) overlay, so partial edits never wipe another desk. `firm_id` stays base.
+ * THE precedence rule for team firms — the server's merge, the Reconcile card, the commit
+ * dial and the instructor's team view all call this one function, so the card can never tell
+ * a student one thing while the engine does another (DW-059's "do this first").
+ *
+ * Per lever, over `base` (the firm's standing plan — last round's levers carried forward):
+ *  1. Non-owners (the CEO / desk "all", and anyone covering a desk that isn't theirs): the
+ *     LATER submission wins (DW-051), so a cover for an empty chair lands — but only a word that
+ *     was meant: a seat that left the lever alone never erases a teammate's deliberate value
+ *     (DW-080). The CEO overrules a cover by changing the lever, or holding it (Keep mine).
+ *  2. The desk's own specialist then wins — IF they changed the lever this round (seatTouched).
+ *     A lever the specialist left alone means "no change from me": a value the CEO changed
+ *     stands instead (DW-073: every specialist submit ships their whole desk, so an untouched
+ *     $0 / last-round default silently erased the CEO's tanks, borrowing and equity in all four
+ *     rounds of Sprint 1 at one firm). If neither changed it, the specialist's submitted value
+ *     stands, as it always did. Only the CEO gets this: a PEER's suggestion on a seated desk
+ *     still trades only if that chair stays silent all round (DW-052).
+ *  3. An EMPTY collection (no hires, no builds…) never overwrites a real request (DW-071) —
+ *     unless the seat set it deliberately (the lever is in its list): the desk's own chair
+ *     declining, or the CEO cancelling a teammate's suggestion for an empty desk (DW-080).
+ *  4. Market research (`buy_info`) is a TEAM purchase (DW-081): any seat that buys it buys it for
+ *     the firm, and no seat vetoes it — the report reaches every desk the moment it lands, and the
+ *     server's ratchet keeps it bought all round. Provenance = the first buyer.
+ * Pure + deterministic: ties keep input order; stored timestamps order replays exactly.
  */
-export function mergeMemberDecisions(base: FirmDecision, seats: SeatPartial[]): FirmDecision {
-  const out: FirmDecision = { ...base };
-  // Per lever (DW-051): the desk's own specialist always wins. Among everyone else — the CEO
-  // (desk "all") and any teammate covering an empty/silent chair — the LATER submission wins,
-  // so a CFO's hire for an empty CHRO chair lands even if the CEO submitted earlier, and the
-  // CEO can still overrule it by submitting again afterwards (their form mirrors covers, so a
-  // re-submit carries them unless deliberately changed). Ties keep input order; ordering by
-  // stored timestamps is deterministic for replay.
+export function composeTeamDecision(base: FirmDecision, seats: SeatPartial[]): Composition {
+  const out = { ...base } as unknown as Record<string, unknown>;
+  const from: Record<string, number> = {};
+  const lastGeneralist: Record<string, number> = {};
   const owns = (s: SeatPartial, f: keyof FirmDecision): boolean => {
     const desk = deskOf(s);
     return desk !== "all" && (DESK_LEVERS[desk] as (keyof FirmDecision)[]).includes(f);
   };
-  // DW-071: an EMPTY collection (no hires, no builds, no bids…) is not a decision. Every seat
-  // ships its own desk's one-shot levers every submit, reset to [] each round, so an owner who
-  // never touched the hiring card sent hire_roles: [] — and, owning the desk, erased the hires
-  // a teammate had requested (game 1: one team lost its hires in r0 AND r1 this way). An empty
-  // value now only fills a lever nobody else set; it never overwrites a real request.
   const isEmpty = (v: unknown): boolean =>
     Array.isArray(v) ? v.length === 0 : v !== null && typeof v === "object" && Object.keys(v as object).length === 0;
-  const put = (f: keyof FirmDecision, v: unknown) => {
-    const cur = (out as unknown as Record<string, unknown>)[f as string];
-    if (isEmpty(v) && cur !== undefined && !isEmpty(cur)) return;
-    (out as unknown as Record<string, unknown>)[f as string] = v;
+  const put = (f: string, v: unknown, i: number) => {
+    if (isEmpty(v) && out[f] !== undefined && !isEmpty(out[f])) return;
+    out[f] = v;
+    from[f] = i;
   };
-  const byTime = seats.map((s, i) => ({ s, i })).sort((a, b) => ((a.s.updated_at ?? 0) - (b.s.updated_at ?? 0)) || (a.i - b.i)).map((x) => x.s);
-  for (const s of byTime) {
+  const byTime = seats.map((s, i) => ({ s, i })).sort((a, b) => ((a.s.updated_at ?? 0) - (b.s.updated_at ?? 0)) || (a.i - b.i));
+  for (const { s, i } of byTime) {
     for (const f of ALL_LEVERS) {
       if (owns(s, f)) continue;
       const v = s.partial[f];
-      if (v !== undefined) put(f, v);
+      if (v === undefined) continue;
+      const mine = seatTouched(s, f, base);
+      // DW-080: later wins only for a word that was MEANT. A seat that left the lever alone never
+      // erases a teammate's deliberate one — a CEO's unchanged resubmit (its form a poll behind)
+      // wiped a cover for an empty chair. To overrule a cover the CEO changes it or holds it.
+      const held = from[f];
+      if (held !== undefined && !mine && seatTouched(seats[held], f, base)) continue;
+      // An untouched blank never replaces a real request (DW-071) — but a deliberate "none" does:
+      // the CEO cancelling a hire or build a teammate suggested for an empty desk.
+      if (isEmpty(v) && !mine && out[f] !== undefined && !isEmpty(out[f])) continue;
+      out[f] = v;
+      from[f] = i;
+      if (deskOf(s) === "all") lastGeneralist[f] = i;
     }
   }
-  for (const s of seats) {
+  seats.forEach((s, i) => {
     for (const f of ALL_LEVERS) {
       if (!owns(s, f)) continue;
       const v = s.partial[f];
-      if (v !== undefined) put(f, v);
+      if (v === undefined) continue;
+      const g = lastGeneralist[f];
+      if (g !== undefined && !seatTouched(s, f, base) && seatTouched(seats[g], f, base)) {
+        // The owner left it alone and the CEO changed it: the CEO's call stands, even over a
+        // later peer suggestion.
+        out[f] = seats[g].partial[f];
+        from[f] = g;
+        continue;
+      }
+      // An owner's explicit word is final even when it is "none": the chair declining a
+      // teammate's suggested hire or build (Keep mine) must be able to clear it. The empty-
+      // collection guard exists for UNTOUCHED blanks (DW-071), which never reach here as touched.
+      if (s.touched?.includes(f as string)) { out[f] = v; from[f] = i; continue; }
+      put(f, v, i);
     }
-  }
+  });
+  const buyer = byTime.find(({ s }) => s.partial.buy_info === true && seatTouched(s, "buy_info", base)); // rule 4
+  if (buyer) { out.buy_info = true; from.buy_info = buyer.i; }
   out.firm_id = base.firm_id;
-  return out;
+  return { decision: out as unknown as FirmDecision, from: from as Composition["from"] };
+}
+
+/** Fold seat partials into the one FirmDecision the engine resolves (see composeTeamDecision). */
+export function mergeMemberDecisions(base: FirmDecision, seats: SeatPartial[]): FirmDecision {
+  return composeTeamDecision(base, seats).decision;
 }

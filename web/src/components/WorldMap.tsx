@@ -1,5 +1,5 @@
 import type { MarketConfig } from "drinkwars-engine";
-import { fmt } from "../labels.js";
+import { fmt, marketName } from "../labels.js";
 import { WORLD_LAND_PATH } from "./worldland.js";
 
 export interface MarketPerf {
@@ -111,7 +111,30 @@ export function WorldMap({
         );
       })}
       {/* market pins */}
-      {markets.map((m) => {
+      {(() => {
+        // DW-080: one name per market (the City View's city), and a label drops BELOW its pin when it
+        // would print over a neighbour's — Front Range / Cedar Falls / Harbor City crowd on a phone.
+        const below = new Set<string>();
+        const placed: { x: number; y: number; w: number }[] = [];
+        const hits = (x: number, y: number, w: number, h: number) => placed.some((p) => Math.abs(p.x - x) < (p.w + w) / 2 + 2 * u && Math.abs(p.y - y) < h);
+        for (const m of [...markets].sort((a, b) => pos[a.id][0] - pos[b.id][0])) {
+          const [x, y] = pos[m.id];
+          const w = marketName(m.id, m.label).length * 4.8 * u, ly = y - radius(m.id) - 4 * u;
+          if (hits(x, ly, w, 10 * u)) { below.add(m.id); placed.push({ x, y: y + radius(m.id) + 9 * u, w }); }
+          else placed.push({ x, y: ly, w });
+        }
+        // the "$X to enter" captions collide the same way — step each down until it is clear (two tries)
+        const entryY = new Map<string, number>();
+        for (const m of [...markets].sort((a, b) => pos[a.id][0] - pos[b.id][0])) {
+          if (isIn(m.id) || !(m.entry_cost > 0)) continue;
+          const [x, y] = pos[m.id];
+          const w = `${fmt.money(m.entry_cost)} to enter`.length * 3.6 * u;
+          let ey = y + radius(m.id) + (below.has(m.id) ? 17 : 8.5) * u;
+          for (let k = 0; k < 2 && hits(x, ey, w, 7.5 * u); k++) ey += 7.5 * u;
+          entryY.set(m.id, ey);
+          placed.push({ x, y: ey, w });
+        }
+        return markets.map((m) => {
         const [x, y] = pos[m.id];
         const inMkt = isIn(m.id);
         const r = radius(m.id);
@@ -126,21 +149,22 @@ export function WorldMap({
               strokeWidth={1.2 * u}
               strokeDasharray={inMkt ? "0" : `${2.5 * u} ${2.5 * u}`}
             />
-            <text x={x} y={y - r - 4 * u} textAnchor="middle" className="fill-ink font-semibold" fontSize={8.5 * u} paintOrder="stroke" stroke="var(--color-paper)" strokeWidth={2.4 * u} strokeLinejoin="round">
-              {m.label}
+            <text x={x} y={below.has(m.id) ? y + r + 9 * u : y - r - 4 * u} textAnchor="middle" className="fill-ink font-semibold" fontSize={8.5 * u} paintOrder="stroke" stroke="var(--color-paper)" strokeWidth={2.4 * u} strokeLinejoin="round">
+              {marketName(m.id, m.label)}
             </text>
             {m.kind === "export" && inMkt && <text x={x} y={y + 2.6 * u} textAnchor="middle" className="fill-paper font-bold" fontSize={6.5 * u}>FX</text>}
             {share != null && inMkt && m.kind !== "export" && share > 0 && (
               <text x={x} y={y + 2.6 * u} textAnchor="middle" className="fill-paper font-bold" fontSize={7 * u}>{share}%</text>
             )}
             {!inMkt && m.entry_cost > 0 && (
-              <text x={x} y={y + r + 8.5 * u} textAnchor="middle" className="fill-inksoft" fontSize={6.5 * u} paintOrder="stroke" stroke="var(--color-paper)" strokeWidth={2 * u} strokeLinejoin="round">
+              <text x={x} y={entryY.get(m.id) ?? y + r + 8.5 * u} textAnchor="middle" className="fill-inksoft" fontSize={6.5 * u} paintOrder="stroke" stroke="var(--color-paper)" strokeWidth={2 * u} strokeLinejoin="round">
                 {fmt.money(m.entry_cost)} to enter
               </text>
             )}
           </g>
         );
-      })}
+        });
+      })()}
     </svg>
   );
 }

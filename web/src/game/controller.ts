@@ -4,7 +4,8 @@
  * adaptive NPCs — with no backend. The human is firm_1; the rivals are the
  * adaptive best-response bots from the engine. This is app-spec §9 step 0.
  */
-import { GameOrchestrator, InMemoryAdapter, randomBreweryNames, renameFirms } from "drinkwars-server";
+import { GameOrchestrator, InMemoryAdapter, randomBreweryNames, renameFirms, getSeatForecasts, submitForecasts } from "drinkwars-server";
+import type { ForecastCall, SeatForecasts } from "drinkwars-server"; // DW-077 solo calls
 import { resolveConfig, decideAdaptive, ADAPTIVE_LEANS, inventoryEnabled, roleBriefings, summarizeAgreementsFor, summarizeLobbying, generateHiringMarket, projectMarkets, projectFirms, projectShocks, projectHistory, segmentDemandTotals, compareStanding } from "drinkwars-engine";
 import type { RoleBriefing, AllianceSummary, LobbySummary, Candidate } from "drinkwars-engine";
 import type { BalanceSheet, CashFlow, Config, ConfigOverride, FirmDecision, FirmId, FirmRoundResult, FirmState, Lean, ModulesConfig, PnL, RoundResult, SegmentId, WorldState } from "drinkwars-engine";
@@ -69,6 +70,8 @@ export interface OwnTrend {
   unitCost?: number;
   capacity?: number;
   categories?: Record<SegmentId, { price: number; sold: number; wanted: number; revenue: number; share: number }>;
+  keyHires?: number; // DW-080 (engine OwnTrendView.keyHires)
+  headcount?: number; // roster size after the round (people module on only)
 }
 export interface FieldTrend {
   round: number;
@@ -102,7 +105,7 @@ export interface FirmSnapshot {
   distressRounds: number; // consecutive rounds below solvency health (M&A target gate)
   keyHires: string[]; // MOD-B03 roles currently on staff
   verticalAssets: string[]; // MOD-B06 owned assets
-  employees: { id: string; name: string; role: string; skill: number; satisfaction: number; salary: number }[]; // MOD-B12 roster (for scouting/poaching)
+  employees: { id: string; name: string; role: string; skill: number; satisfaction: number; salary: number; tenure_rounds?: number; loyalty?: number }[]; // MOD-B12 roster (for scouting/poaching); DW-075 tenure/loyalty on the OWN firm only
   facilities: { type: string; location_id?: string; market_id?: string; active: boolean }[]; // MOD-B11 sited facilities (for competitor pins)
 }
 
@@ -117,6 +120,9 @@ export interface ShockSignal {
   roundsAway: number; // round − currentRound (≤0 ⇒ active now)
   active: boolean; // currently in effect
   signaled: boolean; // had a forewarning
+  region?: string; // regional shock: the market it struck (a drought hits one region's water)
+  regionLabel?: string;
+  exposure?: number; // 0..1 — this firm's production share in that region (0 ⇒ spared)
 }
 
 /** Within-market standing for one segment — drives the City View "who leads each
@@ -230,7 +236,9 @@ export class SinglePlayerGame {
   private founding: { facilities: { type: string; district?: string; lot?: string }[]; hires: string[] } | null = null;
 
   async start(opts: { breweryName?: string; difficulty?: Difficulty; override?: ConfigOverride; tagline?: string; founding?: { facilities: { type: string; district?: string; lot?: string }[]; hires: string[] } } = {}): Promise<void> {
-    this.config = resolveConfig(opts.override);
+    // DW-077: solo plays the calls tickets too (the "member" seat), on by default; an override may switch them off.
+    const ov = (opts.override ?? {}) as ConfigOverride & { classroom?: { forecasts?: { enabled: boolean } } };
+    this.config = resolveConfig({ ...ov, classroom: { ...ov.classroom, forecasts: { enabled: true, ...ov.classroom?.forecasts } } } as ConfigOverride);
     this.difficulty = opts.difficulty ?? "competitive";
     this.tagline = opts.tagline ?? "";
     this.founding = opts.founding ?? null;
@@ -289,7 +297,7 @@ export class SinglePlayerGame {
     // disruption is a genuine surprise and the lesson is standing preparedness, not
     // gaming a countdown. (The signaled_noisy path below still honors any shock an
     // instructor explicitly marks as telegraphed; none are by default.)
-    const shocks: ShockSignal[] = projectShocks(world, game.current_round);
+    const shocks: ShockSignal[] = projectShocks(world, game.current_round, this.config, this.humanFirmId);
 
     // Per-market ("city") view — the SHARED projection (engine views.ts) so single-player and
     // multiplayer render the same City View. Gated via activeMarkets (home/domestic always;
@@ -443,6 +451,12 @@ export class SinglePlayerGame {
     }
     return scaled;
   }
+
+  // ── DW-077 calls (forecast commitment) for the solo seat — the same server functions the
+  // transport serves, run against the in-browser store. Satisfies components/Calls.ts CallsClient.
+  callsEnabled(): boolean { return !!this.config?.classroom?.forecasts?.enabled; }
+  forecasts(): Promise<SeatForecasts> { return getSeatForecasts(this.store, { gameId: this.gameId, userId: "u_1" }); }
+  submitForecasts(calls: Record<string, ForecastCall>): Promise<unknown> { return submitForecasts(this.store, () => Date.now(), { gameId: this.gameId, userId: "u_1" }, calls); }
 
   /** Submit the human decision, auto-play the adaptive NPCs, resolve, advance. */
   async play(humanDecision: FirmDecision): Promise<void> {

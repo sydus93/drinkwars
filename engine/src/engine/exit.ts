@@ -7,6 +7,7 @@
  */
 import type { Config, FirmId, FirmState, SegmentId, WorldState } from "../types.js";
 import { initFirm } from "./init.js";
+import { ledgerAdd, type PostCloseLedger } from "./finance.js";
 
 const fmNum = (n: number): string => Math.round(n).toLocaleString("en-US"); // comma-grouped for event prose
 
@@ -18,6 +19,7 @@ export interface ExitInputs {
   coverageByFirm: Map<FirmId, number>;
   sharesByFirm: Map<FirmId, Map<SegmentId, number>>;
   valuationByFirm: Map<FirmId, number>;
+  ledger?: PostCloseLedger; // DW-076: post-close cash moves (rebuild) for the itemized cash-flow statement
 }
 
 function assets(f: FirmState): number {
@@ -131,11 +133,14 @@ export function processExits(input: ExitInputs): { events: string[] } {
         continue;
       }
       f.reentry_count += 1;
+      const cashClosed = f.cash; // DW-076: the statement closed here; the fresh books open elsewhere
       resetToFresh(f, c, reposition, round);
+      ledgerAdd(input.ledger, f.id, "rebuild_fresh_capital", f.cash - cashClosed);
       // The re-entry cost is a one-time charge: it must hit cash AND equity, or the
       // balance sheet (§7.2) breaks. Route it through retained earnings.
       f.cash -= reentryCost;
       f.retained_earnings -= reentryCost;
+      ledgerAdd(input.ledger, f.id, "rebuild_reentry_cost", -reentryCost);
       f.status = "exited_rebuilt"; // re-activates after cooldown (see init/advance)
       events.push(`EXIT→REBUILD: ${f.id} repositions to ${reposition ?? "(unset)"}, pays $${fmNum(reentryCost)} (cooldown to r${f.cooldown_until_round})`);
     }

@@ -5,17 +5,19 @@
 // CHRO suggests an equity raise → CFO + CEO both see it, CFO's own word wins · CEO's projected
 // cash tracks a teammate's submitted spend.
 import puppeteer from "puppeteer-core";
+import { autoConfirm } from "./confirm-dialog.mjs";
+const API = (process.env.API ?? "http://localhost:8787").replace(/\/$/, ""), WEB = (process.env.WEB ?? "http://localhost:5173").replace(/\/$/, "") + "/"; // ports via env (defaults unchanged)
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ["--no-sandbox"] });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const results = []; const ok = (c, l, d = "") => { const line = `${c ? "PASS" : "FAIL"}  ${l}${d ? " — " + d : ""}`; results.push(line); console.log(line); };
 const logs = [];
-const mk = async (tag) => { const ctx = await browser.createBrowserContext(); const p = await ctx.newPage(); p.on("pageerror", (e) => logs.push(`[${tag} pageerror] ${e.message}`)); p.on("dialog", async (d) => { logs.push(`[${tag} dialog] ${d.message().slice(0, 300)}`); await d.accept(); }); await p.goto("http://localhost:5173/", { waitUntil: "networkidle0" }); return p; };
+const mk = async (tag) => { const ctx = await browser.createBrowserContext(); const p = await ctx.newPage(); await autoConfirm(p, (t) => logs.push(`[${tag} dialog] ${t.replace(/\s+/g, " ").slice(0, 400)}`)); p.on("pageerror", (e) => logs.push(`[${tag} pageerror] ${e.message}`)); p.on("dialog", async (d) => { logs.push(`[${tag} dialog] ${d.message().slice(0, 300)}`); await d.accept(); }); await p.goto(WEB, { waitUntil: "networkidle0" }); return p; };
 const clickText = async (page, text, tag = "button") => { const sel = `xpath/.//${tag}[contains(normalize-space(.), ${JSON.stringify(text)})]`; const el = await page.waitForSelector(sel, { timeout: 8000 }).catch(() => null); if (!el) throw new Error(`no ${tag} "${text}"`); await el.click(); };
 const has = (page, re) => page.evaluate((src) => new RegExp(src, "i").test(document.body.innerText), re.source);
 const waitText = (page, re, t = 12000) => page.waitForFunction((src) => new RegExp(src, "i").test(document.body.innerText), { timeout: t }, re.source);
 const tok = (page) => page.evaluate(() => JSON.parse(localStorage.getItem("dw_mp")).token);
-const view = async (t) => (await fetch(`http://localhost:8787/view?token=${t}`)).json();
+const view = async (t) => (await fetch(`${API}/view?token=${t}`)).json();
 const typeNum = async (page, labelRe, value) => {
   const idx = await page.evaluate((src) => {
     const re = new RegExp(src, "i");
@@ -81,9 +83,12 @@ await clickText(chro, "City & Globe");
 await sleep(800);
 const lot = await chro.waitForSelector('button[title^="Available parcel"]', { timeout: 8000 });
 await lot.click(); await sleep(400);
-const typeBtn = await chro.waitForSelector('xpath/.//button[contains(., "to build")]', { timeout: 5000 });
-await typeBtn.click(); await sleep(300);
-await clickText(chro, "Build ·");
+// The lease popover is a top-layer portal (DW-079) holding a phone sheet AND a desktop panel, and the
+// City's siting panel has its own "Build ·" — so act inside the VISIBLE popover, not on the first match.
+const inPop = (sel) => chro.evaluate((q) => { const d = [...document.querySelectorAll('[data-dw="map-popover"]')].find((x) => x.getClientRects().length); const b = d?.querySelector(q); b?.click(); return !!b; }, sel);
+if (!(await inPop("button.flex"))) throw new Error("no facility type in the lease popover");
+await sleep(300);
+if (!(await inPop("button.tt-btn--go"))) throw new Error("no Build button in the lease popover");
 await sleep(300);
 await clickText(chro, "Decide");
 await sleep(400);
@@ -109,18 +114,25 @@ await sleep(400);
 await typeNum(chro, /raise equity/i, 50000);
 await sleep(300);
 await submitDesk(chro);
-await sleep(4000);
-ok(await has(cfo, /suggests this for YOUR desk/i), "CFO sees the CHRO's equity suggestion on their desk");
-ok(await has(ceo, /suggests this for the CFO/i), "CEO sees the suggestion routed to the CFO's desk");
+// A hidden tab does not poll at all (MultiplayerPlay: document.hidden → no fetch until
+// visibilitychange), and only ONE page is "visible" at a time in this browser — so a check on a
+// teammate's page must bring that page to the front and WAIT for its poll, not sleep and hope.
+const seen = async (page, re, t = 20000) => { await page.bringToFront(); return waitText(page, re, t).then(() => true, () => false); };
+// DW-077: the suggestion is a row in the commit panel's differs block — on the CFO's panel with the
+// suggested number and "yours is used"; on the CEO's panel routed to the CFO's desk, "the CFO decides".
+ok(await seen(cfo, /Raise equity\s*\n\s*CHRO Cy Chro suggested \$[\d,]+ for your desk; yours is used/i), "CFO sees the CHRO's equity suggestion on their desk — their own number is used");
+ok(await seen(ceo, /CHRO Cy Chro suggested \$[\d,]+ for the CFO's desk \(Ben Cfo\) · the CFO decides/i), "CEO sees the suggestion routed to the CFO's desk — the CFO decides");
 v = await view(ceoT);
 ok((v.teamPlan?.composed?.equity_raise ?? 0) === 0, "composed plan keeps the CFO's own word (equity 0) — suggestion doesn't silently apply", String(v.teamPlan?.composed?.equity_raise));
 
 // ── 7. CEO's projected cash tracks a teammate's submitted spend (proj overlay) ──
-const dial = (p) => p.evaluate(() => { const m = document.body.innerText.match(/(?:Projected cash|Cash) · pre-sales\s*\n?\s*(\$-?[\d,]+)/i); return m ? Number(m[1].replace(/[$,]/g, "")) : null; });
+const dial = (p) => p.evaluate(() => { const m = document.body.innerText.match(/(?:Projected cash|Cash) · pre-sales\s*\n?\s*([−-]?\$-?[\d,]+)/i); return m ? Number(m[1].replace(/[$,]/g, "").replace("−", "-")) : null; });
+await ceo.bringToFront(); await sleep(600);
 const before = await dial(ceo);
 const cfoPartial = (await view(cfoT)).teamPlan.seats.find((s) => s.me).partial;
-await fetch("http://localhost:8787/submit", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token: cfoT, decision: { ...cfoPartial, invest_T_inv: 30000 } }) });
-await sleep(5000);
+await fetch(`${API}/submit`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token: cfoT, decision: { ...cfoPartial, invest_T_inv: 30000 } }) });
+await ceo.bringToFront();
+await ceo.waitForFunction((b) => { const m = document.body.innerText.match(/(?:Projected cash|Cash) · pre-sales\s*\n?\s*([−-]?\$-?[\d,]+)/i); return m && Number(m[1].replace(/[$,]/g, "").replace("−", "-")) !== b; }, { timeout: 20000 }, before).catch(() => null);
 const after = await dial(ceo);
 ok(before != null && after != null && Math.abs(before - after - 30000) < 1, "CEO's commit dial drops by the CFO's $30k investor-relations spend", JSON.stringify({ before, after }));
 } catch (e) { results.push("ABORT " + e.message); console.log("ABORT " + e.message.split("\n")[0]); }

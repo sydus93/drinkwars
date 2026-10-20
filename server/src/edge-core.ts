@@ -23,3 +23,5 @@ export {
 // (supabase/functions/drinkwars/index.ts); without the re-export Deno fails to
 // link the module and the whole function 500s.
 export { withRequestCache } from "./request-cache.js";
+// DW-074 calls channel — both transports route /forecasts through these three.
+export { getSeatForecasts, submitForecasts, getGameForecasts } from "./forecasts.js";

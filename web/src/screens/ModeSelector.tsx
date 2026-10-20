@@ -63,11 +63,13 @@ export function ModeSelector({ onChange }: { onChange: (modules: ModuleSelection
     setPresetId("custom");
     commit(s);
   };
-  const toggleOpen = (id: string) => {
-    const s = new Set(open);
+  // Functional update for the same reason as `selectedRef` above: two shelves opened in one tick
+  // both copied the same stale `open`, so only the last stayed open (scripted set-up hit it).
+  const toggleOpen = (id: string) => setOpen((prev) => {
+    const s = new Set(prev);
     s.has(id) ? s.delete(id) : s.add(id);
-    setOpen(s);
-  };
+    return s;
+  });
 
   const activePreset = PRESETS.find((p) => p.id === presetId);
 

@@ -273,6 +273,10 @@ export interface LaborConfig {
   departure_prob: number; // per-hire per-round chance of leaving
   t_emp_mitigation: number; // max fraction of that risk employee trust removes
   t_emp_halfsat: number;
+  // DW-075: the flat hire bonus compounds with tenure — multiplier min(cap, 1 + rate × tenure),
+  // landed as per-round increments and removed IN FULL when the person leaves or is let go.
+  // Absent ⇒ off (multiplier stays 1), so pre-DW-075 games replay unchanged.
+  tenure_bonus?: { rate: number; cap: number };
 }
 
 /** MOD-B08 · Financial instruments (convertible note + revenue-based financing).
@@ -638,6 +642,13 @@ export interface EmployeesConfig {
   // vs ~40 in the base game) and the logit demand turns that into winner-take-all
   // (DW-041 all-modules collapse). Absent ⇒ no saturation (legacy behavior).
   stock_halfsat?: number;
+  // DW-075 loyalty dividend. Sprint 1 showed "keep your people" had no lever: a veteran
+  // contributed exactly what a newcomer did, so losing one cost only the empty rounds.
+  // Loyalty accrues each round by rate × satisfaction (engaged tenure, not mere tenure),
+  // caps at `cap`, multiplies the contribution by (1 + loyalty), and shields against the
+  // anonymous poach roll by (1 − poach_shield × loyalty/cap). A poached person restarts at
+  // 0 with the new firm. Absent ⇒ off, so a game created before DW-075 replays bit-for-bit.
+  loyalty?: { rate: number; cap: number; poach_shield: number };
 }
 /** A hireable candidate in the round's market (pre-hire; deterministic per round). */
 export interface Candidate {
@@ -659,6 +670,9 @@ export interface Employee {
   tenure_rounds: number;
   hired_round: number;
   avatar_seed: string;
+  // DW-075: built-up loyalty, 0..cap; contribution × (1 + loyalty). Absent on people stored
+  // before DW-075 (read as 0) — and the field only moves when `employees.loyalty` is set.
+  loyalty?: number;
 }
 
 /** MOD-A10 · Market conduct & stakeholder backlash. Gives stakeholder management defensive
@@ -804,6 +818,10 @@ export interface Config {
   scoring: ScoringConfig;
   information: { cost: number }; // §15.7 market-research action: costed, no state effect
   modules?: ModulesConfig; // expansion modules; absent ⇒ all-off (pre-modules / legacy games)
+  /** Classroom-layer switches the ENGINE never reads (they ride in the game's config so both
+   *  transports and the client see the same flag). `forecasts` = the calls channel (DW-074):
+   *  per-seat predictions stored and scored OUTSIDE FirmDecision / merge / resolve. Absent ⇒ off. */
+  classroom?: { forecasts?: { enabled: boolean } };
 }
 
 /** A deep-partial of Config for overrides / treatment conditions. */
@@ -870,7 +888,8 @@ export interface FirmState {
   // MOD-B06 vertical integration (empty when off)
   vertical_assets: { id: string; acquired_round: number }[];
   // MOD-B03 labor market (empty when off)
-  key_hires: { role: string; hired_round: number }[];
+  // DW-075: tenure_mult = the bonus multiplier currently landed on the stocks (absent ⇒ 1).
+  key_hires: { role: string; hired_round: number; tenure_mult?: number }[];
   // MOD-B11 facilities (named physical capacity assets; empty/undefined when off)
   facilities?: Facility[];
   // MOD-B12 employees (named human capital; empty/undefined when off)
@@ -1123,7 +1142,40 @@ export interface PnL {
   ebit: number;
   interest: number;
   net_income: number;
+  /** DW-070: what `opex` is made of — every term the total sums, keyed by OPEX_LINE_KEYS. Additive:
+   *  the total is computed exactly as before, these sum to it. Zero lines are omitted (a missing key
+   *  is $0). Absent on rounds resolved before DW-070. */
+  opex_lines?: Partial<Record<OpexLineKey, number>>;
 }
+
+/** DW-070 opex line items, in statement order: the six spending levers, the fixed costs, then
+ *  each module's expensed cost (formerly pre-summed into `extraOpex`). */
+export const OPEX_LINE_KEYS = [
+  "quality", "brand", "community", "investor_relations", "regulator_relations", "operations",
+  "overhead", "tank_upkeep", "regulatory",
+  "facilities", "staff", "key_hires", "distribution", "pr_events", "sustainability", "public_goods",
+  "rnd", "lobbying", "alliances", "market_research", "inventory_holding", "conduct_fines",
+  "other", // only when a caller passes extraOpex without its per-module breakdown
+] as const;
+export type OpexLineKey = (typeof OPEX_LINE_KEYS)[number];
+
+/** DW-070 cash-flow line items per section; each section's lines sum to its total, and `other`
+ *  holds what sits outside the three sections (shock damage), so all lines sum to delta_cash.
+ *  DW-076 `post_close`: cash that moves AFTER the statements are struck — M&A settlement (step 9.5)
+ *  and exit / rebuild (step 10) — so closing cash + Σpost_close = the cash the firm actually opens
+ *  the next round with. Kept out of delta_cash on purpose (the totals are unchanged); it is the
+ *  bridge that made opening cash fail to tie in those quarters. */
+export const CF_LINE_KEYS = {
+  operating: ["net_income", "depreciation", "inventory_change"],
+  investing: ["tanks", "facilities", "vertical_assets", "capex", "divestment"],
+  financing: ["debt_draw", "debt_repay", "equity", "dividends", "convertible_draw", "convertible_repaid", "rbf_draw", "rbf_repaid"],
+  other: ["shock"],
+  post_close: ["acquisition_paid", "acquired_cash", "sold_to_acquirer", "rebuild_fresh_capital", "rebuild_reentry_cost"],
+} as const;
+export type CfSection = keyof typeof CF_LINE_KEYS;
+export type PostCloseKey = (typeof CF_LINE_KEYS)["post_close"][number];
+/** `post_close` is optional: rounds itemized before DW-076 carry none (absent = $0). */
+export type CfLines = { [S in Exclude<CfSection, "post_close">]: Partial<Record<(typeof CF_LINE_KEYS)[S][number], number>> } & { post_close?: Partial<Record<PostCloseKey, number>> };
 
 export interface BalanceSheet {
   cash: number;
@@ -1134,6 +1186,9 @@ export interface BalanceSheet {
   paid_in: number;
   retained: number;
   equity: number;
+  /** DW-070: the `debt` line split — bank loan vs the MOD-B08 instruments. Sums to `debt`. Zero
+   *  parts omitted; absent on rounds resolved before DW-070. */
+  debt_lines?: { bank?: number; convertible?: number; rbf?: number };
 }
 
 export interface CashFlow {
@@ -1141,6 +1196,8 @@ export interface CashFlow {
   investing: number;
   financing: number;
   delta_cash: number;
+  /** DW-070: per-section line items (see CF_LINE_KEYS). Absent on rounds resolved before DW-070. */
+  cf_lines?: CfLines;
 }
 
 export interface CostBuildup {
@@ -1175,6 +1232,11 @@ export interface FirmRoundResult {
     process: number; cum_output: number; debt: number; equity: number; inventory_units: number;
     // Module stocks (0 when the module is off) — for dashboards & diagnostics.
     reputation: number; water_efficiency: number; rnd_progress: number;
+    // DW-075: the people position for debriefs — roster size, built-up loyalty (mean/max over
+    // the roster, 0 when none) and key hires with their mean tenure multiplier (1 = flat bonus).
+    // Flat numbers (the state record is scanned as such); present only when a people module is
+    // on, so every other export keeps its exact shape.
+    headcount?: number; loyalty_mean?: number; loyalty_max?: number; key_hires?: number; key_tenure_mult?: number;
   };
   // Inventory flow this round (null in legacy / disabled mode). turnover = sold / avg-on-hand.
   inventory: { begin: number; produced: number; sold: number; spoiled: number; end: number; turnover: number } | null;

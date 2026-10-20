@@ -168,7 +168,7 @@ export const defaultConfig: Config = {
     // spender can hold and tripped the §16.2 dominant-strategy gate (brand_builder
     // 63%); lag-only moves the TIMING of payoff without cheapening the lever.
     Q: { depreciation: 0.18, gain: 0.0425, lag: 1, conversion: "sqrt" },
-    // B decay 0.18→0.21 (DW-042): abundant capacity (starting_cap 56k) removed the
+    // B decay 0.18→0.21 (DW-042): abundant capacity (starting_cap 64k) removed the
     // supply cap on demand-side plays and pushed brand_builder's fixed-sweep win share
     // to 71% (§16.2 FAIL). Faster brand decay makes the brand position a flow to keep
     // funding, not a stock to sit on — attention fades faster than craft skill.

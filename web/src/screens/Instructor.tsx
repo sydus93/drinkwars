@@ -14,6 +14,12 @@ const OPEN_KEY = "dw_instr_open";
 const VIEW_KEY = "dw_instr_view";
 const RETRY_MS = [1000, 3000]; // DW-071: auto-resume backoff on network / 5xx failures
 type Saved = { pass?: string; gameId?: string; joinCode?: string };
+// Projector mode: scale the WHOLE instructor surface (px and rem type, SVG charts, spacing) for the
+// room, instead of asking the instructor to press ⌘+ on class day. Per browser; storage may be
+// blocked (private window), so every access is guarded and the page renders at 100% without it.
+const ZOOMS = [1, 1.25, 1.5] as const;
+const readZoom = (): number => { try { const z = Number(localStorage.getItem("dw_instr_zoom")); return (ZOOMS as readonly number[]).includes(z) ? z : 1; } catch { return 1; } };
+const saveZoom = (z: number) => { try { localStorage.setItem("dw_instr_zoom", String(z)); } catch { /* not persisted */ } };
 const readSaved = (): Saved => { try { return JSON.parse(localStorage.getItem("dw_instr") || "null") ?? {}; } catch { return {}; } };
 const ss = (k: string, v?: string | null) => { try { if (v === undefined) return sessionStorage.getItem(k); if (v === null) sessionStorage.removeItem(k); else sessionStorage.setItem(k, v); } catch { /* storage blocked — no auto-resume */ } return null; };
 // The OPEN flag holds THIS tab's game ({gameId, joinCode}), not just "1": dw_instr in localStorage
@@ -25,6 +31,7 @@ export const instructorWasOpen = () => !!ss(OPEN_KEY);
 /** Instructor console: passcode → create a game → share the code → lock / resolve. */
 export function Instructor({ onExit }: { onExit: () => void }) {
   const [pass, setPass] = useState<string>(() => readSaved().pass ?? "");
+  const [zoom, setZoom] = useState<number>(readZoom);
   const [code, setCode] = useState<string>(() => readSaved().joinCode ?? "");
   const [client, setClient] = useState<InstructorClient | null>(null);
   const [nFirms, setNFirms] = useState(6);
@@ -33,6 +40,7 @@ export function Instructor({ onExit }: { onExit: () => void }) {
   const [modCount, setModCount] = useState(0);
   const [tuneVals, setTuneVals] = useState<TuningVals>(() => tuningDefaults());
   const [practiceRounds, setPracticeRounds] = useState(0);
+  const [calls, setCalls] = useState(true); // DW-077: calls (three tickets per seat, settled on the results page) — on for new games unless unticked
   const [showTune, setShowTune] = useState(false);
   const tuned = JSON.stringify(tuneVals) !== JSON.stringify(tuningDefaults());
   const [game, setGame] = useState<{ gameId: string; joinCode: string } | null>(null);
@@ -148,6 +156,7 @@ export function Instructor({ onExit }: { onExit: () => void }) {
       // header and the students' scorecard announce them; the rounds still resolve and publish.
       const tuning = tuned ? tuningToOverride(tuneVals) : {};
       const override = practiceRounds > 0 ? { ...tuning, scoring: { ...(tuning as { scoring?: object }).scoring, accumulation_window: { drop_first: practiceRounds, tail_only: null } } } : tuning;
+      (override as { classroom?: object }).classroom = { forecasts: { enabled: calls } }; // explicit both ways: the server defaults calls ON (DW-078)
       const g = await c.createGame(nFirms, nRounds, modules, Object.keys(override).length ? (override as typeof tuning) : undefined, { firmMode, title: title.trim() || undefined });
       setClient(c);
       setGame(g);
@@ -307,6 +316,10 @@ export function Instructor({ onExit }: { onExit: () => void }) {
               <span className="text-sm text-inksoft">Practice rounds <span className="text-[0.7rem]">· played and published, but not scored — the round header and each team's scorecard say so</span></span>
               <input type="number" min={0} max={Math.max(0, nRounds - 1)} value={practiceRounds} onChange={(e) => setPracticeRounds(Math.max(0, Math.min(Math.max(0, nRounds - 1), Math.round(+e.target.value || 0))))} className="w-24" />
             </label>
+            <label className="flex items-start gap-2">
+              <input type="checkbox" checked={calls} onChange={(e) => setCalls(e.target.checked)} className="mt-1" />
+              <span className="text-sm text-inksoft"><b className="text-ink">Calls</b> · three optional tickets per chair before lock (where we finish · my gross margin · the top rival's price), settled NAILED / CLOSE / MISSED on the round-resolved page with a running record. Engagement only — never touches the season score. <span className="text-[0.7rem]">Needs migration 0009 on the live server.</span></span>
+            </label>
             <div className="grid grid-cols-2 gap-3">
               <label className="grid gap-1">
                 <span className="text-sm text-inksoft">Game title <span className="text-[0.7rem]">· optional</span></span>
@@ -323,6 +336,17 @@ export function Instructor({ onExit }: { onExit: () => void }) {
             </div>
             <div className="rounded-md border border-line bg-paper2/40 p-3">
               <ModeSelector onChange={(m, n) => { setModules(m); setModCount(n); }} />
+              {/* DW-076: when exports open — the Tuning Board's Pacing knob, surfaced on the form the moment
+                  International is on (1-based like every round label; the override path maps it to the
+                  engine's 0-based export_unlock_round, default round 5 = engine 4, emitted only when moved). */}
+              {modules.international?.enabled && (
+                <label className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-line pt-3 text-sm">
+                  <span className="text-inksoft">Exports open in round <span className="text-[0.7rem]">· the export markets stay hidden until then</span></span>
+                  <input type="number" min={1} max={Math.max(1, nRounds)} step={1} value={Math.round(tuneVals.export_round ?? 5)} aria-label="Exports open in round"
+                    onChange={(e) => { const n = Math.max(1, Math.min(Math.max(1, nRounds), Math.round(+e.target.value || 1))); setTuneVals({ ...tuneVals, export_round: n }); }}
+                    className="w-20 text-right" />
+                </label>
+              )}
             </div>
             <div className="rounded-md border border-line bg-paper2/40 p-3">
               <div className="font-mono text-[0.6rem] uppercase tracking-[0.12em] text-copperdeep">Roster <span className="lowercase tracking-normal text-inksoft">· optional — semester identities (NetID → return code), independent of any game. Skip it if you'll paste a seat plan with names inside the game.</span></div>
@@ -405,7 +429,7 @@ export function Instructor({ onExit }: { onExit: () => void }) {
   const roundKey = `${status?.round ?? 0}:${status?.lifecycle ?? "open"}`;
 
   return (
-    <div className={`mx-auto ${view === "dashboard" ? "max-w-6xl" : "max-w-3xl"} px-4 py-8 sm:px-6`}>
+    <div className={`mx-auto ${view === "dashboard" ? "max-w-6xl" : "max-w-3xl"} px-4 py-8 sm:px-6`} style={zoom === 1 ? undefined : { zoom }}>
       <header className="mb-4 flex flex-wrap items-end justify-between gap-4 border-b border-line2 pb-4">
         <div>
           <div className="eyebrow">Instructor · {lc}</div>
@@ -413,6 +437,12 @@ export function Instructor({ onExit }: { onExit: () => void }) {
           <div className="mt-1 text-sm text-inksoft">{status?.title || <span className="italic">Untitled game</span>} <button onClick={rename} disabled={!status} className="ml-1 font-mono text-[0.6rem] uppercase tracking-wide text-copperdeep hover:underline">✎ rename</button></div>
         </div>
         <div className="flex items-center gap-3">
+          <span className="flex items-center gap-1" title="Projector mode: scale this screen for the room">
+            <span className="font-mono text-[0.6rem] uppercase tracking-wide text-inksoft">Projector</span>
+            {ZOOMS.map((z) => (
+              <button key={z} onClick={() => { setZoom(z); saveZoom(z); }} aria-pressed={zoom === z} className={`rounded-md border px-1.5 py-0.5 font-mono text-[0.66rem] ${zoom === z ? "border-copper text-copperdeep" : "border-line2 text-inksoft hover:text-ink"}`}>{Math.round(z * 100)}%</button>
+            ))}
+          </span>
           {flash && <span className="rounded-md border border-hop/50 bg-hop/10 px-2 py-1 text-[0.72rem] text-ink">{flash}</span>}
           {leaveArmed ? (
             <span className="flex items-center gap-2 text-sm text-ink">
@@ -504,7 +534,7 @@ export function Instructor({ onExit }: { onExit: () => void }) {
                     <div key={m.userId} className="ml-2 mt-0.5 flex items-center gap-2 text-[0.72rem]">
                       <span className={m.submitted ? "text-hop" : "text-inksoft"} title={m.submitted ? "submitted this round" : "nothing submitted this round"}>{m.submitted ? "●" : "○"}</span>
                       <span className="min-w-0 flex-1 truncate text-ink">{m.name}{m.externalId ? <span className="text-inksoft"> · {m.externalId}</span> : null}</span>
-                      {m.claim && <button onClick={() => copy(m.claim!, `Copied ${m.name}'s return code ✓`)} title="Return code — click to copy; the student enters it under “Returning player” on any device" className="font-mono text-[0.62rem] tracking-[0.12em] text-copperdeep hover:underline">{m.claim}</button>}
+                      {m.claim && <button onClick={() => copy(m.claim!, `Copied ${m.name}'s return code ✓`)} title="Return code — click to copy; the student enters it under “My games” on any device" className="font-mono text-[0.62rem] tracking-[0.12em] text-copperdeep hover:underline">{m.claim}</button>}
                       {m.role && <span className="font-mono text-[0.58rem] uppercase text-copperdeep">{m.role}</span>}
                       {isTeam && <button onClick={() => setMoving({ userId: m.userId, name: m.name, toTeamId: t.teamId, role: m.role ?? "" })} disabled={busy} className="font-mono text-[0.58rem] uppercase text-inksoft hover:text-copper">move</button>}
                       <button onClick={() => { if (window.confirm(`Remove ${m.name} from ${t.name}? Their seat frees up and anything they submitted this round is dropped. They can re-join with their claim code.`)) act(() => client!.removeMember(game.gameId, t.teamId, m.userId)); }} disabled={busy} className="font-mono text-[0.58rem] uppercase text-inksoft hover:text-brick">remove</button>

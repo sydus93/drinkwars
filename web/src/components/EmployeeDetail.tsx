@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Employee, EmployeeRoleConfig } from "drinkwars-engine";
+import type { Employee, EmployeeRoleConfig, EmployeesConfig } from "drinkwars-engine";
 import { Avatar, SkillStars } from "./People.js";
 import { Button } from "./ui.js";
 import { STOCK_LABEL, fmt } from "../labels.js";
@@ -19,10 +19,11 @@ const bio = (role: string, skill: number, first: string): string => {
 
 /** Full-screen dossier for one of your people (spec §3.6): identity + bio, morale and
  *  its drivers, what they contribute, compensation vs. the market, and the actions. */
-export function EmployeeDetail({ employee: e, role, roleLabel, raiseValue, onRaise, onFire, firing, onClose }: {
+export function EmployeeDetail({ employee: e, role, roleLabel, cfg, raiseValue, onRaise, onFire, firing, onClose }: {
   employee: Employee;
   role?: EmployeeRoleConfig;
   roleLabel: string;
+  cfg?: EmployeesConfig; // DW-075: loyalty block + poach_base drive the dividend and risk lines
   raiseValue?: number;
   onRaise: (salary: number) => void;
   onFire: () => void;
@@ -38,13 +39,19 @@ export function EmployeeDetail({ employee: e, role, roleLabel, raiseValue, onRai
 
   const market = role ? role.base_salary * (0.55 + 0.15 * e.skill) : e.salary;
   const stockLabel = role ? STOCK_LABEL[role.primary_stock as keyof typeof STOCK_LABEL] ?? role.primary_stock : "";
-  const contrib = role ? e.skill * role.gain_per_skill * e.satisfaction : 0;
+  // DW-075 loyalty dividend: the engine's own multiplier (1 + loyalty) and this quarter's poach roll
+  // poach_base × (1 − morale) × (1 − shield × loyalty/cap). Shown only when the game tracks loyalty.
+  const loyCfg = cfg?.loyalty;
+  const loy = loyCfg ? Math.min(loyCfg.cap, e.loyalty ?? 0) : 0;
+  const shield = loyCfg ? 1 - loyCfg.poach_shield * (loy / loyCfg.cap) : 1;
+  const poachRisk = cfg && e.tenure_rounds >= 1 ? cfg.poach_base * (1 - e.satisfaction) * shield : 0;
+  const contrib = role ? e.skill * role.gain_per_skill * e.satisfaction * (1 + loy) : 0;
   const satPct = Math.round(e.satisfaction * 100);
   const satTone = e.satisfaction > 0.6 ? "var(--color-hop)" : e.satisfaction > 0.35 ? "var(--color-gold)" : "var(--color-brick)";
   const paidWell = e.salary >= market;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4 backdrop-blur-sm" onMouseDown={(ev) => { if (ev.target === ev.currentTarget) onClose(); }}>
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4 backdrop-blur-sm" onMouseDown={(ev) => { if (ev.target === ev.currentTarget) onClose(); }}>
       <div className="card w-full max-w-lg overflow-hidden">
         <div className="flex items-center gap-3 border-b border-line px-5 py-4">
           <Avatar seed={e.avatar_seed} name={e.name} size={44} />
@@ -74,7 +81,14 @@ export function EmployeeDetail({ employee: e, role, roleLabel, raiseValue, onRai
           {role && (
             <div className="rounded-md border border-line bg-paper2/30 p-3 text-[0.8rem]">
               <span className="text-inksoft">Contribution</span>
-              <div className="mt-0.5 text-ink">Raises <span className="font-semibold">{stockLabel}</span> by <span className="tnum font-semibold">+{contrib.toFixed(2)}</span>/round <span className="text-inksoft">(skill {e.skill} × morale)</span></div>
+              <div className="mt-0.5 text-ink">Raises <span className="font-semibold">{stockLabel}</span> by <span className="tnum font-semibold">+{contrib.toFixed(2)}</span>/round <span className="text-inksoft">(skill {e.skill} × morale{loyCfg ? " × loyalty" : ""})</span></div>
+              {loyCfg && (
+                <div className="mt-1.5 border-t border-line pt-1.5">
+                  <div className="flex items-center justify-between"><span className="text-inksoft">Loyalty dividend</span><span className="tnum font-semibold" style={{ color: loy > 0 ? "var(--color-hop)" : "var(--color-inksoft)" }}>+{Math.round(loy * 100)}%</span></div>
+                  <div className="mt-0.5 text-[0.7rem] text-inksoft">{e.tenure_rounds} quarter{e.tenure_rounds === 1 ? "" : "s"} × morale, up to +{Math.round(loyCfg.cap * 100)}% — it walks out with them.</div>
+                  <div className="mt-0.5 flex items-center justify-between text-[0.7rem]"><span className="text-inksoft">Poach risk this quarter</span><span className="tnum" style={{ color: poachRisk > 0.03 ? "var(--color-brick)" : "var(--color-inksoft)" }}>{e.tenure_rounds >= 1 ? `${(poachRisk * 100).toFixed(1)}%` : "— (too new)"}</span></div>
+                </div>
+              )}
             </div>
           )}
 

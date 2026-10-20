@@ -20,7 +20,7 @@ export function resilienceMitigation(firm: FirmState, c: Config): number {
 /** A firm's PRODUCTION exposure to a region (0..1): its online capacity sited there (home counts
  *  the base brewery) over its total capacity. A regional shock scales by this — a firm that builds
  *  in the struck region takes the hit; one that produces elsewhere is spared. */
-function regionExposure(f: FirmState, c: Config, region: string, round: number): number {
+export function regionExposure(f: FirmState, c: Config, region: string, round: number): number {
   const facCfg = c.modules?.facilities;
   // Production exposure: only producer capacity bears regional production shocks (a drought hits
   // brewing, not a back-of-house bottle shop). retail-only facilities contribute 0.

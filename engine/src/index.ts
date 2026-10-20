@@ -16,19 +16,21 @@ export type { ModuleMeta, ModuleCategory, Preset } from "./config/modules.js";
 export { validateConfig, ConfigError } from "./config/schema.js";
 export { initGame, initFirm } from "./engine/init.js";
 export { resolveRound } from "./engine/resolve.js";
-export { firmValuation, equityCapacity, InvariantError } from "./engine/finance.js";
+export { firmValuation, equityCapacity, equityIssueCost, InvariantError, statementLineGaps } from "./engine/finance.js";
+export type { PostCloseLedger } from "./engine/finance.js";
 export { resilienceMitigation, rollTimeline } from "./engine/shocks.js";
 export { activeMarkets, segmentDemandTotals } from "./engine/geography.js";
 export { roleBriefings } from "./engine/briefings.js";
 export type { RoleBriefing } from "./engine/briefings.js";
 // Coopetition (MOD-A05/A06) + lobbying (MOD-A09) presentation summaries.
 export { summarizeAgreementsFor, summarizeLobbying, projectMarkets, projectFirms, projectShocks, projectHistory } from "./engine/views.js";
-export { roundIsScored, inContention, rankStandings, compareStanding } from "./engine/scoring.js";
+export { roundIsScored, inContention, rankStandings, compareStanding, PROFITABILITY_CLAMP } from "./engine/scoring.js";
 export { sanitizeDecision } from "./engine/sanitize.js";
 export { TERM_BOUNDS, clampTerms, PROPOSAL_TTL_ROUNDS } from "./engine/coopetition.js";
 export type { AllianceSummary, AllianceClauseSummary, LobbySummary } from "./engine/views.js";
 export { generateHiringMarket } from "./engine/employees.js";
-export { mergeMemberDecisions, DESK_LEVERS, ALL_LEVERS, ROLE_DESK } from "./engine/seats.js";
+export { mergeMemberDecisions, composeTeamDecision, sameLever, seatTouched, DESK_LEVERS, ALL_LEVERS, ROLE_DESK } from "./engine/seats.js";
+export type { Composition } from "./engine/seats.js";
 export type { SeatDesk, SeatPartial } from "./engine/seats.js";
 export { RNG, deriveSeed } from "./rng.js";
 // Adaptive best-response bot (single-player NPCs, harness, student onboarding).

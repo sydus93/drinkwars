@@ -9,13 +9,33 @@
  * deterministically from (seed, round), so the web can show exactly what the engine
  * will accept. Stock gains never touch the balance sheet and salaries are opex, so
  * the §7.2 invariants are preserved. Module off ⇒ no employees ⇒ identical to before.
+ *
+ * DW-075 loyalty dividend: each engaged round builds loyalty (rate x satisfaction, capped),
+ * which multiplies the contribution by (1 + loyalty) and blunts the anonymous poach roll.
+ * It walks out with the person — the departure line says how much — and a poached hire
+ * starts over at 0. `employees.loyalty` absent ⇒ every term below is exactly ×1 (parity).
  */
-import type { Candidate, Config, EmployeeStock, FirmDecision, FirmId, WorldState } from "../types.js";
+import type { Candidate, Config, Employee, EmployeeStock, FirmDecision, FirmId, FirmRoundResult, FirmState, WorldState } from "../types.js";
 import { RNG, deriveSeed } from "../rng.js";
 
 export interface EmployeesOutcome {
   opexByFirm: Map<FirmId, number>; // salaries (expensed)
   events: string[];
+}
+
+/** DW-075: the people position written into FirmRoundResult.state for debriefs — roster size,
+ *  mean/max built-up loyalty, and key hires with their mean tenure multiplier (1 = flat bonus). */
+export function peopleSnapshot(f: FirmState): Required<Pick<FirmRoundResult["state"], "headcount" | "loyalty_mean" | "loyalty_max" | "key_hires" | "key_tenure_mult">> {
+  const emps = f.employees ?? [];
+  const keys = f.key_hires ?? [];
+  const loy = emps.map((e) => e.loyalty ?? 0);
+  return {
+    headcount: emps.length,
+    loyalty_mean: loy.length ? loy.reduce((a, x) => a + x, 0) / loy.length : 0,
+    loyalty_max: loy.length ? Math.max(...loy) : 0,
+    key_hires: keys.length,
+    key_tenure_mult: keys.length ? keys.reduce((a, h) => a + (h.tenure_mult ?? 1), 0) / keys.length : 1,
+  };
 }
 
 const FIRST = ["Marcus", "Priya", "Devon", "Sofia", "Liam", "Aisha", "Noah", "Mei", "Carlos", "Hana", "Owen", "Zoe", "Ibrahim", "Lena", "Theo", "Nadia", "Sam", "Yuki", "Diego", "Ava"];
@@ -25,6 +45,15 @@ const fmNum = (n: number): string => Math.round(n).toLocaleString("en-US");
 
 /** The fair (market) salary for a given role/skill — the benchmark satisfaction is judged against. */
 const marketRate = (baseSalary: number, skill: number): number => baseSalary * (0.55 + 0.15 * skill);
+
+/** DW-075: what a departure takes with it — "" when nothing was built up, so pre-DW-075 event
+ *  text is unchanged for people without loyalty. Callers prefix the separator. */
+const loyaltyNote = (e: Employee): string => {
+  const loy = e.loyalty ?? 0;
+  if (loy <= 0) return "";
+  const q = e.tenure_rounds;
+  return `took ${q} quarter${q === 1 ? "" : "s"} of built-up loyalty (+${Math.round(loy * 100)}% contribution)`;
+};
 
 /** This round's hireable candidates — deterministic, so the engine and the web agree. */
 export function generateHiringMarket(c: Config, seed: number, round: number): Candidate[] {
@@ -101,11 +130,14 @@ export function resolveEmployees(world: WorldState, decisions: Map<FirmId, FirmD
       }
       target.employees.splice(idx, 1);
       target.T_emp = Math.max(0, target.T_emp - 1);
+      const lost = loyaltyNote(e); // DW-075: the victim's loss, named before the record is reset
       // Employee ids are only unique WITHIN a firm (`emp_<round>_<n>`), so a poached person
       // is re-keyed on arrival — otherwise a later raise/fire by id could hit the wrong person.
-      poacher.employees.push({ ...e, id: `${e.id}_via_${p.firm}_${round}`, salary: offer, satisfaction: 0.6, tenure_rounds: 0, hired_round: round });
+      // DW-075: loyalty is to the FIRM, not the person — it restarts at 0 (the key is only
+      // written when the module's loyalty block is on, keeping legacy state shapes intact).
+      poacher.employees.push({ ...e, id: `${e.id}_via_${p.firm}_${round}`, salary: offer, satisfaction: 0.6, tenure_rounds: 0, hired_round: round, ...(cfg.loyalty ? { loyalty: 0 } : {}) });
       out.opexByFirm.set(poacher.id, (out.opexByFirm.get(poacher.id) ?? 0) + offer); // signing premium
-      out.events.push(`POACHED: ${poacher.id} lures ${e.name} away from ${p.firm}`);
+      out.events.push(`POACHED: ${poacher.id} lures ${e.name} away from ${p.firm}${lost ? ` — ${lost}` : ""}`);
     }
   }
 
@@ -156,6 +188,9 @@ export function resolveEmployees(world: WorldState, decisions: Map<FirmId, FirmD
     }
 
     // ---- Raises (lift satisfaction; the higher salary becomes the opex) ----
+    // DW-075: a raise adds NO loyalty of its own. Loyalty accrues at rate × satisfaction, so
+    // the morale lift already compounds into it every round after — a direct bump on top
+    // would let a late, cheap raise buy back what only engaged tenure should earn.
     for (const [id, raw] of Object.entries(d?.raise_employees ?? {})) {
       const e = f.employees.find((x) => x.id === id);
       if (!e) continue;
@@ -178,22 +213,35 @@ export function resolveEmployees(world: WorldState, decisions: Map<FirmId, FirmD
       // the sqrt-concave invest channels (DW-041).
       const cur = f[role.primary_stock as EmployeeStock];
       const sat = cfg.stock_halfsat != null ? cfg.stock_halfsat / (cfg.stock_halfsat + Math.max(0, cur)) : 1;
-      f[role.primary_stock as EmployeeStock] = cur + e.skill * role.gain_per_skill * e.satisfaction * sat;
+      // DW-075: × (1 + loyalty) — last round's loyalty, so a new hire contributes ×1 in the
+      // hire round. With the block absent `loy` is 0 and the product is bit-identical.
+      const loy = cfg.loyalty ? (e.loyalty ?? 0) : 0;
+      f[role.primary_stock as EmployeeStock] = cur + e.skill * role.gain_per_skill * e.satisfaction * sat * (1 + loy);
       // Satisfaction drift: pay vs market, tenure milestones, firm distress.
       let ds = e.salary >= marketRate(role.base_salary, e.skill) ? 0.03 : -0.06;
       e.tenure_rounds += 1;
       if (e.tenure_rounds === 3 || e.tenure_rounds === 6 || e.tenure_rounds === 10) ds += cfg.tenure_bump;
       if (distress) ds -= 0.05;
       e.satisfaction = Math.max(0, Math.min(1, e.satisfaction + ds));
+      // DW-075: loyalty accrues with ENGAGED tenure — an unhappy veteran builds it slowly, a
+      // happy newcomer hasn't had the quarters. No decay: what was earned stays until they go.
+      if (cfg.loyalty) e.loyalty = Math.min(cfg.loyalty.cap, loy + cfg.loyalty.rate * e.satisfaction);
       // Departures: quit at zero morale, or get poached (likelier the unhappier they are).
       if (e.satisfaction <= 0) {
         f.employees.splice(i, 1);
         f.T_emp = Math.max(0, f.T_emp - 1);
-        out.events.push(`DEPARTURE: ${e.name} quits ${f.id} — morale ran out`);
-      } else if (e.tenure_rounds > 1 && rng.bool(cfg.poach_base * (1 - e.satisfaction))) {
-        f.employees.splice(i, 1);
-        f.T_emp = Math.max(0, f.T_emp - 0.5);
-        out.events.push(`POACHED: a rival hires ${e.name} away from ${f.id}`);
+        const lost = loyaltyNote(e);
+        out.events.push(`DEPARTURE: ${e.name} quits ${f.id} — morale ran out${lost ? `; ${lost}` : ""}`);
+      } else {
+        // DW-075 poach shield: loyalty/cap scales the shield, so a fully loyal person faces
+        // (1 − poach_shield) of the base roll; off ⇒ ×1 exactly (the RNG draw sequence is unchanged).
+        const shield = cfg.loyalty ? 1 - cfg.loyalty.poach_shield * Math.min(1, (e.loyalty ?? 0) / cfg.loyalty.cap) : 1;
+        if (e.tenure_rounds > 1 && rng.bool(cfg.poach_base * (1 - e.satisfaction) * shield)) {
+          f.employees.splice(i, 1);
+          f.T_emp = Math.max(0, f.T_emp - 0.5);
+          const lost = loyaltyNote(e);
+          out.events.push(`POACHED: a rival hires ${e.name} away from ${f.id}${lost ? ` — ${lost}` : ""}`);
+        }
       }
     }
 

@@ -1,6 +1,6 @@
 import type { FirmRoundResult } from "drinkwars-engine";
 import type { GameView } from "../game/controller.js";
-import { SEG_LABEL, fmt } from "../labels.js";
+import { SEG_LABEL, fmt, marketName } from "../labels.js";
 import { Bar, Card, Eyebrow, Row } from "./ui.js";
 import { InfoDot } from "./InfoDot.js";
 import { WorldMap } from "./WorldMap.js";
@@ -113,7 +113,7 @@ export function OperationsAndDemand({ result, view }: { result: FirmRoundResult;
                 return (
                   <Row
                     key={m.id}
-                    label={<span>{m.label}{m.kind === "export" && <span className="ml-1 font-mono text-[0.56rem] uppercase tracking-[0.1em] text-hop">export</span>}{!inMkt && <span className="ml-1 text-[0.62rem] text-inksoft">— not entered</span>}</span>}
+                    label={<span>{marketName(m.id, m.label)}{m.kind === "export" && <span className="ml-1 font-mono text-[0.56rem] uppercase tracking-[0.1em] text-hop">export</span>}{!inMkt && <span className="ml-1 text-[0.62rem] text-inksoft">— not entered</span>}</span>}
                     value={inMkt ? <span>{fmt.money(p?.revenue ?? 0)} · {fmt.int(p?.q_sold ?? 0)}u{(() => { const ship = (p?.lanes ?? []).reduce((a, l) => a + l.cost, 0); return ship > 0.5 ? <span className="text-brick"> · shipping {fmt.money(ship)}</span> : null; })()}</span> : <span className="text-inksoft">—</span>}
                   />
                 );

@@ -10,6 +10,7 @@ import type { GameView } from "../game/controller.js";
 import { PERSONAS, cockpitSignals, cockpitMetrics, type CockpitDesk, type Tone } from "../deskMeta.js";
 import { Card, Eyebrow } from "./ui.js";
 import { InfoDot } from "./InfoDot.js";
+import { seatColor, seatDeskLong } from "../lib/seatColors.js";
 import { CapacityVsDemand, CostOfCapitalCockpit, ScorecardRadar } from "./Dashboards.js";
 
 /** The one chart that most defines a desk's discipline (design §3.3) — shown when a round
@@ -48,18 +49,25 @@ export function DeskCockpit({ desk, view, seatRole, rationale, onRationale }: {
     (seatRole === "cmo" && desk === "commercial") || (seatRole === "cfo" && desk === "finance") ||
     (seatRole === "coo" && desk === "operations") || (seatRole === "chro" && desk === "people"));
 
+  // DW-077 seat identity (design §B): when the focused desk is the student's OWN seat, the desk
+  // card carries a 5px top border in the seat colour, a seat-coloured caps title ("FINANCE DESK")
+  // and the mandate line. Another desk (or solo) keeps the accent left rail.
+  const seatC = holdsThis ? seatColor(seatRole) : null;
+  const accent = seatC ?? p.accent;
+
   return (
-    <Card className="overflow-hidden !p-0">
+    <Card className="overflow-hidden !p-0" style={seatC ? { borderTop: `5px solid ${seatC}` } : undefined}>
       {/* identity header */}
-      <div className="flex items-start gap-3 border-b border-line px-4 py-3" style={{ borderLeft: `3px solid ${p.accent}` }}>
+      <div className="flex items-start gap-3 border-b border-line px-4 py-3" style={seatC ? undefined : { borderLeft: `3px solid ${p.accent}` }}>
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-mono text-[0.58rem] font-bold uppercase tracking-[0.12em]" style={{ color: p.accent }}>{p.short} desk</span>
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            <span className="font-mono text-[0.72rem] font-bold uppercase tracking-[0.14em]" style={{ color: accent }}>{seatC ? seatDeskLong(seatRole) : `${p.short} desk`}</span>
+            {seatC && <span className="text-[0.95rem] leading-snug text-inksoft">{p.charter}</span>}
             {holdsThis && <span className="rounded-full bg-ink px-2 py-0.5 font-mono text-[0.52rem] font-bold uppercase tracking-wide text-paper">Your seat · {yoursByRole}</span>}
           </div>
           <h3 className="display mt-0.5 text-lg font-semibold leading-tight text-ink">{p.title}</h3>
           <div className="font-mono text-[0.6rem] uppercase tracking-wide text-inksoft">{p.discipline}</div>
-          <p className="mt-1 font-body text-[0.82rem] italic leading-snug text-inksoft">{p.charter}</p>
+          {!seatC && <p className="mt-1 font-body text-[0.82rem] italic leading-snug text-inksoft">{p.charter}</p>}
         </div>
       </div>
 
@@ -119,7 +127,7 @@ export function DeskCockpit({ desk, view, seatRole, rationale, onRationale }: {
       {/* rationale — the officer's call (client-side this pass; the seam for the team huddle) */}
       <div className="px-4 py-3">
         <label className="flex items-center gap-1.5">
-          <Eyebrow>Your call this round</Eyebrow>
+          <Eyebrow>Your recommendation this round</Eyebrow>
           <InfoDot title="Why capture this?" align="left">
             One line on what you're recommending and why. It's your thinking aid now; in team play it becomes what you bring to the huddle — the record of who proposed what.
           </InfoDot>

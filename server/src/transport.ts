@@ -22,6 +22,7 @@ import { deepMerge, generateHiringMarket, projectMarkets, projectFirms, projectS
 import type { FirmDecision } from "drinkwars-engine";
 import { createClient } from "@supabase/supabase-js";
 import { GameOrchestrator, InMemoryAdapter, buildInstructorDashboard, createSupabaseAdapter, dashboardToCsv, randomBreweryNames, renameFirms, visibleEvents, withRequestCache, type StorageAdapter } from "./index.js";
+import { getGameForecasts, getSeatForecasts, submitForecasts } from "./forecasts.js"; // DW-074 calls channel
 
 // Load server/.env (only needed for supabase mode; harmless otherwise).
 try {
@@ -99,6 +100,9 @@ async function readJson(req: IncomingMessage): Promise<any> {
  *  their own last-round diagnostics + the public standings/market. A rival's
  *  private state is never included (this team's slice only). */
 /** Roster paste → unique, trimmed rows keyed by case-insensitive NetID (first name wins). */
+// The seed (with the public engine) reproduces every future shock + demand draw — never ship it.
+const publicConfig = <T extends { game?: object }>(c: T): T => (c?.game ? { ...c, game: { ...c.game, seed: undefined } } : c);
+
 export function dedupeRoster(roster: unknown[]): { external_id: string; name: string; email?: string | null }[] {
   const seen = new Set<string>();
   const out: { external_id: string; name: string; email?: string | null }[] = [];
@@ -186,11 +190,11 @@ async function viewFor(gameId: string, teamId: string, userId?: string) {
   const seats = own && game?.firm_mode === "team" ? await orch.getTeamSeats(gameId, teamId) : []; // team firms: this firm's C-suite seats + submit status
   // Team firms: the live plan — each seat's submitted slice + the composed decision
   // (same-firm eyes only; the session's team is the only one ever queried).
-  const teamPlan = own && game?.firm_mode === "team" && userId ? await orch.getTeamPlan(gameId, teamId, userId) : undefined;
-  const history = own ? projectHistory(allResults, own.id) : []; // own trend + public field aggregate
   // DW-048 draft seeds: the firm's standing plan (what it trades on absent a fresh submit) and,
   // for solo firms, this round's own submitted decision — so a reload resumes the real plan.
   const standing = own ? await orch.getStandingDecision(gameId, teamId) : null;
+  const teamPlan = own && game?.firm_mode === "team" && userId ? await orch.getTeamPlan(gameId, teamId, userId, standing) : undefined; // DW-080: composed live from the slices
+  const history = own ? projectHistory(allResults, own.id) : []; // own trend + public field aggregate
   const draft = own && game?.firm_mode !== "team" && decision?.submitted ? decision.decision : null;
   if (own) {
     const ws = await store.getLatestWorldState(gameId);
@@ -201,7 +205,7 @@ async function viewFor(gameId: string, teamId: string, userId?: string) {
       if (config) lobbyInitiatives = summarizeLobbying(config, ws.state);
       if (config) markets = projectMarkets(ws.state, config, own.id, pub.round, lastFull?.result.firm_results ?? [], nameOf);
       if (config) firms = projectFirms(ws.state, config, own.id, lastFull?.result.firm_results ?? [], !!decision?.decision?.buy_info, nameOf);
-      shocks = projectShocks(ws.state, pub.round);
+      shocks = projectShocks(ws.state, pub.round, config ?? undefined, own.id);
       if (config) hiringMarket = generateHiringMarket(config, ws.state.seed, pub.round);
     }
   }
@@ -312,7 +316,7 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     }
     const token = randomUUID();
     sessions.set(token, { gameId: joined.gameId, teamId: joined.teamId, userId, role: joined.role });
-    return send(res, 200, { token, gameId: joined.gameId, teamId: joined.teamId, firmId: joined.firmId, nRounds: game.n_rounds, config: game.config, firmMode: game.firm_mode ?? "solo", role: joined.role ?? null, claim: joined.claim ?? null });
+    return send(res, 200, { token, gameId: joined.gameId, teamId: joined.teamId, firmId: joined.firmId, nRounds: game.n_rounds, config: publicConfig(game.config), firmMode: game.firm_mode ?? "solo", role: joined.role ?? null, claim: joined.claim ?? null });
   }
   // A player's games (return-to-game / career), resolved by their durable claim code.
   if (method === "GET" && path === "/me/games") {
@@ -320,6 +324,13 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     const u = claim ? await store.getUserByClaim(claim) : null;
     if (!u) return send(res, 401, { error: "unknown claim code" });
     return send(res, 200, { player: { name: u.display_name, external_id: u.external_id }, games: await orch.getMyGames(u.id) });
+  }
+  // DW-074 calls (forecast commitment): a channel of its own — see forecasts.ts. Flag-gated per game.
+  if (path === "/forecasts" && (method === "GET" || method === "POST")) {
+    const fb = method === "POST" ? await readJson(req) : null;
+    const s = sessions.get(String(fb ? fb.token : url.searchParams.get("token") ?? ""));
+    if (!s) return send(res, 401, { error: "invalid or expired token" });
+    try { return send(res, 200, fb ? await submitForecasts(store, Date.now, s, fb.calls) : await getSeatForecasts(store, s)); } catch (e) { return send(res, 400, { error: msg(e) }); }
   }
   if (method === "GET" && path === "/view") {
     const s = sessions.get(url.searchParams.get("token") ?? "");
@@ -340,14 +351,15 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     return send(res, 200, await orch.pulse(s.gameId, s.teamId));
   }
   if (method === "POST" && path === "/submit") {
-    const { token, decision } = await readJson(req);
+    const { token, decision, touched, round } = await readJson(req);
     const s = sessions.get(token);
     if (!s) return send(res, 401, { error: "invalid or expired token" });
     try {
       const game = await store.getGame(s.gameId);
       // Team firms: a submit is this SEAT's slice, merged server-side. Solo: the full decision.
-      if (game?.firm_mode === "team") await orch.submitMemberDecision(s.gameId, s.teamId, s.userId, decision as Partial<FirmDecision>, s.role);
-      else await orch.submitDecision(s.gameId, s.teamId, decision as FirmDecision);
+      const forRound = typeof round === "number" ? round : undefined; // DW-080: the form's own round
+      if (game?.firm_mode === "team") await orch.submitMemberDecision(s.gameId, s.teamId, s.userId, decision as Partial<FirmDecision>, s.role, touched, forRound);
+      else await orch.submitDecision(s.gameId, s.teamId, decision as FirmDecision, s.userId, forRound);
     } catch (e) {
       return send(res, 400, { error: msg(e) });
     }
@@ -366,7 +378,9 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
       // A fresh seed per game (DW-046): the seed drives the rolled shock timeline, location
       // factors and hiring markets — with the config default (12345) every game with the same
       // modules replayed the same droughts, so section 2 could learn section 1's schedule.
-      let override: Record<string, unknown> = { game: { n_firms: nFirms, n_rounds: nRounds, seed: 1 + Math.floor(Math.random() * 2_000_000_000) } };
+      // DW-078: calls default ON for a new game, as on the create form — a configOverride
+      // `classroom.forecasts.enabled: false` (the form's unticked box) turns them off.
+      let override: Record<string, unknown> = { game: { n_firms: nFirms, n_rounds: nRounds, seed: 1 + Math.floor(Math.random() * 2_000_000_000) }, classroom: { forecasts: { enabled: true } } };
       // Expansion modules: the instructor selector sends a `modules` override block
       // ({ asymmetricStarts: { enabled: true }, … }). Legacy `inventory` boolean still honored.
       const mods: Record<string, unknown> = modules && typeof modules === "object" ? { ...modules } : {};
@@ -387,6 +401,9 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     // Roster provisioning: create/refresh persistent users (NetID = career key) and
     // return each student's durable claim code for the instructor to distribute.
     if (method === "POST" && path === "/instructor/roster") {
+      // Roster rows resolve to EXISTING users by NetID/email and hand back their claim codes —
+      // effectively an account-takeover tool, so it stays with the primary (owner) passcode.
+      if (tier !== "primary") return send(res, 403, { error: "roster provisioning needs the primary instructor passcode" });
       const { roster, cohort } = await readJson(req);
       if (!Array.isArray(roster) || !roster.length) return send(res, 400, { error: "roster array required" });
       // DW-046: rows are de-duplicated (NetID is case-insensitive), provisioned ONE AT A TIME
@@ -446,6 +463,9 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
       }
     }
 
+    const fc = path.match(/^\/instructor\/games\/([^/]+)\/forecasts$/); // DW-074 calls read-out
+    if (fc && method === "GET") { try { return send(res, 200, await getGameForecasts(store, fc[1])); } catch (e) { return send(res, 400, { error: msg(e) }); } }
+
     // Gamemaster: the forward shock schedule + live triggers (DW-037).
     const tl = path.match(/^\/instructor\/games\/([^/]+)\/timeline$/);
     if (tl) {
@@ -465,11 +485,12 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     }
 
     // DW-048: per-chair roster + member remove/move + round deadline.
-    const rm = path.match(/^\/instructor\/games\/([^/]+)\/(roster|members|deadline|seats)$/);
+    const rm = path.match(/^\/instructor\/games\/([^/]+)\/(roster|members|deadline|seats|decisions)$/);
     if (rm) {
       const [, gameId, what] = rm;
       try {
         if (what === "roster" && method === "GET") return send(res, 200, { teams: await orch.getRoster(gameId) });
+        if (what === "decisions" && method === "GET") return send(res, 200, await orch.getTeamDecisions(gameId)); // DW-072 #5
         if (what === "members" && method === "POST") {
           const body = await readJson(req);
           if (body.op === "remove") { await orch.removeMember(gameId, String(body.teamId ?? ""), String(body.userId ?? "")); return send(res, 200, { ok: true }); }

@@ -97,7 +97,7 @@ test("seat merge: an untouched (empty) hire list never erases a teammate's hire"
     invest_cap: 0, invest_process: 0, invest_Q: 0, invest_B: 0, invest_T_emp: 0, invest_T_inv: 0, invest_T_gov: 0,
     debt_draw: 0, debt_repay: 0, equity_raise: 0, dividend: 0, buy_info: false, agreement_actions: [], exit_action: null,
   });
-  // Game 1, team E, r0: the CHRO (desk owner) submitted [] BEFORE the CEO asked for three hires.
+  // Game 1, one team, r0: the CHRO (desk owner) submitted [] BEFORE the CEO asked for three hires.
   const chro = { desk: "people" as const, partial: { hire_roles: [] }, updated_at: 1 };
   const ceo = { desk: "all" as const, partial: { hire_roles: ["head_brewer", "sales_director", "ops_manager"] }, updated_at: 2 };
   assert.deepEqual(mergeMemberDecisions(base(), [chro, ceo]).hire_roles, ["head_brewer", "sales_director", "ops_manager"]);
@@ -126,5 +126,6 @@ test("labor market: a hire the firm can't pay for reports why; attrition isn't b
     departures.push(...o.result.events.filter((e) => /DEPARTURE|POACHED/.test(e)));
     world = o.world;
   }
-  for (const e of departures) assert.match(e, /^DEPARTURE: .+'s .+ leaves for another job$/);
+  // DW-075 may append what the tenure bonus took with them; the rival-free core line is unchanged.
+  for (const e of departures) assert.match(e, /^DEPARTURE: .+'s .+ leaves for another job( — took \d+ quarters? of built-up tenure \(\+\d+% bonus\))?$/);
 });

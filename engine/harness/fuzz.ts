@@ -10,7 +10,7 @@
  *      FUZZ_SEEDS=40 FUZZ_MODE=adversarial npm run fuzz
  */
 import type { Config, FirmDecision, FirmState, WorldState } from "../src/types.js";
-import { ADAPTIVE_LEANS, decideAdaptive, generateHiringMarket, initGame, resolveRound, roundIsScored } from "../src/index.js";
+import { ADAPTIVE_LEANS, decideAdaptive, generateHiringMarket, initGame, resolveRound, roundIsScored, statementLineGaps } from "../src/index.js";
 import { configWithSeed } from "./run.js";
 
 type Mode = "chaos" | "adversarial";
@@ -136,6 +136,7 @@ function check(w: WorldState, prevW: WorldState, res: ReturnType<typeof resolveR
     for (const k of ["Q", "B", "T_emp", "T_inv", "T_gov", "process"] as const) if ((fr.state as Record<string, number>)[k] < -1e-6) out.push({ key: `${k}_neg`, detail: `r${res.round} ${fr.firm_id} ${k}=${(fr.state as Record<string, number>)[k]}` });
     if (fr.pnl.revenue < -1e-6) out.push({ key: "revenue_neg", detail: `r${res.round} ${fr.firm_id} rev=${fr.pnl.revenue}` });
     if (fr.pnl.cogs < -1e-6) out.push({ key: "cogs_neg", detail: `r${res.round} ${fr.firm_id} cogs=${fr.pnl.cogs}` });
+    for (const g of statementLineGaps(fr.pnl, fr.balance_sheet, fr.cash_flow, fr.state.cash)) out.push({ key: "statement_lines", detail: `r${res.round} ${fr.firm_id} ${g}` }); // DW-070
     if (fr.inventory && (fr.inventory.end < -1e-6 || fr.inventory.sold > fr.inventory.begin + fr.inventory.produced + 1e-6)) out.push({ key: "inventory_flow", detail: `r${res.round} ${fr.firm_id} ${JSON.stringify(fr.inventory)}` });
     if (f.employees) for (const e of f.employees) if (!(e.salary >= 0)) out.push({ key: "salary_bad", detail: `r${res.round} ${fr.firm_id} ${e.id} salary=${e.salary}` });
     if (fr.status === "active" && f.status !== "active") out.push({ key: "status_mismatch", detail: `r${res.round} ${fr.firm_id} res=${fr.status} world=${f.status}` });

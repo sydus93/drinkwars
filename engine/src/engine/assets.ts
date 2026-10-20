@@ -11,6 +11,9 @@
  * for a signing bonus + per-round salary; the role's stock bonus lands on hire and
  * is REMOVED if the person leaves. Departure risk each round falls with employee
  * trust (T_emp as retention). Deterministic RNG keeps replays clean.
+ * DW-075: the bonus compounds with tenure (multiplier min(cap, 1 + rate × tenure), landed as
+ * per-round increments) and the WHOLE accrued amount leaves with the person. Config block
+ * absent ⇒ the multiplier stays 1 and every number matches the pre-DW-075 engine.
  */
 import type { Config, FirmDecision, FirmId, FirmState, WorldState } from "../types.js";
 import { RNG, deriveSeed } from "../rng.js";
@@ -84,8 +87,8 @@ export function resolveAssets(world: WorldState, decisions: Map<FirmId, FirmDeci
         const i = f.key_hires.findIndex((h) => h.role === roleId);
         if (i < 0) continue;
         const cfg = lab.roles.find((r) => r.id === roleId);
-        f.key_hires.splice(i, 1);
-        if (cfg) removeBonus(f, cfg.bonus);
+        const [h] = f.key_hires.splice(i, 1);
+        if (cfg) removeBonus(f, cfg.bonus, h.tenure_mult ?? 1); // DW-075: the accrued tenure bonus goes too
       }
       // New hires: signing bonus now, salary every round, stock bonus lands now.
       for (const roleId of d?.hire_roles ?? []) {
@@ -111,13 +114,24 @@ export function resolveAssets(world: WorldState, decisions: Map<FirmId, FirmDeci
         if (!cfg) continue;
         if (h.hired_round < round && rng.bool(pLeave)) {
           f.key_hires.splice(i, 1);
-          removeBonus(f, cfg.bonus);
+          const mult = h.tenure_mult ?? 1;
+          removeBonus(f, cfg.bonus, mult);
           // DW-071: not "to a rival offer" — no rival gains anyone here; it is plain attrition,
           // and students read the old wording as a competitor stealing their hire.
-          out.events.push(`DEPARTURE: ${f.id}'s ${cfg.label.toLowerCase()} leaves for another job`);
+          // DW-075: name what left with them when tenure had compounded the bonus.
+          const q = round - h.hired_round;
+          const lost = mult > 1 ? ` — took ${q} quarter${q === 1 ? "" : "s"} of built-up tenure (+${Math.round((mult - 1) * 100)}% bonus)` : "";
+          out.events.push(`DEPARTURE: ${f.id}'s ${cfg.label.toLowerCase()} leaves for another job${lost}`);
           continue;
         }
         opex += cfg.salary;
+        // DW-075 tenure compounding: land this quarter's increment of the bonus. Survivors
+        // only (a departure above already removed everything), and never in the hire round.
+        if (lab.tenure_bonus && h.hired_round < round) {
+          const prev = h.tenure_mult ?? 1;
+          const next = Math.min(lab.tenure_bonus.cap, 1 + lab.tenure_bonus.rate * (round - h.hired_round));
+          if (next > prev) { addBonus(f, cfg.bonus, next - prev); h.tenure_mult = next; }
+        }
       }
     }
 
@@ -126,9 +140,10 @@ export function resolveAssets(world: WorldState, decisions: Map<FirmId, FirmDeci
   return out;
 }
 
-function addBonus(f: FirmState, b: Partial<Record<"Q" | "B" | "process" | "T_emp", number>>): void {
-  for (const [k, v] of Object.entries(b)) f[k as "Q"] += v ?? 0;
+// DW-075: `scale` = the tenure multiplier (or its increment); the default 1 reproduces the flat bonus exactly.
+function addBonus(f: FirmState, b: Partial<Record<"Q" | "B" | "process" | "T_emp", number>>, scale = 1): void {
+  for (const [k, v] of Object.entries(b)) f[k as "Q"] += (v ?? 0) * scale;
 }
-function removeBonus(f: FirmState, b: Partial<Record<"Q" | "B" | "process" | "T_emp", number>>): void {
-  for (const [k, v] of Object.entries(b)) f[k as "Q"] = Math.max(0, f[k as "Q"] - (v ?? 0));
+function removeBonus(f: FirmState, b: Partial<Record<"Q" | "B" | "process" | "T_emp", number>>, scale = 1): void {
+  for (const [k, v] of Object.entries(b)) f[k as "Q"] = Math.max(0, f[k as "Q"] - (v ?? 0) * scale);
 }

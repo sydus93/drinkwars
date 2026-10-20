@@ -7,7 +7,7 @@
  * the balance sheet at cost and operating cash flow subtracts ΔInventory — the
  * identities still hold exactly (the WC term is restored, not approximated).
  */
-import type { BalanceSheet, CashFlow, Config, FirmState, PnL, StockKey } from "../types.js";
+import type { BalanceSheet, CashFlow, CfLines, Config, FirmId, FirmState, OpexLineKey, PnL, PostCloseKey, StockKey } from "../types.js";
 
 export class InvariantError extends Error {
   constructor(msg: string) {
@@ -23,6 +23,11 @@ export interface FinanceInputs {
   invest: { Q: number; B: number; T_emp: number; T_inv: number; T_gov: number; process: number; cap: number };
   financing: { debt_draw: number; debt_repay: number; equity_raise: number; dividend: number };
   extraOpex: number; // §11 formation / breach costs (+ inventory holding cost)
+  /** DW-070: what `extraOpex` is made of, per module (resolve sums these into extraOpex in the
+   *  same order, so the total is bit-identical). Omit ⇒ one undifferentiated line. Display only. */
+  extraOpexLines?: Partial<Record<OpexLineKey, number>>;
+  /** DW-070: what `invest.cap` is made of (tanks / facilities / vertical assets). Display only. */
+  capexLines?: { tanks?: number; facilities?: number; vertical_assets?: number };
   cashHit: number; // §9 direct shock damage (resilience-mitigated)
   // Inventory (omit / 0 in legacy mode ⇒ WC=0, exactly as before). When carrying
   // stock, COGS is already at weighted-average cost; these add the spoilage write-off
@@ -155,6 +160,7 @@ export function buildStatements(input: FinanceInputs): FinanceOutput {
   const invBegin = Math.max(0, input.inventoryValueBegin ?? 0);
   const invEnd = Math.max(0, input.inventoryValueEnd ?? 0);
   const deltaInventory = invEnd - invBegin; // working-capital change (0 in legacy mode)
+  const regulatory = regulatoryBurden(f.T_gov, c) * (1 - Math.min(1, Math.max(0, input.regBurdenReduction ?? 0)));
   const opex =
     Math.max(0, input.invest.Q) +
     Math.max(0, input.invest.B) +
@@ -164,7 +170,7 @@ export function buildStatements(input: FinanceInputs): FinanceOutput {
     Math.max(0, input.invest.process) +
     c.finance.fixed_overhead +
     c.capacity.fixed_cost_per_unit * f.cap +
-    regulatoryBurden(f.T_gov, c) * (1 - Math.min(1, Math.max(0, input.regBurdenReduction ?? 0))) +
+    regulatory +
     Math.max(0, input.extraOpex);
   const depreciation = c.capacity.depreciation * ppeBegin;
   const ebit = gross - opex - spoilage - depreciation;
@@ -269,10 +275,48 @@ export function buildStatements(input: FinanceInputs): FinanceOutput {
     throw new InvariantError(`Cash flow does not reconcile for ${f.id}`);
   }
 
+  // --- DW-070 line items. Display only: each restates a term the totals above already summed,
+  // so nothing computed changes; lines sum to their total (tested, test/dw070.test.ts). ---
+  const extra = Math.max(0, input.extraOpex);
+  const modLines = input.extraOpexLines ?? {};
+  // A module line set that does not account for the clamped total (none today: every module
+  // cost is ≥ 0) falls back to one line, so the lines can never disagree with `opex`.
+  const modSum = Object.values(modLines).reduce((a, v) => a + (v ?? 0), 0);
+  const modOk = Object.values(modLines).every((v) => (v ?? 0) >= 0) && Math.abs(modSum - extra) <= Math.max(1e-6, 1e-9 * extra);
+  const opex_lines = nonZero<OpexLineKey>({
+    quality: Math.max(0, input.invest.Q),
+    brand: Math.max(0, input.invest.B),
+    community: Math.max(0, input.invest.T_emp),
+    investor_relations: Math.max(0, input.invest.T_inv),
+    regulator_relations: Math.max(0, input.invest.T_gov),
+    operations: Math.max(0, input.invest.process),
+    overhead: c.finance.fixed_overhead,
+    tank_upkeep: c.capacity.fixed_cost_per_unit * f.cap,
+    regulatory,
+    ...(modOk ? modLines : { other: extra }),
+  });
+  const capex = Math.max(0, input.invest.cap);
+  const cl = input.capexLines;
+  const capOk = !!cl && [cl.tanks, cl.facilities, cl.vertical_assets].every((v) => (v ?? 0) >= 0)
+    && Math.abs((cl.tanks ?? 0) + (cl.facilities ?? 0) + (cl.vertical_assets ?? 0) - capex) <= Math.max(1e-6, 1e-9 * capex);
+  const cf_lines: CfLines = {
+    operating: nonZero({ net_income: netIncome, depreciation, inventory_change: -deltaInventory }),
+    investing: nonZero({
+      ...(capOk ? { tanks: -(cl!.tanks ?? 0), facilities: -(cl!.facilities ?? 0), vertical_assets: -(cl!.vertical_assets ?? 0) } : { capex: -capex }),
+      divestment: disposal,
+    }),
+    financing: nonZero({
+      debt_draw: draw, debt_repay: -repay, equity: equityNet, dividends: -dividend,
+      convertible_draw: convDraw, convertible_repaid: -convRepaid, rbf_draw: rbfDraw, rbf_repaid: -rbfPrinPaid,
+    }),
+    other: nonZero({ shock: -cashHit }),
+  };
+  const debt_lines = nonZero({ bank: debtNext, convertible: conv?.principal ?? 0, rbf: rbfPrin });
+
   return {
-    pnl: { revenue: input.revenue, cogs: input.cogs, gross, opex, spoilage, depreciation, ebit, interest, net_income: netIncome },
-    balance_sheet: { cash: cashNext, ppe: ppeNext, inventory: invEnd, assets, debt: debtTotal, paid_in: paidNext, retained: retainedNext, equity },
-    cash_flow: { operating, investing, financing, delta_cash: deltaCash },
+    pnl: { revenue: input.revenue, cogs: input.cogs, gross, opex, spoilage, depreciation, ebit, interest, net_income: netIncome, opex_lines },
+    balance_sheet: { cash: cashNext, ppe: ppeNext, inventory: invEnd, assets, debt: debtTotal, paid_in: paidNext, retained: retainedNext, equity, debt_lines },
+    cash_flow: { operating, investing, financing, delta_cash: deltaCash, cf_lines },
     cost_of_capital: { r_debt: rDebt, coverage, leverage, credit_rationed: creditRationed },
     next: {
       cash: cashNext, debt: debtNext, paid_in_capital: paidNext, retained_earnings: retainedNext, ppe_book: ppeNext,
@@ -280,6 +324,47 @@ export function buildStatements(input: FinanceInputs): FinanceOutput {
     },
     events,
   };
+}
+
+/** DW-070 invariant: every itemized line set sums to the total it itemizes (same relative tolerance
+ *  as §7.2). Returns the gaps found (empty = sound). Rounds resolved before DW-070 carry no lines and
+ *  pass trivially. Used by test/dw070.test.ts and the fuzzer.
+ *  DW-076: with `cashNext` (the firm's cash going INTO the next round, `firm_results[].state.cash`)
+ *  the post-close bridge is checked too: closing cash + Σpost_close = opening cash. */
+export function statementLineGaps(pnl: PnL, bs: BalanceSheet, cf: CashFlow, cashNext?: number): string[] {
+  const gaps: string[] = [];
+  const sum = (o: Record<string, number | undefined> | undefined) => Object.values(o ?? {}).reduce((a: number, v) => a + (v ?? 0), 0);
+  const near = (a: number, b: number) => Math.abs(a - b) <= Math.max(1e-3, 1e-9 * Math.max(Math.abs(a), Math.abs(b)));
+  if (pnl.opex_lines && !near(sum(pnl.opex_lines), pnl.opex)) gaps.push(`opex_lines ${sum(pnl.opex_lines)} ≠ opex ${pnl.opex}`);
+  if (bs.debt_lines && !near(sum(bs.debt_lines), bs.debt)) gaps.push(`debt_lines ${sum(bs.debt_lines)} ≠ debt ${bs.debt}`);
+  const l = cf.cf_lines;
+  if (l) {
+    for (const s of ["operating", "investing", "financing"] as const) if (!near(sum(l[s]), cf[s])) gaps.push(`cf_lines.${s} ${sum(l[s])} ≠ ${cf[s]}`);
+    const all = sum(l.operating) + sum(l.investing) + sum(l.financing) + sum(l.other);
+    if (!near(all, cf.delta_cash)) gaps.push(`cf_lines total ${all} ≠ delta_cash ${cf.delta_cash}`);
+    if (cashNext !== undefined && !near(bs.cash + sum(l.post_close), cashNext)) gaps.push(`closing cash ${bs.cash} + post_close ${sum(l.post_close)} ≠ opening cash ${cashNext}`);
+  }
+  return gaps;
+}
+
+// ── DW-076 post-close cash ledger ────────────────────────────────────────────
+// M&A (resolve step 9.5) and exit / rebuild (step 10) move cash AFTER buildStatements has struck
+// the books, so the cash-flow statement's closing cash ≠ the cash the firm opens next round with,
+// and nothing on the statement said why. Those steps write each move here; resolve folds the
+// ledger into `cf_lines.post_close`. Display only — no total the engine computes changes.
+export type PostCloseLedger = Map<FirmId, Partial<Record<PostCloseKey, number>>>;
+export function ledgerAdd(ledger: PostCloseLedger | undefined, firm: FirmId, key: PostCloseKey, amount: number): void {
+  if (!ledger || !amount) return;
+  const row = ledger.get(firm) ?? {};
+  row[key] = (row[key] ?? 0) + amount;
+  ledger.set(firm, row);
+}
+
+/** Drop exact-zero entries (a missing line is $0) — keeps the per-round payload small. */
+export function nonZero<K extends string>(o: Partial<Record<K, number>>): Partial<Record<K, number>> {
+  const out: Partial<Record<K, number>> = {};
+  for (const [k, v] of Object.entries(o) as [K, number | undefined][]) if (v) out[k] = v;
+  return out;
 }
 
 /** Firm valuation for the investor path (§7.5). `skipFounding` drops the firm's first

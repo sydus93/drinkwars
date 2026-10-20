@@ -69,6 +69,7 @@ export function FirmDetail({
   const empOn = !!view.modules?.employees?.enabled;
   const empRoleLabel = (id: string) => view.modules?.employees?.roles.find((r) => r.id === id)?.label ?? id.replace(/_/g, " ");
   const canPoach = empOn && !firm.isYou && firm.status === "active" && firm.employees.length > 0;
+  const ownOrBought = infoActive || firm.isYou; // your own fundamentals are never "locked" (DW-080)
 
   const distressed = firm.distressRounds >= 1;
   const acquirable = maOn && maCfg && firm.distressRounds >= maCfg.min_distress_rounds && firm.status === "active";
@@ -86,6 +87,8 @@ export function FirmDetail({
 
   return (
     <div
+      role="dialog"
+      aria-modal="true"
       className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4 backdrop-blur-sm"
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
@@ -94,8 +97,9 @@ export function FirmDetail({
         <div className="flex items-start justify-between gap-3 border-b border-line px-5 pt-4 pb-3">
           <div className="min-w-0">
             <div className="text-[0.6rem] font-semibold uppercase tracking-[0.16em] text-copperdeep">Brewery dossier</div>
-            <h3 className="display truncate text-xl font-semibold leading-tight text-ink">
-              {firm.name}{firm.isYou && <span className="ml-2 align-middle"><Tag tone="copper">You</Tag></span>}
+            {/* the name truncates, the YOU tag never does (it was cut off with a long brewery name) */}
+            <h3 className="display flex min-w-0 items-center gap-2 text-xl font-semibold leading-tight text-ink">
+              <span className="truncate">{firm.name}</span>{firm.isYou && <span className="shrink-0"><Tag tone="copper">You</Tag></span>}
             </h3>
           </div>
           <button onClick={onClose} className="shrink-0 text-inksoft transition-colors hover:text-ink" aria-label="Close">✕</button>
@@ -116,10 +120,10 @@ export function FirmDetail({
           {/* PRIVATE — research-gated */}
           <div className="mt-4 flex items-center gap-2">
             <div className="text-[0.6rem] font-semibold uppercase tracking-[0.14em] text-inksoft">Confidential fundamentals</div>
-            {!infoActive && <Tag tone="ink">locked</Tag>}
+            {!ownOrBought && <Tag tone="ink">locked</Tag>}
           </div>
 
-          {infoActive ? (
+          {ownOrBought ? (
             <div className="mt-1 grid gap-1">
               <Row label={STOCK_LABEL.Q} value={<span>{bar(firm.Q, fieldMaxQ, "var(--color-hop)")} <span className="tnum ml-1">{firm.Q.toFixed(0)}</span></span>} />
               <Row label={STOCK_LABEL.B} value={<span>{bar(firm.B, fieldMaxB)} <span className="tnum ml-1">{firm.B.toFixed(0)}</span></span>} />

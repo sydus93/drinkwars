@@ -77,6 +77,23 @@ const median = (xs: number[]): number => {
 };
 /** Field median of a rival metric (empty field → 0). */
 const fieldMed = (view: GameView, pick: (f: FirmSnapshot) => number): number => median(rivals(view).map(pick));
+/** DW-080: rivals' private numbers (cost, brand, stocks, leverage, capacity, segment shares, roster,
+ *  valuation) reach a team only with market research — without it they arrive as 0. That is
+ *  "unknown", not "zero": every comparison says "—" and grades nothing (it read "field $0",
+ *  "leader 0%", "You lead this segment"). A revealed active rival always has capacity. */
+const fieldSeen = (view: GameView): boolean => rivals(view).some((f) => f.cap > 0);
+const HIDDEN = "Rivals' numbers stay hidden until your team buys market research.";
+/** "field X" when the field is visible, else "field —". */
+const fieldOf = (view: GameView, show: () => string, word = "field"): string => (fieldSeen(view) ? `${word} ${show()}` : `${word} —`);
+/** cmpTone, or neutral when the field is hidden. */
+const vsField = (view: GameView, v: number, pick: (f: FirmSnapshot) => number, higherBetter: boolean, band?: number): Tone =>
+  fieldSeen(view) ? cmpTone(v, fieldMed(view, pick), higherBetter, band) : "neutral";
+/** Utilization of the round just resolved: its sales over the capacity it brewed against — not this
+ *  round's (already re-built / worn) capacity, which read 114%. */
+const utilization = (view: GameView, sold: number): number => {
+  const cap = (view.ownResult as { effective_cap?: number } | null | undefined)?.effective_cap ?? view.own.cap;
+  return cap > 0 ? sold / cap : 0;
+};
 /** Tone from a value vs a benchmark, `higherBetter` flips the sense. `band` = the "watch" gap. */
 const cmpTone = (v: number, bench: number, higherBetter: boolean, band = 0.1): Tone => {
   if (!isFinite(v) || bench === 0) return "neutral";
@@ -108,8 +125,8 @@ export function cockpitSignals(desk: CockpitDesk, view: GameView): Signal[] {
       out.push({ label: "Interest coverage", value: `${coverage.toFixed(1)}×`, tone: covTone,
         read: covTone === "risk" ? "Thin. Under 1.5× the bank moves you onto the penalty grid and the spread widens the further cover falls. De-lever or earn back the cover." : "EBIT ÷ interest. Comfortable room to service debt." });
       const levMed = fieldMed(view, (f) => f.leverage);
-      out.push({ label: "Leverage vs field", value: `${leverage.toFixed(2)}×`, tone: cmpTone(leverage, levMed, false, 0.2),
-        read: `Field runs ≈${levMed.toFixed(2)}×. ${leverage > levMed * 1.2 ? "You're the stretched one at the table — borrowing gets pricier." : "You have borrowing headroom the field doesn't."}` });
+      out.push({ label: "Leverage vs field", value: `${leverage.toFixed(2)}×`, tone: vsField(view, leverage, (f) => f.leverage, false, 0.2),
+        read: !fieldSeen(view) ? HIDDEN : `Field runs ≈${levMed.toFixed(2)}×. ${leverage > levMed * 1.2 ? "You're the stretched one at the table — borrowing gets pricier." : "You have borrowing headroom the field doesn't."}` });
       if (credit_rationed) out.push({ label: "Credit", value: "Rationed", tone: "risk", read: "Lenders are capping new debt. This round leans on cash or equity, not more borrowing." });
     }
     // cross-desk handoff: what the round is asking the balance sheet to fund
@@ -120,7 +137,7 @@ export function cockpitSignals(desk: CockpitDesk, view: GameView): Signal[] {
   if (desk === "operations") {
     const { sold, desired } = volumes(view);
     if (r && view.own.cap > 0) {
-      const util = sold / view.own.cap;
+      const util = utilization(view, sold);
       const utilTone: Tone = util >= 0.95 ? "watch" : util >= 0.7 ? "good" : "risk";
       out.push({ label: "Capacity utilization", value: fmt.pct(util), tone: utilTone,
         read: util >= 0.95 ? "You're near the ceiling — demand you can't serve is lost margin. A build needs CFO cash and lands next round." : util < 0.7 ? "Idle tanks you're still paying upkeep on. Grow demand (CMO) or trim/mothball." : "Healthy headroom without paying for idle capacity." });
@@ -128,8 +145,8 @@ export function cockpitSignals(desk: CockpitDesk, view: GameView): Signal[] {
       if (gap > sold * 0.05) out.push({ label: "Unserved demand", value: fmt.int(gap), tone: "risk", read: "Buyers wanted more than you could make. This is the cost of under-building — flag capex to the CFO." });
     }
     const ucMed = fieldMed(view, (f) => f.unitCost);
-    out.push({ label: "Unit cost vs field", value: fmt.price(view.own.unit_cost), tone: cmpTone(view.own.unit_cost, ucMed, false, 0.08),
-      read: `Field ≈${fmt.price(ucMed)}. Process + learning + scale drive this down; morale (People) moves productivity.` });
+    out.push({ label: "Unit cost vs field", value: fmt.price(view.own.unit_cost), tone: vsField(view, view.own.unit_cost, (f) => f.unitCost, false, 0.08),
+      read: `${fieldSeen(view) ? `Field ≈${fmt.price(ucMed)}.` : HIDDEN} Process + learning + scale drive this down; morale (People) moves productivity.` });
     if (view.inventoryEnabled && r?.inventory) out.push({ label: "Inventory turnover", value: `${r.inventory.turnover.toFixed(1)}×`, tone: r.inventory.turnover < 1 ? "watch" : "good", read: "Sold ÷ average on-hand. Low turns = cash tied up in kegs and spoilage risk." });
   }
 
@@ -139,14 +156,16 @@ export function cockpitSignals(desk: CockpitDesk, view: GameView): Signal[] {
     // headline segment = where you have the most share to win/defend
     const primary = segs.map((s) => ({ id: s.id, mine: you?.shareBySeg?.[s.id] ?? 0, lead: Math.max(0, ...rivals(view).map((f) => f.shareBySeg?.[s.id] ?? 0)) }))
       .sort((a, b) => (b.mine + b.lead) - (a.mine + a.lead))[0];
-    if (primary) {
+    if (primary && !fieldSeen(view)) {
+      out.push({ label: `${SEG_TAG[primary.id] ?? primary.id} share`, value: fmt.pct(primary.mine), tone: "neutral", read: `${HIDDEN} Your own share is the number to move.` });
+    } else if (primary) {
       const behind = primary.lead > primary.mine;
       out.push({ label: `${SEG_TAG[primary.id] ?? primary.id} share`, value: fmt.pct(primary.mine), tone: behind ? "watch" : "good",
         read: behind ? `Field leader holds ${fmt.pct(primary.lead)} here. Close it with price, brand, or a sharper position — not all three at once.` : "You lead this segment. Defend the position; don't over-invest to pad a lead." });
     }
     const bMed = fieldMed(view, (f) => f.B);
-    out.push({ label: "Brand vs field", value: view.own.B.toFixed(0), tone: cmpTone(view.own.B, bMed, true, 0.1),
-      read: `Field ≈${bMed.toFixed(0)}. Brand is a stock — it decays without investment and can't be bought in one round.` });
+    out.push({ label: "Brand vs field", value: view.own.B.toFixed(0), tone: vsField(view, view.own.B, (f) => f.B, true, 0.1),
+      read: `${fieldSeen(view) ? `Field ≈${bMed.toFixed(0)}.` : HIDDEN} Brand is a stock — it decays without investment and can't be bought in one round.` });
     if (r?.distinctiveness) out.push({ label: "Distinctiveness", value: r.distinctiveness.nearest_neighbor.toFixed(2), tone: "neutral",
       read: "Distance to your nearest rival on the strategy map. Too crowded → price war; too far → no buyers. Aim for the underserved-but-real niche." });
     const { sold, desired } = volumes(view);
@@ -157,8 +176,8 @@ export function cockpitSignals(desk: CockpitDesk, view: GameView): Signal[] {
 
   if (desk === "people") {
     const empMed = fieldMed(view, (f) => f.T_emp);
-    out.push({ label: "Employee relations", value: view.own.T_emp.toFixed(0), tone: cmpTone(view.own.T_emp, empMed, true, 0.15),
-      read: `Field ≈${empMed.toFixed(0)}. Morale feeds productivity — a happy crew brews cheaper, and that lands on the COO's unit cost.` });
+    out.push({ label: "Employee relations", value: view.own.T_emp.toFixed(0), tone: vsField(view, view.own.T_emp, (f) => f.T_emp, true, 0.15),
+      read: `${fieldSeen(view) ? `Field ≈${empMed.toFixed(0)}.` : HIDDEN} Morale feeds productivity — a happy crew brews cheaper, and that lands on the COO's unit cost.` });
     const you = view.firms.find((f) => f.isYou);
     const roster = you?.employees ?? [];
     if (roster.length) {
@@ -174,8 +193,8 @@ export function cockpitSignals(desk: CockpitDesk, view: GameView): Signal[] {
 
   if (desk === "strategy") {
     const govMed = fieldMed(view, (f) => f.T_gov);
-    out.push({ label: "Regulator standing", value: view.own.T_gov.toFixed(0), tone: cmpTone(view.own.T_gov, govMed, true, 0.15),
-      read: `Field ≈${govMed.toFixed(0)}. Goodwill with regulators lowers scrutiny risk and strengthens your hand in lobbying fights.` });
+    out.push({ label: "Regulator standing", value: view.own.T_gov.toFixed(0), tone: vsField(view, view.own.T_gov, (f) => f.T_gov, true, 0.15),
+      read: `${fieldSeen(view) ? `Field ≈${govMed.toFixed(0)}.` : HIDDEN} Goodwill with regulators lowers scrutiny risk and strengthens your hand in lobbying fights.` });
     if (view.agreements.length) out.push({ label: "Active pacts", value: String(view.agreements.length), tone: "neutral", read: "Alliances move fast but invite defection. Contingent clauses and reputation are your enforcement, not trust." });
     if (view.lobbyInitiatives.length) out.push({ label: "Regulation in play", value: String(view.lobbyInitiatives.length), tone: "watch", read: "A rule is moving through the docket. Push, counter, or let it ride — each shifts who the market favors." });
     const wounded = rivals(view).filter((f) => f.distressRounds > 0).length;
@@ -211,16 +230,16 @@ export function cockpitMetrics(desk: CockpitDesk, view: GameView): Metric[] {
   if (desk === "finance" && r) {
     const cc = r.cost_of_capital;
     out.push({ label: "Coverage (EBIT/int)", value: `${cc.coverage.toFixed(1)}×`, tone: cc.coverage >= 3 ? "good" : cc.coverage >= 1.5 ? "watch" : "risk", hint: "Can operating profit cover the interest? Below ~1.5× is fragile." });
-    out.push({ label: "Leverage", value: `${cc.leverage.toFixed(2)}×`, field: `field ${fieldMed(view, (f) => f.leverage).toFixed(2)}×`, tone: cmpTone(cc.leverage, fieldMed(view, (f) => f.leverage), false, 0.2), hint: "Debt ÷ equity. Cheap growth until a shock — then it amplifies losses." });
+    out.push({ label: "Leverage", value: `${cc.leverage.toFixed(2)}×`, field: fieldOf(view, () => `${fieldMed(view, (f) => f.leverage).toFixed(2)}×`), tone: vsField(view, cc.leverage, (f) => f.leverage, false, 0.2), hint: "Debt ÷ equity. Cheap growth until a shock — then it amplifies losses." });
     out.push({ label: "Cost of debt", value: fmt.pct1(cc.r_debt), tone: "neutral", hint: "Your marginal borrowing rate — rises with leverage and thin coverage." });
-    out.push({ label: "Net income", value: fmt.signed(r.pnl.net_income), field: `field ${fmt.money(fieldMed(view, (f) => f.netIncome))}`, tone: r.pnl.net_income >= 0 ? "good" : "risk", hint: "Accrual profit — not cash. A profitable firm can still run out of money." });
+    out.push({ label: "Net income", value: fmt.signed(r.pnl.net_income), field: fieldOf(view, () => fmt.money(fieldMed(view, (f) => f.netIncome))), tone: r.pnl.net_income >= 0 ? "good" : "risk", hint: "Accrual profit — not cash. A profitable firm can still run out of money." });
   }
 
   if (desk === "operations") {
     const { sold, desired } = volumes(view);
-    const util = view.own.cap > 0 ? sold / view.own.cap : 0;
+    const util = utilization(view, sold);
     if (r) out.push({ label: "Utilization", value: fmt.pct(util), tone: util >= 0.95 ? "watch" : util >= 0.7 ? "good" : "risk", hint: "Units sold ÷ capacity. Near 100% = lost sales; low = idle upkeep." });
-    out.push({ label: "Unit cost", value: fmt.price(view.own.unit_cost), field: `field ${fmt.price(fieldMed(view, (f) => f.unitCost))}`, tone: cmpTone(view.own.unit_cost, fieldMed(view, (f) => f.unitCost), false, 0.08), hint: "All-in cost per drink. Learning + process + scale drive it down." });
+    out.push({ label: "Unit cost", value: fmt.price(view.own.unit_cost), field: fieldOf(view, () => fmt.price(fieldMed(view, (f) => f.unitCost))), tone: vsField(view, view.own.unit_cost, (f) => f.unitCost, false, 0.08), hint: "All-in cost per drink. Learning + process + scale drive it down." });
     // learning and process are MULTIPLIERS on c_base (1.00 = no saving yet), so adding them and
     // printing the sum as a negative was arithmetic nonsense — a firm with no experience and no
     // process investment read "−2.00". The honest figure is the $/drink the two take out of the
@@ -239,7 +258,7 @@ export function cockpitMetrics(desk: CockpitDesk, view: GameView): Metric[] {
           : "Nothing yet. Experience accumulates with every drink brewed; process investment compounds on top of it.",
       });
     }
-    out.push({ label: "Capacity", value: fmt.int(view.own.cap), field: `field ${fmt.int(fieldMed(view, (f) => f.cap))}`, tone: "neutral", hint: "Your ceiling on units this round. Builds take a round to come online." });
+    out.push({ label: "Capacity", value: fmt.int(view.own.cap), field: fieldOf(view, () => fmt.int(fieldMed(view, (f) => f.cap))), tone: "neutral", hint: "Your ceiling on units this round. Builds take a round to come online." });
     if (view.inventoryEnabled && r?.inventory) out.push({ label: "Inventory turns", value: `${r.inventory.turnover.toFixed(1)}×`, tone: r.inventory.turnover < 1 ? "watch" : "good", hint: "Higher = less cash frozen in stock and less spoilage." });
   }
 
@@ -247,14 +266,14 @@ export function cockpitMetrics(desk: CockpitDesk, view: GameView): Metric[] {
     for (const s of view.segments.filter((x) => x.active)) {
       const mine = you?.shareBySeg?.[s.id] ?? 0;
       const lead = Math.max(0, ...rivals(view).map((f) => f.shareBySeg?.[s.id] ?? 0));
-      out.push({ label: `${SEG_TAG[s.id] ?? s.id} share`, value: fmt.pct(mine), field: `leader ${fmt.pct(lead)}`, tone: mine >= lead ? "good" : mine >= lead * 0.6 ? "watch" : "risk", hint: "Your slice of this segment vs the strongest rival in it." });
+      out.push({ label: `${SEG_TAG[s.id] ?? s.id} share`, value: fmt.pct(mine), field: fieldOf(view, () => fmt.pct(lead), "leader"), tone: !fieldSeen(view) ? "neutral" : mine >= lead ? "good" : mine >= lead * 0.6 ? "watch" : "risk", hint: "Your slice of this segment vs the strongest rival in it." });
     }
-    out.push({ label: "Brand stock", value: view.own.B.toFixed(0), field: `field ${fieldMed(view, (f) => f.B).toFixed(0)}`, tone: cmpTone(view.own.B, fieldMed(view, (f) => f.B), true), hint: "A durable demand driver — decays without upkeep." });
+    out.push({ label: "Brand stock", value: view.own.B.toFixed(0), field: fieldOf(view, () => fieldMed(view, (f) => f.B).toFixed(0)), tone: vsField(view, view.own.B, (f) => f.B, true), hint: "A durable demand driver — decays without upkeep." });
     if (r?.distinctiveness) out.push({ label: "Nearest rival", value: r.distinctiveness.nearest_neighbor.toFixed(2), tone: "neutral", hint: "Strategy-map distance. The inverted-U: distinct enough to matter, not so far there's no market." });
   }
 
   if (desk === "people") {
-    out.push({ label: "Employee relations", value: view.own.T_emp.toFixed(0), field: `field ${fieldMed(view, (f) => f.T_emp).toFixed(0)}`, tone: cmpTone(view.own.T_emp, fieldMed(view, (f) => f.T_emp), true, 0.15), hint: "Feeds productivity and resilience — morale shows up in the COO's unit cost." });
+    out.push({ label: "Employee relations", value: view.own.T_emp.toFixed(0), field: fieldOf(view, () => fieldMed(view, (f) => f.T_emp).toFixed(0)), tone: vsField(view, view.own.T_emp, (f) => f.T_emp, true, 0.15), hint: "Feeds productivity and resilience — morale shows up in the COO's unit cost." });
     const roster = you?.employees ?? [];
     if (roster.length) {
       const avgSat = roster.reduce((a, e) => a + e.satisfaction, 0) / roster.length;
@@ -262,14 +281,14 @@ export function cockpitMetrics(desk: CockpitDesk, view: GameView): Metric[] {
       out.push({ label: "Crew satisfaction", value: fmt.pct(avgSat), tone: avgSat < 0.45 ? "risk" : avgSat < 0.6 ? "watch" : "good", hint: "Below ~45% and rivals can poach them. Retention beats re-hiring." });
       out.push({ label: "Avg skill", value: avgSkill.toFixed(2), tone: "neutral", hint: "Skilled brewers convert to quality more efficiently than raw capital." });
     }
-    out.push({ label: "Headcount", value: String(roster.length), field: `field ${Math.round(median(rivals(view).map((f) => f.employees.length)))}`, tone: "neutral", hint: "Named staff on the payroll — human capital vs the field." });
+    out.push({ label: "Headcount", value: String(roster.length), field: fieldOf(view, () => String(Math.round(median(rivals(view).map((f) => f.employees.length))))), tone: "neutral", hint: "Named staff on the payroll — human capital vs the field." });
   }
 
   if (desk === "strategy") {
-    out.push({ label: "Regulator trust", value: view.own.T_gov.toFixed(0), field: `field ${fieldMed(view, (f) => f.T_gov).toFixed(0)}`, tone: cmpTone(view.own.T_gov, fieldMed(view, (f) => f.T_gov), true, 0.15), hint: "Goodwill that lowers scrutiny and strengthens lobbying." });
+    out.push({ label: "Regulator trust", value: view.own.T_gov.toFixed(0), field: fieldOf(view, () => fieldMed(view, (f) => f.T_gov).toFixed(0)), tone: vsField(view, view.own.T_gov, (f) => f.T_gov, true, 0.15), hint: "Goodwill that lowers scrutiny and strengthens lobbying." });
     if (view.own.reputation) out.push({ label: "Reputation", value: view.own.reputation.toFixed(0), tone: "neutral", hint: "Built by honoring pacts; lowers your cost of capital." });
     out.push({ label: "Active pacts", value: String(view.agreements.length), tone: "neutral", hint: "Alliances in force — fast capability, defection risk." });
-    out.push({ label: "Valuation", value: fmt.money(you?.valuation ?? 0), field: `field ${fmt.money(fieldMed(view, (f) => f.valuation))}`, tone: cmpTone(you?.valuation ?? 0, fieldMed(view, (f) => f.valuation), true), hint: "What an acquirer would reference — the M&A and control lens." });
+    out.push({ label: "Valuation", value: fmt.money(you?.valuation ?? 0), field: fieldOf(view, () => fmt.money(fieldMed(view, (f) => f.valuation))), tone: vsField(view, you?.valuation ?? 0, (f) => f.valuation, true), hint: "What an acquirer would reference — the M&A and control lens." });
   }
 
   if (desk === "all" && r) {
@@ -280,7 +299,7 @@ export function cockpitMetrics(desk: CockpitDesk, view: GameView): Metric[] {
     // DOES, not what it is — engine keys stay generic.
     out.push({ label: "Preparedness", value: sc.intangible.toFixed(2), tone: sc.intangible >= 0 ? "good" : "risk", hint: "Preparedness for the future — quality, brand, process capital." });
     out.push({ label: "Standing", value: sc.stakeholder.toFixed(2), tone: sc.stakeholder >= 0 ? "good" : "risk", hint: "Stakeholder standing — employee, investor, regulator trust." });
-    out.push({ label: "Valuation", value: fmt.money(you?.valuation ?? 0), field: `field ${fmt.money(fieldMed(view, (f) => f.valuation))}`, tone: cmpTone(you?.valuation ?? 0, fieldMed(view, (f) => f.valuation), true), hint: "The single integrative number — sustained advantage capitalized." });
+    out.push({ label: "Valuation", value: fmt.money(you?.valuation ?? 0), field: fieldOf(view, () => fmt.money(fieldMed(view, (f) => f.valuation))), tone: vsField(view, you?.valuation ?? 0, (f) => f.valuation, true), hint: "The single integrative number — sustained advantage capitalized." });
   }
 
   return out;

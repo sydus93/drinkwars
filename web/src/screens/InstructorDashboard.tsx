@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { ScheduledShock } from "drinkwars-engine";
+import { MODULE_REGISTRY } from "drinkwars-engine";
 import type { DashEngagementRow, DashPanelRow, DashTeam, InstructorDashboard as DashData } from "drinkwars-server";
 import type { GameTimeline, InstructorClient } from "../game/multiplayer.js";
 import { Button, Card, Eyebrow, Row, Stat, Tag } from "../components/ui.js";
@@ -11,13 +12,20 @@ import { MARKET_META, SEG_LABEL, SHOCK_META, fmt, humanizeId } from "../labels.j
 import { RATIO_DEFS, RATIO_GROUPS, WCS_FACTORS, computeWcs, distressFlags, ratioDisplay } from "../lib/ratios.js";
 import { teamColor } from "../lib/teamColors.js";
 import { TuningBoard, tuningDefaults, type TuningVals } from "./TuningBoard.js";
+import { FieldDemandCard } from "../components/FieldDemand.js";
+import { TeamDecisionsPanel } from "../components/TeamDecisions.js";
+import { DebriefPanel } from "../components/Debrief.js";
+import { CallsReadout } from "../components/CallsReadout.js";
+import { TeamItemized } from "../components/TeamItemized.js";
 
-type DashTab = "overview" | "monitor" | "balance" | "schedule" | "export" | "trajectories" | "score" | "market" | "strategy" | "coopetition" | "finance" | "team";
+type DashTab = "overview" | "monitor" | "debrief" | "decisions" | "balance" | "schedule" | "export" | "trajectories" | "score" | "market" | "strategy" | "coopetition" | "finance" | "team";
 
 // Design IA first (Overview · Monitor · Balance · Schedule · Export), then the deep analytics.
 const TABS: { id: DashTab; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "monitor", label: "Monitor" },
+  { id: "debrief", label: "Debrief" }, // DW-068 phase 2: the board-meeting deck, live from this payload
+  { id: "decisions", label: "Decisions" }, // DW-072 #5: live seat-by-seat submissions
   { id: "balance", label: "Balance" },
   { id: "schedule", label: "Schedule" },
   { id: "export", label: "Export" },
@@ -29,7 +37,7 @@ const TABS: { id: DashTab; label: string }[] = [
   { id: "finance", label: "Finance & health" },
   { id: "team", label: "Team drill-down" },
 ];
-/** Tabs that need a resolved round; Monitor/Balance/Schedule/Export work from round 0. */
+/** Tabs that need a resolved round; Monitor/Decisions/Balance/Schedule/Export work from round 0. */
 const NEEDS_ROUND = new Set<DashTab>(["overview", "trajectories", "score", "market", "strategy", "coopetition", "finance", "team"]);
 
 const SCORE_KEYS = ["financial", "market", "intangible", "stakeholder"] as const;
@@ -208,8 +216,9 @@ function OverviewPanel({ d }: { d: Derived }) {
         </div>
         {d.data.meta.setup && (
           <div className="mt-2 text-[0.7rem] text-inksoft">
-            <span className="font-mono uppercase tracking-wide text-copperdeep">Setup ·</span> {d.data.meta.setup.firmMode === "team" ? "team firms (C-suite chairs)" : "solo firms"} · {d.data.meta.setup.nFirms} slots · {d.data.meta.setup.modules.length ? `${d.data.meta.setup.modules.length} expansion modules (${d.data.meta.setup.modules.map(humanizeId).join(", ")})` : "base game, no expansion modules"}
-            {d.data.meta.setup.frontierRound != null && <> · new category R{d.data.meta.setup.frontierRound + 1}</>}
+            <span className="font-mono uppercase tracking-wide text-copperdeep">Setup ·</span> {d.data.meta.setup.firmMode === "team" ? "team firms (C-suite chairs)" : "solo firms"} · {d.data.meta.setup.nFirms} slots · {d.data.meta.setup.modules.length ? `${d.data.meta.setup.modules.length} expansion modules (${d.data.meta.setup.modules.map((id) => MODULE_REGISTRY.find((m) => m.id === id)?.name ?? humanizeId(id)).join(", ")})` : "base game, no expansion modules"}
+            {/* only when it can arrive inside this game — "R10" in an 8-round game read as a bug (DW-080) */}
+            {d.data.meta.setup.frontierRound != null && d.data.meta.setup.frontierRound < d.data.meta.nRounds && <> · new category R{d.data.meta.setup.frontierRound + 1}</>}
             {d.data.meta.setup.exportRound != null && <> · exports open R{d.data.meta.setup.exportRound + 1}</>}
             {d.data.meta.setup.practiceRounds > 0 && <> · first {d.data.meta.setup.practiceRounds} round{d.data.meta.setup.practiceRounds === 1 ? "" : "s"} practice (unscored)</>}
             {d.data.meta.setup.terminalWeight > 0 && <> · terminal weight {Math.round(d.data.meta.setup.terminalWeight * 100)}%</>}
@@ -553,6 +562,7 @@ function MarketPanel({ d }: { d: Derived }) {
       <Guard label="Price, shoppers & tanks"><PriceShoppersCard d={d} segIds={segIds} /></Guard>
       <Guard label="Positions"><PositionsCard d={d} /></Guard>
       <Guard label="Why shoppers chose"><PullCard d={d} segIds={segIds} /></Guard>
+      <Guard label="Field view"><FieldDemandCard data={d.data} colorByFirm={d.colorByFirm} nameByFirm={d.nameByFirm} /></Guard>
       <Card>
         <Eyebrow>Demand vs. served</Eyebrow>
         <Legend series={[{ label: "Demand (D)", color: "var(--color-inksoft)", data: [] }, { label: "Units served", color: "var(--color-copper)", data: [] }]} />
@@ -1028,6 +1038,8 @@ function TeamPanel({ d }: { d: Derived }) {
         </Card>
       )}
 
+      <TeamItemized rows={rows} field={d.data.panel} color={color} />
+
       <Card>
         <Eyebrow>Decision process, beliefs &amp; reflections</Eyebrow>
         {eng.length === 0 ? (
@@ -1379,9 +1391,12 @@ export function InstructorDashboard({ client, gameId, roundKey }: { client: Inst
       ) : (
         <Guard label={TABS.find((t) => t.id === tab)?.label ?? tab} resetKey={`${tab}|${roundKey}`}>
           {tab === "monitor" && <MonitorPanel d={d} />}
+          {tab === "decisions" && <TeamDecisionsPanel client={client} gameId={gameId} roundKey={roundKey} colorByFirm={d.colorByFirm} nameByFirm={d.nameByFirm} />}
+          {tab === "decisions" && <CallsReadout client={client} gameId={gameId} roundKey={roundKey} enabled={d.data.forecasts !== undefined} colorByFirm={d.colorByFirm} nameByFirm={d.nameByFirm} />}
           {tab === "balance" && <BalancePanel />}
           {tab === "schedule" && <SchedulePanel d={d} client={client} gameId={gameId} roundKey={roundKey} />}
           {tab === "export" && <ExportPanel exporting={exporting} onExport={exportFile} />}
+          {tab === "debrief" && <DebriefPanel data={d.data} />}
           {NEEDS_ROUND.has(tab) && (d.data.meta.resolvedRounds === 0 ? (
             <Card>
               <Eyebrow>No rounds resolved yet</Eyebrow>

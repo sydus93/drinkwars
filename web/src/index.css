@@ -53,6 +53,20 @@
   --bevel:  rgba(255, 255, 255, 0.6);   /* brushed-metal frame recipe */
   --metal:  rgba(120, 92, 52, 0.30);
   --shadow: rgba(40, 25, 8, 0.18);
+  /* DW-077 seat identity (design/round-ux-2026-10 §B): one colour per C-suite chair, light
+     values here, dark below. `--seat-ink` is the text colour ON a seat-coloured block. Read
+     through web/src/lib/seatColors.ts, never by hand. */
+  --seat-ceo:  #6c4294;
+  --seat-cfo:  #3d6b18;
+  --seat-coo:  #1d7a83;
+  --seat-cmo:  #a65424;
+  --seat-chro: #855a08;
+  --seat-ink:  #fdf8ee;
+  /* DW-077 wire tints (§A): the red/amber row + card backgrounds behind a hit / an announced event. */
+  --wire-red:     #a3321f;
+  --wire-redbg:   #f7ddd2;
+  --wire-amber:   #8f5c06;
+  --wire-amberbg: #f6e6bf;
 }
 
 /* ── Night shift (dark). `sectional` keeps the existing app mechanism; `night`
@@ -79,10 +93,31 @@
   --bevel:  rgba(255, 246, 224, 0.11);
   --metal:  rgba(232, 212, 170, 0.15);
   --shadow: rgba(0, 0, 0, 0.55);
+  --seat-ceo:  #bf9ae0;
+  --seat-cfo:  #9bcb5e;
+  --seat-coo:  #4cc0cb;
+  --seat-cmo:  #ee9a4a;
+  --seat-chro: #edbe48;
+  --seat-ink:  #1a120a;
+  --wire-red:     #e8735d;
+  --wire-redbg:   #3b1f16;
+  --wire-amber:   #eab84c;
+  --wire-amberbg: #362a13;
 }
+
+/* DW-077 takeover hazard stripe (§A): repeating 135° stripes in the event colour. */
+.dw-hazard { background: repeating-linear-gradient(135deg, var(--hz) 0 14px, transparent 14px 28px); }
+@keyframes dwsheet { from { transform: translateY(24px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+.dwsheet { animation: dwsheet 0.28s cubic-bezier(0.25, 0.1, 0.25, 1) both; }
+@media (prefers-reduced-motion: reduce) { .dwsheet { animation: none; } }
 
 html { background: var(--color-paper); color-scheme: light; }
 [data-mode="sectional"], [data-mode="night"] { color-scheme: dark; }
+/* DW-078: a game screen carries its own theme button in the header; the floating one would sit on
+   the phone commit sheet and the results page's CTA. */
+:root[data-inplay] .dw-float-mode { display: none; }
+/* …and off a game screen, a phone page keeps room at the bottom so its last line can scroll clear of it. */
+@media (max-width: 639px) { :root:not([data-inplay]) body { padding-bottom: 3.5rem; } }
 
 body {
   margin: 0;
@@ -127,6 +162,9 @@ body {
 /* Inputs — recessed inset well, EB Garamond lining figures. */
 input[type="number"],
 input[type="text"],
+/* an <input> with no type IS a text input — the join/claim boxes rendered borderless; ones that
+   style their own border (the build-name chip) keep it (DW-080) */
+input:not([type]):not([class~="border"]),
 textarea {
   font-family: var(--font-body);
   font-variant-numeric: tabular-nums lining-nums;

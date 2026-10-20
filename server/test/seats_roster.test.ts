@@ -303,3 +303,31 @@ test("DW-039: noShowPolicy 'zero' still withdraws the firm, for instructors who 
   const zeroed = (await store.getDecision(gameId, 0, teams[0].id))!;
   assert.equal((zeroed.decision.presence as Record<string, number>).mass, 0, "zero policy withdraws the firm");
 });
+
+test("DW-072 #5: instructor team-decisions view — each seat's slice, the standing plan, and the composed record", async () => {
+  const { config, store, orch } = teamGame();
+  const code = GameOrchestrator.makeJoinCode();
+  const gameId = await orch.createGame({ config, joinCode: code, firmMode: "team", teams: [{ name: "F1" }, { name: "F2" }, { name: "F3" }] });
+  const [firm, other] = await store.getTeams(gameId);
+  await orch.joinGame(code, "Ana", "user-cfo", { teamId: firm.id, role: "cfo" });
+  await orch.joinGame(code, "Ben", "user-cmo", { teamId: firm.id, role: "cmo" });
+  await orch.submitMemberDecision(gameId, firm.id, "user-cfo", { debt_draw: 300 }, "cfo");
+
+  const v = await orch.getTeamDecisions(gameId);
+  assert.equal(v.round, 0);
+  assert.equal(v.firmMode, "team");
+  const t = v.teams.find((x) => x.teamId === firm.id)!;
+  assert.equal(t.seats.length, 2);
+  const cfo = t.seats.find((s) => s.role === "cfo")!;
+  const cmo = t.seats.find((s) => s.role === "cmo")!;
+  assert.equal(cfo.submitted, true);
+  assert.equal(cfo.desk, "finance");
+  assert.deepEqual(cfo.partial, { debt_draw: 300 });
+  assert.equal(cmo.submitted, false, "a silent chair shows as not submitted");
+  assert.equal(cmo.partial, null);
+  assert.equal(t.composed?.debt_draw, 300, "composed = the stored record lock will run");
+  assert.ok(t.standing && t.standing.firm_id === firm.firm_id, "the standing plan is included");
+  const empty = v.teams.find((x) => x.teamId === other.id)!;
+  assert.equal(empty.composed, null, "no record until someone submits");
+  assert.equal(empty.seats.length, 0);
+});

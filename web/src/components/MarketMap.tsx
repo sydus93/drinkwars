@@ -4,7 +4,7 @@ import type { GameView, FirmSnapshot, ShockSignal } from "../game/controller.js"
 import { Card, Eyebrow, Stat, Tag } from "./ui.js";
 import { CategoryCoin } from "./CategoryIcons.js";
 import { firmColor } from "../lib/teamColors.js";
-import { SEG_LABEL, SEG_CHARACTER, SHOCK_META, ROLE_LABEL, ASSET_LABEL, DISTRICT_BEST, humanizeId, fmt } from "../labels.js";
+import { SEG_LABEL, SEG_CHARACTER, SHOCK_META, ROLE_LABEL, ASSET_LABEL, DISTRICT_BEST, humanizeId, fmt, marketName } from "../labels.js";
 import { Avatar } from "./People.js";
 
 /**
@@ -221,7 +221,7 @@ function BreweryCard({ view }: { view: GameView }) {
  *  foreseen = a signaled shock on the way (the player can prepare). */
 function ShockBanner({ shocks }: { shocks: ShockSignal[] }) {
   if (!shocks.length) return null;
-  const where = (t: ShockSignal["target"]) => (t === "all" ? "industry-wide" : `in ${SEG_LABEL[t] ?? t}`);
+  const where = (s: ShockSignal) => (s.region ? `producers in ${marketName(s.region, s.regionLabel)}${s.exposure == null ? "" : s.exposure <= 0 ? " (not you)" : ` (${Math.round(s.exposure * 100)}% of your production)`}` : s.target === "all" ? "industry-wide" : `in ${SEG_LABEL[s.target] ?? s.target}`);
   return (
     <div className="grid gap-1.5">
       {shocks.map((s, i) => {
@@ -241,7 +241,7 @@ function ShockBanner({ shocks }: { shocks: ShockSignal[] }) {
             <span className="text-base leading-none">{meta.icon}</span>
             <span className="min-w-0 flex-1 text-ink">
               <span className="font-semibold">{head}</span>
-              <span className="text-inksoft"> · {where(s.target)} — {meta.note}.</span>
+              <span className="text-inksoft"> · {where(s)} — {meta.note}.</span>
               {!s.active && <span className="text-inksoft"> Build resilience (process, community, water efficiency) before it hits.</span>}
             </span>
             <Tag tone={tone === "brick" ? "brick" : "copper"}>{s.active ? "Active" : "Incoming"}</Tag>

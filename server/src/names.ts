@@ -39,6 +39,14 @@ export function renameFirms(text: string, names: Record<string, string>): string
  *  cash below a known line, which rivals otherwise only learn by buying research. Only the firm
  *  it names sees it; the instructor dashboard reads the full event list and keeps it all. */
 const OWN_ONLY = /^(EQUITY|EQUITY MARKET CLOSED|HIRE FAILED):/;
+/** DW-080: what a firm LOST with a person — the loyalty / tenure tail on a POACHED or DEPARTURE line
+ *  ("— took 4 quarters of built-up loyalty (+16% contribution)") — is that firm's private read on
+ *  its own people (DW-075). Rivals, the poacher included, see the move; only the firm it left sees
+ *  the cost. */
+const PRIVATE_TAIL = /(?:\s+[—-]|;)\s+took \d+ quarters? of built-up (?:loyalty|tenure) \(\+\d+% (?:contribution|bonus)\)$/;
+const victimOf = (e: string): string | null => (e.match(/away from (firm_\d+)/) ?? e.match(/quits (firm_\d+)/) ?? e.match(/^DEPARTURE: (firm_\d+)'s/))?.[1] ?? null;
 export function visibleEvents(events: string[], ownFirmId: string | null | undefined): string[] {
-  return events.filter((e) => !OWN_ONLY.test(e) || (!!ownFirmId && new RegExp(`\\b${ownFirmId}\\b`).test(e)));
+  return events
+    .filter((e) => !OWN_ONLY.test(e) || (!!ownFirmId && new RegExp(`\\b${ownFirmId}\\b`).test(e)))
+    .map((e) => (/^(POACHED|DEPARTURE):/.test(e) && victimOf(e) !== ownFirmId ? e.replace(PRIVATE_TAIL, "") : e));
 }

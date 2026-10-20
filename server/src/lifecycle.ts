@@ -12,11 +12,13 @@
  * pure function of (state, decisions, config, seed), so any round is replayable
  * (§3.3) — `replay()` verifies that against the persisted history.
  */
-import { ADAPTIVE_LEANS, decideAdaptive, initGame, mergeMemberDecisions, rankStandings, resolveRound as engineResolve, ROLE_DESK, segmentDemandTotals } from "drinkwars-engine";
+import { ADAPTIVE_LEANS, ALL_LEVERS, decideAdaptive, initGame, mergeMemberDecisions, rankStandings, resolveRound as engineResolve, ROLE_DESK, segmentDemandTotals } from "drinkwars-engine";
 import type { Config, FirmDecision, FirmId, RoundResult, ScheduledShock, SegmentId, WorldState } from "drinkwars-engine";
+import { randomBreweryNames } from "./names.js";
 import type {
   AgreementRow, BeliefRow, DecisionRecord, DistinctivenessRow, FirmMode, FirmRoundRow, GameRecord,
   ReflectionRow, StorageAdapter, TeamRecord, TelemetryRow,
+  MemberDecisionRecord,
 } from "./types.js";
 
 // Team mode: one player per C-suite chair. The cap IS the number of seats — every
@@ -59,10 +61,28 @@ export interface MyGame { gameId: string; title: string | null; joinCode: string
 export interface TeamSeat { name: string; role: string | null; desk: string | null; submitted: boolean }
 /** One seat's slice of the team plan (DW-038): who, which desk, and the levers they've
  *  put on the table this round. Same-team eyes only; `me` marks the caller's own seat. */
-export interface TeamPlanSeat { name: string; role: string | null; desk: string | null; submitted: boolean; me: boolean; updated_at: number | null; partial: Partial<FirmDecision> | null }
+export interface TeamPlanSeat { name: string; role: string | null; desk: string | null; submitted: boolean; me: boolean; updated_at: number | null; partial: Partial<FirmDecision> | null;
+  /** DW-074: levers this seat changed this round (absent on a slice stored before DW-074). */
+  touched?: string[] }
 /** The team's live plan: every seat's submitted slice + the composed firm decision they
  *  merge into (the record the engine will resolve). The shared pre-lock review surface. */
 export interface TeamPlan { seats: TeamPlanSeat[]; composed: FirmDecision | null; locked: boolean }
+
+/** DW-072 #5 — the instructor's live view of one team's pending round: every seated chair's
+ *  submitted slice, the standing plan the slices overlay, and the composed decision (the stored
+ *  record when one exists — exactly what lock/resolve will run). Instructor-only. Which seat a
+ *  composed value came from is NOT decided here: that is the engine's precedence rule. */
+export interface InstructorTeamSeat { userId: string; name: string; role: string | null; desk: string | null; submitted: boolean; updatedAt: number | null; partial: Partial<FirmDecision> | null; touched?: string[] }
+export interface InstructorTeamDecision {
+  teamId: string; firmId: FirmId; name: string;
+  seats: InstructorTeamSeat[];
+  /** The plan the firm trades on absent fresh input (merge base / no-show fill). */
+  standing: FirmDecision | null;
+  /** What will run: the persisted decision record (null until anyone submits). */
+  composed: FirmDecision | null;
+  submitted: boolean; locked: boolean;
+}
+export interface InstructorTeamDecisions { round: number; lifecycle: GameRecord["lifecycle"]; firmMode: string; teams: InstructorTeamDecision[] }
 
 /** The C-suite seats a team-game joiner may take. */
 const TEAM_ROLES = new Set(["ceo", "cfo", "cmo", "coo", "chro"]);
@@ -94,6 +114,38 @@ export class LifecycleError extends Error {
     super(msg);
     this.name = "LifecycleError";
   }
+}
+
+// DW-074: which levers a seat actually changed this round travels with its slice. It is stored
+// INSIDE the jsonb `partial` under one reserved key (no column, no migration) and split back out
+// at this boundary — nothing past `memberDecisions()` ever sees the key, and the merge only
+// walks ALL_LEVERS, so it can never reach a FirmDecision.
+const TOUCHED_KEY = "_touched";
+/** DW-080: a submit names the round its form was built for. The server writes to the CURRENT round,
+ *  so a form held open across a resolve (the "Before you submit" check left up while the instructor
+ *  resolved) would land last round's loans, builds and hires in the new round. Refuse it instead.
+ *  Absent (an older client mid-deploy, in-process callers) ⇒ no check. */
+function assertFormRound(current: number, forRound: number | undefined): void {
+  if (typeof forRound === "number" && Number.isFinite(forRound) && forRound !== current)
+    throw new LifecycleError(`round ${forRound + 1} has already closed — that form was for round ${forRound + 1}, so nothing was sent. You're on round ${current + 1} now: check your desk and submit again`);
+}
+/** Brewery-name identity for the uniqueness rule (DW-079): ignores case and spacing. */
+const nameKey = (s: string): string => s.trim().toLowerCase().replace(/\s+/g, " ");
+const LEVER_SET: ReadonlySet<string> = new Set(ALL_LEVERS as string[]);
+type SeatSlice = MemberDecisionRecord & { touched?: string[] };
+function unpackTouched(md: MemberDecisionRecord): SeatSlice {
+  const raw = (md.partial as Record<string, unknown> | null)?.[TOUCHED_KEY];
+  if (raw === undefined) return md;
+  const { [TOUCHED_KEY]: _drop, ...partial } = md.partial as Record<string, unknown>;
+  return { ...md, partial: partial as Partial<FirmDecision>, touched: Array.isArray(raw) ? raw.filter((x): x is string => typeof x === "string" && LEVER_SET.has(x)) : undefined };
+}
+/** Fold a seat's touched list into the stored partial (junk and non-levers dropped). */
+function packTouched(partial: Partial<FirmDecision>, touched: readonly unknown[] | undefined): Partial<FirmDecision> {
+  const { [TOUCHED_KEY]: _drop, ...clean } = partial as Record<string, unknown>;
+  if (!Array.isArray(touched)) return clean as Partial<FirmDecision>; // an older client: the merge infers it
+  const set = new Set<string>();
+  for (const x of touched) if (typeof x === "string" && LEVER_SET.has(x)) set.add(x);
+  return { ...clean, [TOUCHED_KEY]: [...set].sort() } as Partial<FirmDecision>;
 }
 
 function zeroFirmDecision(firmId: FirmId, segments: SegmentId[]): FirmDecision {
@@ -156,21 +208,20 @@ export class GameOrchestrator {
     return gameId;
   }
 
-  /** A 6-character join code, ambiguous characters (0/O, 1/I) omitted. */
-  static makeJoinCode(): string {
+  /** n characters from a 32-symbol alphabet (ambiguous 0/O, 1/I omitted) drawn from the
+   *  CSPRNG. Math.random is predictable from a few observed outputs, and the claim code is
+   *  a student's whole credential. 32 divides 256, so `& 31` is unbiased. */
+  static randomCode(n: number): string {
     const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-    let s = "";
-    for (let i = 0; i < 6; i++) s += alphabet[Math.floor(Math.random() * alphabet.length)];
-    return s;
+    const b = new Uint8Array(n);
+    crypto.getRandomValues(b);
+    return Array.from(b, (x) => alphabet[x & 31]).join("");
   }
+  /** A 6-character join code. */
+  static makeJoinCode(): string { return GameOrchestrator.randomCode(6); }
   /** A durable per-student claim credential (8 chars). The instructor distributes it;
    *  the student uses it to claim a seat AND to return to / list their games. */
-  static makeClaimCode(): string {
-    const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-    let s = "";
-    for (let i = 0; i < 8; i++) s += alphabet[Math.floor(Math.random() * alphabet.length)];
-    return s;
-  }
+  static makeClaimCode(): string { return GameOrchestrator.randomCode(8); }
 
   /**
    * A student joins by code + display name. Solo games: claim an unclaimed firm.
@@ -189,13 +240,22 @@ export class GameOrchestrator {
       // Returning player keeps their seat (recovered from storage) unless they pick a new one.
       if (opts.role) {
         if (game.firm_mode === "team" && !TEAM_ROLES.has(opts.role)) throw new LifecycleError(`unknown seat "${opts.role}"`);
+        const before = await this.store.getMemberRole(mine.id, userId);
         await this.assertSeatFree(mine, opts.role, userId);
         await this.store.setMemberRole(mine.id, userId, opts.role);
+        // DW-076: a new chair starts clean. The slice stored under the OLD role is that desk's
+        // levers; left in place it would now merge as off-desk entries from the new chair (and,
+        // being untouched, could put a lever the CEO changed back to last round's value). Same
+        // rule moveMember already applies.
+        if (game.firm_mode === "team" && before && before !== opts.role) {
+          await this.store.deleteMemberDecision(game.id, game.current_round, userId);
+          if (game.lifecycle === "open") await this.recomposeTeamDecisions(game.id, game);
+        }
       }
       const role = opts.role ?? (await this.store.getMemberRole(mine.id, userId)) ?? undefined;
       // DW-050: a pre-seated CEO still gets the founding moment — naming the brewery on first
       // arrival (the seat plan only gave the firm a working label). Only the CEO's chair renames.
-      if (opts.teamName?.trim() && role === "ceo" && game.firm_mode === "team") await this.store.setTeamName(mine.id, opts.teamName.trim().slice(0, 40));
+      if (opts.teamName?.trim() && role === "ceo" && game.firm_mode === "team") await this.nameTeam(teams, mine.id, opts.teamName, true);
       if (opts.style && (role === "ceo" || game.firm_mode !== "team")) await this.store.setTeamStyle(mine.id, styleOf(opts.style));
       return { gameId: game.id, teamId: mine.id, firmId: mine.firm_id, role, claim: await this.ensureClaimCode(userId) };
     }
@@ -235,14 +295,43 @@ export class GameOrchestrator {
       if (!target) throw new LifecycleError(`game "${code}" is full`);
     }
     const wasEmpty = target.member_user_ids.length === 0;
+    if (wasEmpty && opts.teamName?.trim()) this.nameClash(teams, target.id, opts.teamName); // throws before seating
     await this.store.addTeamMember(target.id, userId);
     if (seat) await this.store.setMemberRole(target.id, userId, seat); // persist the seat (authoritative across devices)
     // The founder names the firm. In team mode the brewery name is its own field, so a
     // teammate reads "Sam" in the seat list and "Sediment Co." on the board — not one name
     // doing both jobs (DW-039).
-    if (wasEmpty) await this.store.setTeamName(target.id, opts.teamName?.trim() || displayName);
+    if (wasEmpty) await this.nameTeam(teams, target.id, opts.teamName?.trim() || displayName, !!opts.teamName?.trim());
     if (wasEmpty && opts.style) await this.store.setTeamStyle(target.id, styleOf(opts.style)); // DW-051: the founder's colour/mark are the firm's
     return { gameId: game.id, teamId: target.id, firmId: target.firm_id, role: seat, claim: await this.ensureClaimCode(userId) };
+  }
+
+  /** DW-079: brewery names are unique within a game (ignoring case and spacing). Two firms called
+   *  "Hop Theory" made the news ambiguous — a playtest read a house firm's build as the class
+   *  team's. Throws when ANOTHER STUDENT TEAM already brews under `wanted`; an unseated slot's
+   *  generated name never blocks (nameTeam re-draws it). */
+  private nameClash(teams: TeamRecord[], teamId: string, wanted: string): TeamRecord | undefined {
+    const clash = teams.find((t) => t.id !== teamId && nameKey(t.name) === nameKey(wanted));
+    if (clash && clash.member_user_ids.length > 0) throw new LifecycleError(`"${wanted.trim().slice(0, 40)}" is already another team's brewery in this game — pick a different name`);
+    return clash;
+  }
+  /** Name a firm. A typed name (`chosen`) that another student team has is refused (nameClash);
+   *  one that merely falls back to the player's first name gets a number instead ("Alex 2") —
+   *  two students named Alex shouldn't block a join. An unseated slot holding the name draws a
+   *  fresh one from the pool. */
+  private async nameTeam(teams: TeamRecord[], teamId: string, wanted: string, chosen: boolean): Promise<void> {
+    let name = wanted.trim().slice(0, 40);
+    if (!chosen) for (let i = 2; teams.some((t) => t.id !== teamId && t.member_user_ids.length > 0 && nameKey(t.name) === nameKey(name)); i++) name = `${wanted.trim().slice(0, 36)} ${i}`;
+    const slot = this.nameClash(teams, teamId, name);
+    if (slot) {
+      const taken = new Set([...teams.map((t) => nameKey(t.name)), nameKey(name)]);
+      const fresh = randomBreweryNames(64).find((n) => !taken.has(nameKey(n))) ?? `Brewery ${teams.indexOf(slot) + 1}`;
+      await this.store.setTeamName(slot.id, fresh);
+      slot.name = fresh;
+    }
+    await this.store.setTeamName(teamId, name);
+    const me = teams.find((t) => t.id === teamId);
+    if (me) me.name = name;
   }
 
   /** Rejects taking a C-suite seat another member of the firm already holds. */
@@ -318,7 +407,7 @@ export class GameOrchestrator {
     const game = await this.requireGame(gameId);
     const team = await this.store.getTeam(teamId);
     if (!team) return [];
-    const mds = await this.store.getMemberDecisions(gameId, game.current_round, teamId);
+    const mds = await this.memberDecisions(gameId, game.current_round, teamId);
     // DW-065: the roster in one read (was getUser + getMemberRole per chair, in series). Iteration
     // still follows team.member_user_ids so seat order is unchanged.
     const roster = new Map((await this.store.getTeamMembers(teamId)).map((m) => [m.user_id, m]));
@@ -333,11 +422,16 @@ export class GameOrchestrator {
   }
 
   /** Submit (or revise) a team's decision while the window is open. */
-  async submitDecision(gameId: string, teamId: string, decision: FirmDecision): Promise<void> {
+  async submitDecision(gameId: string, teamId: string, decision: FirmDecision, userId?: string, forRound?: number): Promise<void> {
     const game = await this.requireGame(gameId);
     if (game.lifecycle !== "open") throw new LifecycleError(`cannot submit: round is "${game.lifecycle}", not open`);
+    assertFormRound(game.current_round, forRound);
     const team = await this.store.getTeam(teamId);
     if (!team || team.game_id !== gameId) throw new LifecycleError(`no team ${teamId} in game ${gameId}`);
+    // Transports pass the session's user: a removed/replaced player's old token must not keep
+    // writing the firm's decision (the team-mode twin of this check is DW-066). In-process
+    // callers (solo controller, bots, smokes) omit it.
+    if (userId !== undefined && !team.member_user_ids.includes(userId)) throw new LifecycleError(`you are no longer seated at "${team.name}" — reload to pick up your new seat`);
     if (decision.firm_id !== team.firm_id) throw new LifecycleError(`decision firm_id ${decision.firm_id} ≠ team firm ${team.firm_id}`);
 
     const existing = await this.store.getDecision(gameId, game.current_round, teamId);
@@ -361,9 +455,10 @@ export class GameOrchestrator {
    * lock / resolve / status read the composed decision with no change. The firm counts as
    * submitted once any seat has submitted; desks with no seat keep their zero default.
    */
-  async submitMemberDecision(gameId: string, teamId: string, userId: string, partial: Partial<FirmDecision>, role?: string): Promise<void> {
+  async submitMemberDecision(gameId: string, teamId: string, userId: string, partial: Partial<FirmDecision>, role?: string, touched?: readonly unknown[], forRound?: number): Promise<void> {
     const game = await this.requireGame(gameId);
     if (game.lifecycle !== "open") throw new LifecycleError(`cannot submit: round is "${game.lifecycle}", not open`);
+    assertFormRound(game.current_round, forRound);
     const team = await this.store.getTeam(teamId);
     if (!team || team.game_id !== gameId) throw new LifecycleError(`no team ${teamId} in game ${gameId}`);
     // DW-066: the session token names the team the player joined, not the one they sit at NOW.
@@ -377,14 +472,18 @@ export class GameOrchestrator {
     const effRole = (team.members ? team.members.find((m) => m.user_id === userId)?.role ?? null : await this.store.getMemberRole(teamId, userId)) ?? role ?? undefined;
     const desk = effRole ? (ROLE_DESK[effRole] ?? "all") : "all";
     const now = this.clock();
-    await this.store.upsertMemberDecision({ game_id: gameId, round, team_id: teamId, user_id: userId, desk, partial, submitted: true, updated_at: now });
+    // DW-074: `touched` rides inside the slice. Write FIRST, then read — reading before the write
+    // (to union this seat's earlier list server-side) let two seats submitting within one store
+    // round-trip each compose without the other. The client sends the union instead: it already
+    // holds its own stored list in the team plan it fetched.
+    await this.store.upsertMemberDecision({ game_id: gameId, round, team_id: teamId, user_id: userId, desk, partial: packTouched(partial, touched), submitted: true, updated_at: now });
 
     // Compose the team's seats → the per-team decision the engine will resolve. Only slices from
     // players who STILL sit here — a moved player's stale row must not trade for this firm.
-    const seats = (await this.store.getMemberDecisions(gameId, round, teamId)).filter((s) => team.member_user_ids.includes(s.user_id));
+    const seats = (await this.memberDecisions(gameId, round, teamId)).filter((s) => team.member_user_ids.includes(s.user_id));
     const ws = (await this.store.getWorldState(gameId, round)) ?? (await this.store.getLatestWorldState(gameId));
     const base = await this.standingDecision(gameId, round, teamId, team.firm_id, ws?.state ?? null, game.config);
-    const merged = mergeMemberDecisions(base, seats.map((s) => ({ desk: (s.desk as never) ?? "all", partial: s.partial, updated_at: s.updated_at })));
+    const merged = mergeMemberDecisions(base, seats.map((s) => ({ desk: (s.desk as never) ?? "all", partial: s.partial, updated_at: s.updated_at, touched: s.touched })));
     const existing = await this.store.getDecision(gameId, round, teamId);
     if (existing?.locked) throw new LifecycleError("decision is locked");
     ratchetBoughtInfo(merged, existing);
@@ -396,11 +495,16 @@ export class GameOrchestrator {
     });
   }
 
+  /** Every read of seat slices goes through here: `_touched` split out of the stored partial. */
+  private async memberDecisions(gameId: string, round: number, teamId: string): Promise<SeatSlice[]> {
+    return (await this.store.getMemberDecisions(gameId, round, teamId)).map(unpackTouched);
+  }
+
   private async recomposeTeamDecisions(gameId: string, game: GameRecord): Promise<void> {
     const round = game.current_round;
     const ws = (await this.store.getWorldState(gameId, round)) ?? (await this.store.getLatestWorldState(gameId));
     for (const team of await this.store.getTeams(gameId)) {
-      const seats = (await this.store.getMemberDecisions(gameId, round, team.id)).filter((s) => team.member_user_ids.includes(s.user_id));
+      const seats = (await this.memberDecisions(gameId, round, team.id)).filter((s) => team.member_user_ids.includes(s.user_id));
       const existing = await this.store.getDecision(gameId, round, team.id);
       if (existing?.locked) continue;
       if (!seats.length) {
@@ -412,7 +516,7 @@ export class GameOrchestrator {
         continue;
       }
       const base = await this.standingDecision(gameId, round, team.id, team.firm_id, ws?.state ?? null, game.config);
-      const merged = mergeMemberDecisions(base, seats.map((s) => ({ desk: (s.desk as never) ?? "all", partial: s.partial, updated_at: s.updated_at })));
+      const merged = mergeMemberDecisions(base, seats.map((s) => ({ desk: (s.desk as never) ?? "all", partial: s.partial, updated_at: s.updated_at, touched: s.touched })));
       ratchetBoughtInfo(merged, existing);
       await this.store.upsertDecision({
         game_id: gameId, round, team_id: team.id, firm_id: team.firm_id, decision: merged,
@@ -436,12 +540,12 @@ export class GameOrchestrator {
    * Two callers: the merge base a team's seats overlay their desks onto, and the fill-in
    * for a claimed firm that missed the submission deadline.
    */
-  private async standingDecision(gameId: string, round: number, teamId: string, firmId: FirmId, state: WorldState | null, config: Config | null): Promise<FirmDecision> {
+  private async standingDecision(gameId: string, round: number, teamId: string, firmId: FirmId, state: WorldState | null, config: Config | null, knownPrior?: DecisionRecord | null): Promise<FirmDecision> {
     const segs = (state?.segments ?? []).map((s) => s.id);
     const base = zeroFirmDecision(firmId, segs);
     const firm = state?.firms.find((f) => f.id === firmId) ?? null;
     const active = (state?.segments ?? []).filter((s) => s.active).map((s) => s.id);
-    const prior = round > 0 ? await this.store.getDecision(gameId, round - 1, teamId) : null;
+    const prior = knownPrior !== undefined ? knownPrior : round > 0 ? await this.store.getDecision(gameId, round - 1, teamId) : null; // a caller holding the round's records passes it in
     if (prior) {
       const d = prior.decision;
       base.price = { ...base.price, ...d.price };
@@ -463,12 +567,14 @@ export class GameOrchestrator {
   /** The team's live plan (DW-038): each seat's submitted slice + the composed firm
    *  decision they merge into. The transport resolves the caller's own team, so this is
    *  same-firm eyes only; `me` flags the caller's seat (draft rehydration client-side). */
-  async getTeamPlan(gameId: string, teamId: string, forUserId: string): Promise<TeamPlan> {
+  /** `standing`: the firm's standing plan, which the /view has already read — pass it and an open
+   *  round's plan is composed live from the seat slices (DW-080), at no extra read. */
+  async getTeamPlan(gameId: string, teamId: string, forUserId: string, standing?: FirmDecision | null): Promise<TeamPlan> {
     const game = await this.requireGame(gameId);
     const team = await this.store.getTeam(teamId);
     if (!team || team.game_id !== gameId) return { seats: [], composed: null, locked: false };
     const round = game.current_round;
-    const mds = await this.store.getMemberDecisions(gameId, round, teamId);
+    const mds = await this.memberDecisions(gameId, round, teamId);
     const roster = new Map((await this.store.getTeamMembers(teamId)).map((m) => [m.user_id, m])); // DW-065: one read, not two per chair
     const seats: TeamPlanSeat[] = [];
     for (const uid of team.member_user_ids) {
@@ -480,10 +586,20 @@ export class GameOrchestrator {
         desk: md?.desk ?? (role ? (ROLE_DESK[role] ?? "all") : null),
         submitted: md?.submitted ?? false, me: uid === forUserId,
         updated_at: md?.updated_at ?? null, partial: md?.partial ?? null,
+        ...(md?.touched ? { touched: md.touched } : {}),
       });
     }
     const rec = await this.store.getDecision(gameId, round, teamId);
-    return { seats, composed: rec?.decision ?? null, locked: rec?.locked ?? false };
+    // DW-080 (twin of getTeamDecisions): the stored record can lag the slices when seats submit within
+    // one store round-trip — each compose read missed the other's slice (10 of 40 simulated deadline
+    // rushes on Supabase latency). Lock recomposes, so what LOCKED was right; the live "Locks at"
+    // figures, the form mirror and the cover re-send were not. Compose live while the round is open.
+    let composed = rec?.decision ?? null;
+    if (standing && !rec?.locked && game.lifecycle === "open") {
+      const live = mds.filter((m) => team.member_user_ids.includes(m.user_id));
+      if (live.length) composed = ratchetBoughtInfo(mergeMemberDecisions(standing, live.map((m) => ({ desk: (m.desk as never) ?? "all", partial: m.partial, updated_at: m.updated_at, touched: m.touched }))), rec);
+    }
+    return { seats, composed, locked: rec?.locked ?? false };
   }
 
   /** Submission status for the instructor, including non-submitters (§5 Locked). */
@@ -704,7 +820,7 @@ export class GameOrchestrator {
     // decision reads need only game.current_round / firm_mode, so this is two waits, not four.
     const [game, team] = await Promise.all([this.requireGame(gameId), this.store.getTeam(teamId)]);
     const round = game.current_round;
-    const mdsPending = game.firm_mode === "team" ? this.store.getMemberDecisions(gameId, round, teamId) : null;
+    const mdsPending = game.firm_mode === "team" ? this.memberDecisions(gameId, round, teamId) : null;
     const [rec, mdsMaybe] = await Promise.all([this.store.getDecision(gameId, round, teamId), mdsPending]);
     const mds = mdsMaybe ?? [];
     const writes = Math.max(rec?.submitted_at ?? 0, ...mds.map((m) => m.updated_at ?? 0));
@@ -792,7 +908,7 @@ export class GameOrchestrator {
     const game = await this.requireGame(gameId);
     const out = [];
     for (const team of await this.store.getTeams(gameId)) {
-      const mds = await this.store.getMemberDecisions(gameId, game.current_round, team.id);
+      const mds = await this.memberDecisions(gameId, game.current_round, team.id);
       const solo = game.firm_mode !== "team" ? await this.store.getDecision(gameId, game.current_round, team.id) : null;
       const roster = new Map((await this.store.getTeamMembers(team.id)).map((m) => [m.user_id, m])); // DW-065
       const members = [];
@@ -810,6 +926,54 @@ export class GameOrchestrator {
       out.push({ teamId: team.id, firmId: team.firm_id, name: team.name, members });
     }
     return out;
+  }
+
+  /** DW-072 #5: every team's pending-round decision, seat by seat (instructor-only). Read-only.
+   *  Read budget (the store serializes reads project-wide, ~110 ms each on Supabase, and the
+   *  panel polls this): game + world + teams + two game-wide decision reads + one slice read per
+   *  SEATED firm. Rosters come embedded in the team read; empty (NPC) firms cost nothing. */
+  async getTeamDecisions(gameId: string): Promise<InstructorTeamDecisions> {
+    const game = await this.requireGame(gameId);
+    const round = game.current_round;
+    const team_mode = game.firm_mode === "team";
+    const ws = (await this.store.getWorldState(gameId, round)) ?? (await this.store.getLatestWorldState(gameId));
+    const allTeams = await this.store.getTeams(gameId);
+    const recs = new Map((await this.store.getDecisions(gameId, round)).map((d) => [d.team_id, d]));
+    const priors = round > 0 ? new Map((await this.store.getDecisions(gameId, round - 1)).map((d) => [d.team_id, d])) : new Map<string, DecisionRecord>();
+    const teams: InstructorTeamDecision[] = [];
+    for (const team of allTeams) {
+      const rec = recs.get(team.id) ?? null;
+      if (!team.member_user_ids.length) { // an open slot / NPC: nothing to show, nothing to read
+        teams.push({ teamId: team.id, firmId: team.firm_id, name: team.name, seats: [], standing: null, composed: rec?.decision ?? null, submitted: rec?.submitted ?? false, locked: rec?.locked ?? false });
+        continue;
+      }
+      const firm = ws?.state.firms.find((f) => f.id === team.firm_id);
+      const mds = team_mode ? (await this.memberDecisions(gameId, round, team.id)).filter((m) => team.member_user_ids.includes(m.user_id)) : [];
+      const roster = new Map((team.members ?? (await this.store.getTeamMembers(team.id))).map((m) => [m.user_id, m]));
+      const seats: InstructorTeamSeat[] = team.member_user_ids.map((uid) => {
+        const u = roster.get(uid);
+        const role = u?.role ?? null;
+        const md = mds.find((m) => m.user_id === uid);
+        // Solo firms have no seat slices: the one player's submission IS the decision record.
+        if (!team_mode) return { userId: uid, name: u?.display_name ?? "Player", role, desk: "all", submitted: rec?.submitted ?? false, updatedAt: rec?.submitted_at ?? null, partial: rec?.submitted ? rec.decision : null };
+        return {
+          userId: uid, name: u?.display_name ?? "Player", role,
+          desk: md?.desk ?? (role ? (ROLE_DESK[role] ?? "all") : null),
+          submitted: md?.submitted ?? false, updatedAt: md?.updated_at ?? null, partial: md?.partial ?? null,
+          ...(md?.touched ? { touched: md.touched } : {}),
+        };
+      });
+      const standing = firm && firm.status === "active" ? await this.standingDecision(gameId, round, team.id, team.firm_id, ws?.state ?? null, game.config, priors.get(team.id) ?? null) : null;
+      // "Will run" must be what lock WILL run. Lock re-composes an open team round from the slices,
+      // so the stored record can lag them (two submits racing: the later compose read missed the
+      // earlier slice). Compose live while the round is open; once locked, the record is the truth.
+      let composed = rec?.decision ?? null;
+      if (team_mode && standing && !rec?.locked && game.lifecycle === "open" && mds.length) {
+        composed = ratchetBoughtInfo(mergeMemberDecisions(standing, mds.map((m) => ({ desk: (m.desk as never) ?? "all", partial: m.partial, updated_at: m.updated_at, touched: m.touched }))), rec);
+      }
+      teams.push({ teamId: team.id, firmId: team.firm_id, name: team.name, seats, standing, composed, submitted: rec?.submitted ?? mds.some((m) => m.submitted), locked: rec?.locked ?? false });
+    }
+    return { round, lifecycle: game.lifecycle, firmMode: game.firm_mode ?? "solo", teams };
   }
 
   /** Drop a member from their firm (DW-048): wrong-firm joins and dropped students used to be
@@ -1053,24 +1217,49 @@ export class GameOrchestrator {
    * Replay verification (§3.3): re-run the engine from the persisted config + seed
    * and the recorded decisions, and confirm the recomputed standings match the
    * stored results round-for-round. Proves the history is reproducible.
+   *
+   * DW-072 #8: the gamemaster (planted shocks, removed shocks, live triggers) edits the
+   * PENDING round's stored world state in place, and that edited record is exactly what the
+   * resolve consumed (migration 0008 then freezes it). So the stored world states ARE the
+   * intervention record: before each round, replay lays the stored schedule over the
+   * engine's (`gamemasterOverlay`) and reports the difference as `interventions`. Without
+   * this a game with an instructor-fired shock (game 42b80c61, wire round 4) diverged from
+   * that round on. Only the two gamemaster-writable fields are taken from storage; every
+   * other field of the world still comes from the engine, so a real non-determinism still
+   * shows up as a score mismatch.
    */
-  async replay(gameId: string): Promise<{ ok: boolean; mismatches: string[] }> {
+  async replay(gameId: string): Promise<{ ok: boolean; mismatches: string[]; interventions: GamemasterIntervention[] }> {
     const game = await this.requireGame(gameId);
     const results = await this.store.getRoundResults(gameId);
     const mismatches: string[] = [];
+    const interventions: GamemasterIntervention[] = [];
     let world = initGame(game.config);
     for (const rr of results) {
+      const stored = await this.store.getWorldState(gameId, rr.round);
+      if (stored) {
+        const o = gamemasterOverlay(world, stored.state, rr.round);
+        world = o.world;
+        if (o.intervention) {
+          interventions.push(o.intervention);
+          // The overlay trusts the stored schedule, so it must only trust what an instructor CAN
+          // do: plant a (locked) shock, remove one, arm a live trigger. A shock whose fields
+          // differ from the engine's own, or an unlocked one the engine never rolled, is not an
+          // instructor action — it is a divergence (or a corrupted row) and must not pass.
+          for (const id of o.intervention.changed) mismatches.push(`round ${o.intervention.round} shock ${id}: stored schedule differs from the engine's in place (no instructor action edits a shock)`);
+          for (const sh of o.intervention.added) if (!sh.locked) mismatches.push(`round ${o.intervention.round} shock ${sh.id}: stored but neither engine-rolled nor instructor-planted`);
+        }
+      }
       const decisions = (await this.store.getDecisions(gameId, rr.round)).map((d) => d.decision);
       const { world: next, result } = engineResolve(world, decisions, game.config);
       for (const fr of result.firm_results) {
         const stored = rr.result.firm_results.find((x) => x.firm_id === fr.firm_id);
-        if (!stored || Math.abs(stored.scorecard_cumulative - fr.scorecard_cumulative) > 1e-9) {
-          mismatches.push(`round ${rr.round} firm ${fr.firm_id}: replay ${fr.scorecard_cumulative.toFixed(6)} vs stored ${stored?.scorecard_cumulative.toFixed(6) ?? "—"}`);
+        if (!stored || Math.abs(stored.scorecard_cumulative - fr.scorecard_cumulative) > 1e-9 || Math.abs(stored.state.cash - fr.state.cash) > 1e-6) {
+          mismatches.push(`round ${rr.round} firm ${fr.firm_id}: replay ${fr.scorecard_cumulative.toFixed(6)} / cash ${fr.state.cash.toFixed(0)} vs stored ${stored?.scorecard_cumulative.toFixed(6) ?? "—"} / cash ${stored?.state.cash.toFixed(0) ?? "—"}`);
         }
       }
       world = next;
     }
-    return { ok: mismatches.length === 0, mismatches };
+    return { ok: mismatches.length === 0, mismatches, interventions };
   }
 
   /** Public state anyone in the game may see: round, lifecycle, segment activity. */
@@ -1094,4 +1283,36 @@ export class GameOrchestrator {
     const standings = rankStandings(last?.result.firm_results ?? []).map((f) => ({ firm_id: f.firm_id, score: f.scorecard_cumulative })); // DW-071: survivors first
     return { own, publishedResults: results.map((r) => r.round), standings: game.lifecycle === "open" && results.length === 0 ? [] : standings };
   }
+}
+
+/** What the instructor changed on one round's schedule, relative to what the engine alone
+ *  would have carried into it (DW-072 #8). */
+export interface GamemasterIntervention {
+  round: number;
+  /** Shocks on the stored schedule the engine did not put there (instructor-planted). */
+  added: ScheduledShock[];
+  /** Shocks the engine scheduled that the instructor removed. */
+  removed: string[];
+  /** Same id, different content (e.g. an edited magnitude). */
+  changed: string[];
+  /** Live triggers armed when this round resolved. */
+  liveTriggers: string[];
+}
+
+/** Lay the stored round's gamemaster-writable fields (shock schedule + live triggers) over the
+ *  engine's replayed world, and describe the difference. Pure; the input world is not mutated. */
+export function gamemasterOverlay(replayed: WorldState, stored: WorldState, round: number): { world: WorldState; intervention: GamemasterIntervention | null } {
+  // Canonical (sorted-key) JSON: Postgres jsonb reorders keys, so plain stringify would call every
+  // stored shock "changed" on prod.
+  const canon = (v: unknown): string => JSON.stringify(v, (_k, x) => (x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => a.localeCompare(b))) : x));
+  const mine = new Map(replayed.shock_timeline.map((s) => [s.id, canon(s)]));
+  const theirs = stored.shock_timeline ?? [];
+  const theirIds = new Set(theirs.map((s) => s.id));
+  const added = theirs.filter((s) => !mine.has(s.id));
+  const changed = theirs.filter((s) => mine.has(s.id) && mine.get(s.id) !== canon(s)).map((s) => s.id);
+  const removed = [...mine.keys()].filter((id) => !theirIds.has(id));
+  const liveTriggers = [...(stored.live_triggers ?? [])];
+  const world: WorldState = { ...replayed, shock_timeline: JSON.parse(JSON.stringify(theirs)), live_triggers: liveTriggers };
+  const touched = added.length || removed.length || changed.length || liveTriggers.length;
+  return { world, intervention: touched ? { round, added, removed, changed, liveTriggers } : null };
 }

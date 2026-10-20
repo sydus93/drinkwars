@@ -24,6 +24,7 @@ export interface GameEvent {
   dismissable?: boolean; // allow closing without choosing (default true for notices)
   mine?: boolean; // does this dispatch involve the player's own brewery?
   count?: number; // identical dispatches collapsed into this one (a lost tie-break prints once per losing house)
+  region?: string; // a regional shock's struck market (label), e.g. a drought in one region
 }
 
 const KIND: Record<EventKind, { accent: string; glyph: string; label: string; ring: string }> = {
@@ -59,6 +60,8 @@ export function EventModal({ event, onChoose, onClose }: { event: GameEvent | nu
 
   return (
     <div
+      role="dialog"
+      aria-modal="true"
       className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4 backdrop-blur-sm"
       onMouseDown={(e) => { if (e.target === e.currentTarget && dismissable) onClose?.(); }}
     >

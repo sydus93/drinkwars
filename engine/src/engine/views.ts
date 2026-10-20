@@ -12,6 +12,7 @@ import type {
 import { activeMarkets, marketDemandScale } from "./geography.js";
 import { firmValuation } from "./finance.js";
 import { rankStandings } from "./scoring.js";
+import { regionExposure } from "./shocks.js";
 
 export interface AllianceClauseSummary {
   condition: ClauseCondition;
@@ -204,16 +205,26 @@ export function projectMarkets(
 }
 
 // ───────────────────────── shocks the viewer may know about ─────────────────────────
-export interface ShockSignalView { typeId: string; kind: string; target: SegmentId | "all"; round: number; roundsAway: number; active: boolean; signaled: boolean }
+/** `region`/`regionLabel` are set for a REGIONAL shock (a drought strikes one market); `exposure`
+ *  (0..1) is the viewing firm's share of production sited there — the same factor the resolver
+ *  scales the hit by — present only when a config and firm are passed. */
+export interface ShockSignalView { typeId: string; kind: string; target: SegmentId | "all"; round: number; roundsAway: number; active: boolean; signaled: boolean; region?: string; regionLabel?: string; exposure?: number }
 /** Shocks currently in effect + any explicitly-telegraphed upcoming ones (within 3 rounds).
  *  Unannounced shocks stay hidden until they fire — seeing them coming would break the game. */
-export function projectShocks(world: WorldState, round: number): ShockSignalView[] {
+export function projectShocks(world: WorldState, round: number, c?: Config, firmId?: FirmId): ShockSignalView[] {
   const out: ShockSignalView[] = [];
+  const firm = firmId ? world.firms.find((f) => f.id === firmId) : undefined;
   for (const s of world.shock_timeline ?? []) {
     const active = s.fired && s.round <= round && round < s.round + s.duration;
     const upcomingSignaled = !s.fired && s.signaling === "signaled_noisy" && s.round >= round && s.round <= round + 3;
     if (!active && !upcomingSignaled) continue;
-    out.push({ typeId: s.type_id, kind: s.kind, target: s.target, round: s.round, roundsAway: s.round - round, active, signaled: s.signaling === "signaled_noisy" });
+    const v: ShockSignalView = { typeId: s.type_id, kind: s.kind, target: s.target, round: s.round, roundsAway: s.round - round, active, signaled: s.signaling === "signaled_noisy" };
+    if (s.region) {
+      v.region = s.region;
+      v.regionLabel = c?.modules?.geography?.markets.find((m) => m.id === s.region)?.label ?? s.region;
+      if (c && firm) v.exposure = regionExposure(firm, c, s.region, round);
+    }
+    out.push(v);
   }
   out.sort((a, b) => Number(b.active) - Number(a.active) || a.roundsAway - b.roundsAway);
   return out;
@@ -246,6 +257,8 @@ export interface OwnTrendView {
   unitCost?: number; // cost to brew one drink this quarter
   capacity?: number; // tank capacity available to brew into this quarter, facilities included
   categories?: Record<SegmentId, { price: number; sold: number; wanted: number; revenue: number; share: number }>;
+  headcount?: number; // roster size after the round — only when a people module is on (FirmRoundResult.state.headcount)
+  keyHires?: number; // DW-080: key hires (head brewer…) — staff the named roster leaves out; a laborMarket-only game read 0 staff
 }
 export interface FieldTrendView { round: number; topScore: number; medianScore: number; totalQ: number; activeFirms: number }
 const median = (xs: number[]): number => { if (!xs.length) return 0; const s = [...xs].sort((a, b) => a - b); const m = Math.floor(s.length / 2); return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
@@ -267,6 +280,8 @@ export function projectHistory(records: { round: number; result: RoundResult }[]
           pnl: ownFr.pnl, balance: ownFr.balance_sheet, cashFlow: ownFr.cash_flow,
           unitCost: ownFr.unit_cost, capacity: ownFr.effective_cap ?? ownFr.state.cap,
           categories: Object.fromEntries(Object.entries(ownFr.segments).map(([id, g]) => [id, { price: g.price, sold: g.q_sold, wanted: g.q_desired, revenue: g.revenue, share: g.share }])),
+          ...(ownFr.state.headcount != null ? { headcount: ownFr.state.headcount } : {}),
+          ...(ownFr.state.key_hires != null ? { keyHires: ownFr.state.key_hires } : {}),
         } : {}),
       },
       field: { round: rr.round, topScore: Math.max(...scores, 0), medianScore: median(scores), totalQ: rr.result.market.reduce((a, m) => a + m.total_q, 0), activeFirms: rr.result.firm_results.filter((f) => f.status === "active").length },
@@ -281,7 +296,8 @@ export interface FirmSnapshotView {
   leverage: number; netIncome: number; priceBySeg: Record<SegmentId, number>; shareBySeg: Record<SegmentId, number>;
   focus: SegmentId[]; cash: number; debt: number; valuation: number; distressRounds: number;
   keyHires: string[]; verticalAssets: string[];
-  employees: { id: string; name: string; role: string; skill: number; satisfaction: number; salary: number }[];
+  // DW-075: tenure_rounds + loyalty are OWN-FIRM ONLY — never on a rival, even with research bought.
+  employees: { id: string; name: string; role: string; skill: number; satisfaction: number; salary: number; tenure_rounds?: number; loyalty?: number }[];
   facilities: { type: string; location_id?: string; market_id?: string; active: boolean }[];
 }
 /** Latest snapshot of every firm. PUBLIC fields (id/name/status/score/share/focus/facilities/
@@ -313,7 +329,9 @@ export function projectFirms(world: WorldState, c: Config, viewerId: FirmId, las
       distressRounds: f.rounds_below_health ?? 0,
       keyHires: show ? (f.key_hires ?? []).map((h) => h.role) : [],
       verticalAssets: show ? (f.vertical_assets ?? []).map((a) => a.id) : [],
-      employees: show ? (f.employees ?? []).map((e) => ({ id: e.id, name: e.name, role: e.role, skill: e.skill, satisfaction: e.satisfaction, salary: e.salary })) : [],
+      // DW-075: loyalty/tenure are the firm's private read on its own people — research reveals a
+      // rival's roster, pay and morale (scouting), not how hard the person would be to pry loose.
+      employees: show ? (f.employees ?? []).map((e) => ({ id: e.id, name: e.name, role: e.role, skill: e.skill, satisfaction: e.satisfaction, salary: e.salary, ...(isYou ? { tenure_rounds: e.tenure_rounds, loyalty: e.loyalty ?? 0 } : {}) })) : [],
       facilities: (f.facilities ?? []).map((x) => ({ type: x.type, location_id: x.location_id, market_id: x.market_id, active: x.active })),
     };
   });

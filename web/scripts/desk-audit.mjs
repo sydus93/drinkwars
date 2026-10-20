@@ -10,8 +10,12 @@
 //  (3) the cover path: firm_2 with only CEO + CFO, the CFO hires from the People tab and it lands.
 // Prints PASS/FAIL per check. Leaves the servers + other games alone.
 import puppeteer from "puppeteer-core";
+import { autoConfirm } from "./confirm-dialog.mjs";
+import { describeModules, moduleIds, modulesBlock } from "./modules-env.mjs";
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-const API = "http://localhost:8787", WEB = "http://localhost:5173/";
+const API = (process.env.API ?? "http://localhost:8787").replace(/\/$/, ""), WEB = (process.env.WEB ?? "http://localhost:5173").replace(/\/$/, "") + "/"; // ports via env (defaults unchanged)
+// DW-076: MODULES=<preset id | comma list> swaps the class config (default = Sprint 1's four modules).
+const MODS = moduleIds(["laborMarket", "consumerDrift", "marketConduct", "sustainability"]);
 const INS = { "content-type": "application/json", "x-instructor-pass": "letmein" };
 const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ["--no-sandbox"] });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -51,10 +55,17 @@ const LOCATE = `(() => {
     equity_cap_line: () => [...document.querySelectorAll("div")].find((d) => /^Investors will fund up to/.test(d.innerText ?? d.textContent)) ?? null,
     dividend: () => first(/^Pay dividend \\(cash out\\)$/, "input[type=number]", "label", 1),
     buy_info: () => { const l = [...document.querySelectorAll("label")].find((x) => /Buy market research/.test(x.textContent)); return l?.querySelector("input[type=checkbox]") ?? null; },
+    // DW-076 (employees module, Sprint 2): the Team card replaces Key people — the talent market, its first hireable candidate, and the raid list
+    talent_market: () => labels(/^Talent market$/, "span")[0] ?? null,
+    hire_employee: () => [...document.querySelectorAll("button")].find((b) => /\\/rd\\s*Hire$/.test(b.innerText.replace(/\\s+/g, " ").trim()) && !b.disabled) ?? null,
+    raid_talent: () => labels(/^Raid rival talent$/, "span")[0] ?? null,
     beliefs: () => { const l = [...document.querySelectorAll("label")].find((x) => /Predict your finish rank/.test(x.textContent)); return l?.querySelector("input") ?? null; },
   };
 })()`;
 // lever → owning desk, for the levers this config enables (DESK_LEVERS ∩ what the form renders here).
+// DW-076: with the employees module on, the named-roster Team card supersedes the labor-market Key people
+// card (DecisionForm: "Talent is ONE system"), so hire_roles / key_people are not rendered and the people
+// desk is checked on the Team card's surfaces instead (see `empOn` below).
 const OWNER = {
   price: "commercial", buy_info: "commercial", invest_B: "commercial", beliefs: "commercial",
   presence: "operations", run_rate: "operations", invest_cap: "operations", invest_process: "operations", invest_Q: "operations", invest_water_efficiency: "operations",
@@ -86,10 +97,11 @@ const mk = async (tag, sess) => {
   p.on("pageerror", (e) => logs.push(`[${tag} pageerror] ${e.message}`));
   p.on("console", (m) => { if (m.type() === "error" && !/404|validateDOMNesting/.test(m.text())) logs.push(`[${tag} error] ${m.text().slice(0, 200)}`); });
   p.on("dialog", async (d) => { logs.push(`[${tag} dialog] ${d.message().replace(/\s+/g, " ").slice(0, 300)}`); await d.accept(); });
+  await autoConfirm(p, (t) => logs.push(`[${tag} dialog] ${t.replace(/\s+/g, " ").slice(0, 400)}`));
   await p.goto(WEB, { waitUntil: "domcontentloaded" });
   await p.evaluate((s) => localStorage.setItem("dw_mp", JSON.stringify(s)), sess);
   await p.goto(WEB, { waitUntil: "networkidle0" });
-  await waitText(p, /Commit the round/, 20000);
+  await waitText(p, /What locks at round end|Commit the round/, 20000);
   await sleep(600);
   return p;
 };
@@ -103,19 +115,23 @@ const near = (a, b, tol = 1e-6) => a != null && b != null && Math.abs(a - b) <= 
 
 try {
 // ── Thursday's game ──
-const g = await api("/instructor/games", { nFirms: 7, nRounds: 8, firmMode: "team", title: "desk audit", modules: { laborMarket: { enabled: true }, consumerDrift: { enabled: true }, marketConduct: { enabled: true }, sustainability: { enabled: true } } });
+const g = await api("/instructor/games", { nFirms: 7, nRounds: 8, firmMode: "team", title: "desk audit", modules: modulesBlock(MODS) });
 const st = await api(`/instructor/games/${g.gameId}/status`);
 const t1 = st.teams.find((t) => t.firmId === "firm_1"), t2 = st.teams.find((t) => t.firmId === "firm_2");
-ok(!!t1 && !!t2, "class config created (7 firms, 8 rounds, team, 4 modules)", `${g.joinCode} ${g.gameId.slice(0, 8)}`);
+ok(!!t1 && !!t2, `class config created (7 firms, 8 rounds, team, ${MODS.length} module${MODS.length === 1 ? "" : "s"})`, `${g.joinCode} ${g.gameId.slice(0, 8)} · ${describeModules(MODS)}`);
 const ROLES = ["ceo", "cmo", "coo", "chro", "cfo"];
 const DESK = { ceo: "all", cmo: "commercial", coo: "operations", chro: "people", cfo: "finance" };
 const sess = {}; for (const r of ROLES) sess[r] = await join(g.joinCode, t1.teamId, r, `Audit ${r.toUpperCase()}`);
 const P = {}; for (const r of ROLES) P[r] = await mk(r, sess[r]);
-ok((await Promise.all(ROLES.map((r) => has(P[r], new RegExp(`You're the ${r === "chro" ? "CHRO|Chief People" : r.toUpperCase()}`))))).every(Boolean), "all five seats land in their chair at firm_1");
+// DW-078: the chair is the seat plate now (the "You're the CEO" banner is gone)
+ok((await Promise.all(ROLES.map((r) => P[r].evaluate((role) => document.querySelector("[data-seat-plate]")?.getAttribute("data-seat-plate") === role, r)))).every(Boolean), "all five seats land in their chair at firm_1");
 
 // ── (1) default-desk visibility matrix ──
 const v0 = await view(sess.cfo.token);
 const invOn = !!v0.config?.modules?.inventory?.enabled || !!v0.inventoryEnabled;
+const empOn = !!sess.cfo.config?.modules?.employees?.enabled;
+if (empOn) { delete OWNER.hire_roles; delete OWNER.key_people; Object.assign(OWNER, { talent_market: "people", hire_employee: "people", raid_talent: "people" }); }
+logs.push(`[info] employees module on: ${empOn} (people desk checked on the ${empOn ? "Team card" : "Key people card"})`);
 for (const r of ROLES) {
   const vis = await probe(P[r]);
   const desk = DESK[r];
@@ -146,9 +162,11 @@ await typeInto(P.cmo, "beliefs", E1.beliefs);
 await setRange(P.coo, "invest_Q", E1.invest_Q);
 await setRange(P.coo, "invest_water_efficiency", E1.invest_water_efficiency);
 await typeInto(P.coo, "invest_cap", E1.invest_cap);
-// CHRO
-await clickKey(P.chro, "hire_roles");
-const hireBtn = await (await handle(P.chro, "hire_roles")).evaluate((b) => b.textContent.trim());
+// CHRO — a key-role hire (labor market) or, with employees on, the first candidate off the talent market
+const hireKey = empOn ? "hire_employee" : "hire_roles";
+const hiredName1 = empOn ? await (await handle(P.chro, "hire_employee")).evaluate((b) => b.querySelector("span.truncate")?.textContent?.trim() ?? "") : null; // the name span (the first text line is the avatar initial)
+await clickKey(P.chro, hireKey);
+const hireBtn = empOn ? await P.chro.evaluate((n) => [...document.querySelectorAll("button")].find((b) => b.querySelector("span.truncate")?.textContent?.trim() === n)?.innerText.replace(/\s+/g, " ") ?? "", hiredName1) : await (await handle(P.chro, "hire_roles")).evaluate((b) => b.textContent.trim());
 await setRange(P.chro, "invest_T_emp", E1.invest_T_emp);
 // CFO — equity above the investors' cap
 const capTxt = await (await handle(P.cfo, "equity_cap_line")).evaluate((e) => e?.innerText ?? "");
@@ -159,7 +177,7 @@ await typeInto(P.cfo, "equity_raise", ask);
 await setRange(P.cfo, "invest_T_inv", E1.invest_T_inv);
 const capWarn = await (await handle(P.cfo, "equity_cap_line")).evaluate((e) => e?.innerText ?? "");
 ok(cap > 0 && /only that much will be raised/.test(capWarn), "CFO sees 'Investors will fund up to' and the over-ask warning", `cap $${cap}, asked $${ask}: "${capWarn.slice(0, 110)}"`);
-ok(+cmoPriceShown === E1.price && /Hiring ✓/.test(hireBtn), "form edits took (price field, Hire toggles to 'Hiring ✓')", `price=${cmoPriceShown} hire="${hireBtn}"`);
+ok(+cmoPriceShown === E1.price && (empOn ? /✓\s*$/.test(hireBtn) : /Hiring ✓/.test(hireBtn)), `form edits took (price field, Hire toggles to '${empOn ? "✓" : "Hiring ✓"}')`, `price=${cmoPriceShown} hire="${hireBtn}"`);
 const dlg1 = {};
 for (const r of ["cmo", "coo", "chro", "cfo"]) dlg1[r] = await submit(P[r], r);
 ok(Object.values(dlg1).every((d) => d.length === 0), "specialists editing only their own desk get NO pre-submit confirm", JSON.stringify(dlg1).slice(0, 300));
@@ -170,7 +188,7 @@ const expectPlan = (c, E, hire, eq, tag) => {
   const checks = [
     ["CMO price", near(c.price?.[seg], E.price), c.price?.[seg]], ["CMO brand", c.invest_B === E.invest_B, c.invest_B], ["CMO research", c.buy_info === true, c.buy_info], ["CMO rank call", c.beliefs?.own_rank === E.beliefs, c.beliefs?.own_rank],
     ["COO quality", c.invest_Q === E.invest_Q, c.invest_Q], ["COO water", c.invest_water_efficiency === E.invest_water_efficiency, c.invest_water_efficiency], ["COO tanks", c.invest_cap === E.invest_cap, c.invest_cap],
-    ["CHRO hire", (c.hire_roles ?? []).includes(hire), JSON.stringify(c.hire_roles)], ["CHRO employee relations", c.invest_T_emp === E.invest_T_emp, c.invest_T_emp],
+    ["CHRO hire", empOn ? (c.hire_employees ?? []).length >= 1 : (c.hire_roles ?? []).includes(hire), JSON.stringify(empOn ? c.hire_employees : c.hire_roles)], ["CHRO employee relations", c.invest_T_emp === E.invest_T_emp, c.invest_T_emp],
     ["CFO debt draw", c.debt_draw === E.debt_draw, c.debt_draw], ["CFO equity ask", c.equity_raise === eq, c.equity_raise], ["CFO investor relations", c.invest_T_inv === E.invest_T_inv, c.invest_T_inv],
   ];
   for (const [l, pass, got] of checks) ok(pass, `${tag}: ${l} survives in the composed plan`, `got ${got}`);
@@ -185,19 +203,20 @@ const ev1 = (dash.events.find((e) => e.round === row1?.round)?.events ?? []);
 const eng1 = dash.engagement.find((e) => e.round === row1?.round && e.firmId === "firm_1");
 ok(near(row1?.segments?.[seg]?.price, E1.price), "resolved r1: firm_1 sold at the CMO's price", `${seg} $${row1?.segments?.[seg]?.price}`);
 ok(eng1?.infoPurchased === true && eng1?.predictedRank === E1.beliefs, "resolved r1: research bought + CMO's rank call recorded", JSON.stringify({ info: eng1?.infoPurchased, rank: eng1?.predictedRank }));
-ok(ev1.some((e) => /^HIRE: firm_1 brings on a head brewer/.test(e)), "resolved r1: HIRE event for the CHRO's head brewer", ev1.filter((e) => /firm_1/.test(e)).slice(0, 4).join(" | "));
+ok(ev1.some((e) => (empOn ? /^(HIRE|SIGNED): firm_1 /.test(e) : /^HIRE: firm_1 brings on a head brewer/.test(e))), `resolved r1: HIRE event for the CHRO's ${empOn ? `hire (${hiredName1})` : "head brewer"}`, ev1.filter((e) => /firm_1/.test(e)).slice(0, 4).join(" | "));
 const eqEv = ev1.find((e) => /^EQUITY: investors fund only .* firm_1 sought/.test(e));
 ok(!!eqEv && eqEv.includes(`$${ask.toLocaleString("en-US")}`), "resolved r1: equity trimmed to the cap (EQUITY event names the CFO's ask)", eqEv ?? ev1.filter((e) => /EQUITY|firm_1/.test(e)).join(" | ").slice(0, 200));
 ok(row1 && row1.debt - debt0 > E1.debt_draw * 0.9, "resolved r1: debt rose by ~the CFO's draw", `debt ${Math.round(debt0)} → ${Math.round(row1?.debt)}`);
-await waitText(P.chro, /On staff now:\s*Head brewer/, 25000).catch(() => {});
-// after resolve the screen flips to Review; go back to Decide to see the Key people card
-if (!(await has(P.chro, /On staff now:\s*Head brewer/))) { const d = await P.chro.$("xpath/.//button[contains(normalize-space(.), 'Decide')]"); if (d) { await d.click(); await sleep(800); } }
-ok(await has(P.chro, /On staff now:\s*Head brewer/), "CHRO sees 'On staff now: Head brewer' after resolve", (await P.chro.evaluate(() => document.body.innerText.match(/On staff now:[^\n]*/)?.[0])) ?? "no line");
+const staffRe = empOn ? new RegExp(`${hiredName1}[\\s\\S]{0,80}tenure`) : /On staff now:\s*Head brewer/; // Team card: "<name> … 0r tenure"
+await waitText(P.chro, staffRe, 25000).catch(() => {});
+// after resolve the screen flips to Review; go back to Decide to see the Key people / Team card
+if (!(await has(P.chro, staffRe))) { const d = await P.chro.$("xpath/.//button[contains(normalize-space(.), 'Decide')]"); if (d) { await d.click(); await sleep(800); } }
+ok(await has(P.chro, staffRe), empOn ? `CHRO's Team card lists ${hiredName1} on staff after resolve` : "CHRO sees 'On staff now: Head brewer' after resolve", (await P.chro.evaluate((src) => document.body.innerText.match(new RegExp(src))?.[0]?.slice(0, 80), staffRe.source)) ?? "no line");
 
 // ── (2b) round 2: CEO submits FIRST untouched, specialists after ──
 for (const r of ROLES) { await waitText(P[r], /Round open/, 25000).catch(() => {}); const d = await P[r].$("xpath/.//button[contains(normalize-space(.), 'Decide')]"); if (d) await d.click(); }
 await sleep(1500);
-for (const r of ROLES) await waitText(P[r], /Commit the round/, 15000);
+for (const r of ROLES) await waitText(P[r], /What locks at round end|Commit the round/, 15000);
 dlg1.ceo2 = await submit(P.ceo, "ceo");
 logs.push(`[info] CEO r2 dialogs: ${JSON.stringify(dlg1.ceo2)}`);
 await sleep(1200);
@@ -205,7 +224,7 @@ const E2 = { price: 8.65, invest_B: 19000, beliefs: 3, invest_Q: 29000, invest_w
 await typeInto(P.cmo, "price", E2.price, segIdx); await setRange(P.cmo, "invest_B", E2.invest_B); await typeInto(P.cmo, "beliefs", E2.beliefs);
 if (!(await (await handle(P.cmo, "buy_info")).evaluate((e) => e.checked))) await clickKey(P.cmo, "buy_info");
 await setRange(P.coo, "invest_Q", E2.invest_Q); await setRange(P.coo, "invest_water_efficiency", E2.invest_water_efficiency); await typeInto(P.coo, "invest_cap", E2.invest_cap);
-await clickKey(P.chro, "hire_ops"); await setRange(P.chro, "invest_T_emp", E2.invest_T_emp);
+await clickKey(P.chro, empOn ? "hire_employee" : "hire_ops"); await setRange(P.chro, "invest_T_emp", E2.invest_T_emp);
 const cap2 = Number(((await (await handle(P.cfo, "equity_cap_line")).evaluate((e) => e?.innerText ?? "")).match(/up to \$([\d,]+)/) ?? [])[1]?.replace(/,/g, ""));
 const ask2 = Math.ceil((cap2 + 40000) / 5000) * 5000;
 await typeInto(P.cfo, "debt_draw", E2.debt_draw); await typeInto(P.cfo, "equity_raise", ask2); await setRange(P.cfo, "invest_T_inv", E2.invest_T_inv);
@@ -220,7 +239,7 @@ dash = await api(`/instructor/games/${g.gameId}/dashboard`);
 const row2 = dash.panel.filter((p) => p.firmId === "firm_1").at(-1);
 const ev2 = dash.events.find((e) => e.round === row2?.round)?.events ?? [];
 ok(row2?.round !== row1?.round && near(row2?.segments?.[seg]?.price, E2.price), "resolved r2: firm_1 sold at the CMO's new price", `${seg} $${row2?.segments?.[seg]?.price}`);
-ok(ev2.some((e) => /^HIRE: firm_1 brings on a operations manager/.test(e)), "resolved r2: HIRE event for the CHRO's operations manager", ev2.filter((e) => /firm_1/.test(e)).slice(0, 4).join(" | "));
+ok(ev2.some((e) => (empOn ? /^(HIRE|SIGNED): firm_1 /.test(e) : /^HIRE: firm_1 brings on a operations manager/.test(e))), `resolved r2: HIRE event for the CHRO's ${empOn ? "second hire" : "operations manager"}`, ev2.filter((e) => /firm_1/.test(e)).slice(0, 4).join(" | "));
 ok(ev2.some((e) => /^EQUITY: investors fund only .* firm_1 sought/.test(e) && e.includes(`$${ask2.toLocaleString("en-US")}`)), "resolved r2: equity trimmed to the cap", ev2.filter((e) => /EQUITY/.test(e)).join(" | ").slice(0, 200));
 ok(row2 && row2.debt - debt1 > E2.debt_draw * 0.9, "resolved r2: debt rose by ~the CFO's draw", `debt ${Math.round(debt1)} → ${Math.round(row2?.debt)}`);
 
@@ -232,16 +251,16 @@ await sleep(1200);
 const peopleTab = await Q.cfo.$("xpath/.//button[normalize-space(.)='People']");
 await peopleTab.click(); await sleep(400);
 const cv = await probe(Q.cfo);
-ok(cv.hire_roles === true && cv.debt_draw === false, "CFO on the People tab sees Key people (and not Finance)", JSON.stringify({ hire: cv.hire_roles, debt: cv.debt_draw }));
-await clickKey(Q.cfo, "hire_ops");
+ok((empOn ? cv.hire_employee === true : cv.hire_roles === true) && cv.debt_draw === false, `CFO on the People tab sees ${empOn ? "the talent market" : "Key people"} (and not Finance)`, JSON.stringify({ hire: empOn ? cv.hire_employee : cv.hire_roles, debt: cv.debt_draw }));
+await clickKey(Q.cfo, empOn ? "hire_employee" : "hire_ops");
 const dlgCover = await submit(Q.cfo, "cfo2");
 ok(true, "CFO cover submit went through", dlgCover.join(" | ").slice(0, 260) || "no confirm");
 const cc = (await view(s2.ceo.token)).teamPlan?.composed ?? {};
-ok((cc.hire_roles ?? []).includes("ops_manager"), "cover: composed plan carries the CFO's hire for the empty CHRO chair", JSON.stringify(cc.hire_roles));
+ok(empOn ? (cc.hire_employees ?? []).length >= 1 : (cc.hire_roles ?? []).includes("ops_manager"), "cover: composed plan carries the CFO's hire for the empty CHRO chair", JSON.stringify(empOn ? cc.hire_employees : cc.hire_roles));
 await resolve(g.gameId);
 dash = await api(`/instructor/games/${g.gameId}/dashboard`);
 const ev3 = dash.events.at(-1)?.events ?? [];
-ok(ev3.some((e) => /^HIRE: firm_2 brings on a operations manager/.test(e)), "cover: resolved round hires firm_2's operations manager", ev3.filter((e) => /firm_2/.test(e)).slice(0, 3).join(" | "));
+ok(ev3.some((e) => (empOn ? /^(HIRE|SIGNED): firm_2 /.test(e) : /^HIRE: firm_2 brings on a operations manager/.test(e))), `cover: resolved round hires firm_2's ${empOn ? "candidate" : "operations manager"}`, ev3.filter((e) => /firm_2/.test(e)).slice(0, 3).join(" | "));
 await api(`/instructor/games/${g.gameId}/end`, {}).catch(() => {});
 } catch (e) { results.push("ABORT " + e.message); console.log("ABORT " + e.message.split("\n")[0]); }
 const fails = results.filter((l) => !l.startsWith("PASS"));

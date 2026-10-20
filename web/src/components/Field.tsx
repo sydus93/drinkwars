@@ -59,7 +59,8 @@ export function Field({ view, infoActive, pending = false, onInspect }: { view: 
           <span className="text-sm text-inksoft">of {firms.length} breweries, by sustained scorecard</span>
         </div>
         <CompareBar label="Cumulative score" you={you?.score ?? 0} ref_={fieldMedScore} max={Math.max(...scores, 0.01)} fmt={(n) => n.toFixed(2)} />
-        <div className="mt-2 grid grid-cols-3 gap-3 text-sm">
+        {/* one row each on a phone — three label/value pairs side by side overprinted at 360/390 */}
+        <div className="mt-2 grid grid-cols-1 text-sm sm:grid-cols-3 sm:gap-3">
           <Row label="Your share" value={fmt.pct(you?.share ?? 0)} />
           <Row label="Your capacity" value={`${fmt.int(you?.cap ?? 0)} drinks/rd`} />
           <Row label="Your unit cost" value={you?.unitCost ? fmt.price(you.unitCost) : "—"} />

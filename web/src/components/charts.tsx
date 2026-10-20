@@ -116,7 +116,17 @@ export function Scatter({ points, xLabel, yLabel, fmtX = compactNum, fmtY = comp
           return (
             <g key={i} opacity={p.faded ? 0.4 : 1}>
               <circle cx={sx(p.x)} cy={sy(p.y)} r={r} fill={p.color} />
-              <text x={sx(p.x) + r + 2} y={sy(p.y) + 3} fontSize="8.5" fill={p.color} fontFamily="var(--font-mono)" opacity={hover != null ? 0.55 : 1}>{p.label}</text>
+              {(() => {
+                // A long name on a right-hand dot ran off the chart ("Vagrant Sta…"). Mono type at
+                // 8.5 is ~5.2 wide per character: when the label would overflow, hang it to the
+                // LEFT of the dot; if it fits on neither side, trim it (the tooltip has the name).
+                const CW = 5.2, cx = sx(p.x), room = SW - 2 - (cx + r + 2), roomLeft = cx - r - 2 - L;
+                const w = p.label.length * CW;
+                const left = w > room && roomLeft > room;
+                const fit = Math.max(3, Math.floor((left ? roomLeft : room) / CW));
+                const text = p.label.length > fit ? `${p.label.slice(0, fit - 1)}…` : p.label;
+                return <text x={left ? cx - r - 2 : cx + r + 2} y={sy(p.y) + 3} textAnchor={left ? "end" : "start"} fontSize="8.5" fill={p.color} fontFamily="var(--font-mono)" opacity={hover != null ? 0.55 : 1}>{text}{text !== p.label && <title>{p.label}</title>}</text>;
+              })()}
               {/* larger invisible hit target; taps pin the tooltip (cleared by the next tap elsewhere) */}
               <circle
                 cx={sx(p.x)} cy={sy(p.y)} r={Math.max(r + 6, 10)} fill="transparent"

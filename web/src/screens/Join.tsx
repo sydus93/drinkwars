@@ -134,7 +134,7 @@ export function Join({ onJoined, onBack }: { onJoined: (c: StudentClient) => voi
               <Button variant="go" onClick={proceed} disabled={busy || code.trim().length < 4}>{busy ? "Checking…" : "Continue →"}</Button>
               <Button variant="ghost" onClick={onBack}>Back</Button>
             </div>
-            <div className="text-[0.72rem] text-inksoft">Already have a claim code and want to see your games? Use “Returning player” on the home screen.</div>
+            <div className="text-[0.72rem] text-inksoft">Already have a claim code and want to see your games? Use “My games” on the start screen.</div>
           </div>
         </div>
       </div>

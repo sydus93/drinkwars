@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>body{margin:0;background:#120d08}a{color:#ecb54a}a:hover{color:#f3d08a}*{box-sizing:border-box}</style>
+</helmet>
+<div style="padding:56px;display:flex;flex-direction:column;gap:40px;font-family:'EB Garamond',serif;color:#f3e6cf;min-width:1960px">
+  <div style="display:flex;flex-direction:column;gap:14px;max-width:1100px">
+    <div style="font:600 14px 'IBM Plex Sans';letter-spacing:.14em;color:#ecb54a">D · ROUND RESOLVED &nbsp;&nbsp; + THE CALLS DESK</div>
+    <div style="font-size:44px;font-weight:600;line-height:1.05">Make your calls before the lock. Settle them when the round lands.</div>
+    <div style="font-size:19px;color:#cdb898;line-height:1.45;text-wrap:pretty">Calls are a step inside the commit panel: three tickets, filled with a tap, logged with your submit. When the instructor resolves the round, a results page opens in order: your rank, what hit the market, what it did to your desk, then your calls settled one by one with a running record. Statements sit one tap below.</div>
+    <div style="display:flex;gap:28px;flex-wrap:wrap;align-items:center;margin-top:8px">
+      <div style="display:flex;gap:8px;align-items:center"><span style="font:500 13px 'IBM Plex Sans';letter-spacing:.1em;color:#a8916f;margin-right:6px">MOMENT</span>
+        <sc-for list="{{ phaseOpts }}" as="o" hint-placeholder-count="2"><button onClick="{{ o.pick }}" style="font:600 14px 'IBM Plex Sans';padding:9px 14px;border-radius:999px;border:1px solid #5a4630;background:{{ o.bg }};color:{{ o.fg }};cursor:pointer;white-space:nowrap;flex-shrink:0">{{ o.label }}</button></sc-for>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center"><span style="font:500 13px 'IBM Plex Sans';letter-spacing:.1em;color:#a8916f;margin-right:6px">CALLS LOGGED</span>
+        <sc-for list="{{ callOpts }}" as="o" hint-placeholder-count="3"><button onClick="{{ o.pick }}" style="font:600 14px 'IBM Plex Sans';padding:9px 14px;border-radius:999px;border:1px solid #5a4630;background:{{ o.bg }};color:{{ o.fg }};cursor:pointer;white-space:nowrap;flex-shrink:0">{{ o.label }}</button></sc-for>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center"><span style="font:500 13px 'IBM Plex Sans';letter-spacing:.1em;color:#a8916f;margin-right:6px">EVENTS</span>
+        <sc-for list="{{ evOpts }}" as="o" hint-placeholder-count="3"><button onClick="{{ o.pick }}" style="font:600 14px 'IBM Plex Sans';padding:9px 14px;border-radius:999px;border:1px solid #5a4630;background:{{ o.bg }};color:{{ o.fg }};cursor:pointer;white-space:nowrap;flex-shrink:0">{{ o.label }}</button></sc-for>
+      </div>
+    </div>
+  </div>
+
+  <sc-for list="{{ themes }}" as="t" hint-placeholder-count="2">
+  <div style="--bg:{{ t.bg }};--bg2:{{ t.bg2 }};--card:{{ t.card }};--card2:{{ t.card2 }};--line:{{ t.line }};--ink:{{ t.ink }};--ink2:{{ t.ink2 }};--gold:{{ t.gold }};--red:{{ t.red }};--redbg:{{ t.redbg }};--amber:{{ t.amber }};--green:{{ t.green }};--btn:{{ t.btn }};--btnInk:{{ t.btnInk }};--seat:{{ t.seat }};--seatInk:{{ t.seatInk }};--field:{{ t.field }};display:flex;gap:48px;align-items:flex-start">
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div style="font:600 14px 'IBM Plex Sans';letter-spacing:.12em;color:#a8916f">1440 · {{ t.label }}</div>
+      <div style="width:1440px;min-height:900px;background:var(--bg);color:var(--ink);border-radius:6px;overflow:hidden;border-left:8px solid var(--seat)">
+        <div style="display:flex;align-items:center;gap:28px;padding:18px 32px;background:var(--bg2);border-bottom:1px solid var(--line)">
+          <div style="display:flex;flex-direction:column;gap:2px"><div style="font:600 13px 'IBM Plex Sans';letter-spacing:.14em;color:var(--ink2)">DRINK WARS · HOP THEORY</div><div style="font-size:36px;font-weight:600;line-height:1">{{ roundLabel }}</div></div>
+          <div style="display:flex;align-items:stretch;border-radius:12px;overflow:hidden;border:2px solid var(--seat)">
+            <div style="background:var(--seat);color:var(--seatInk);font:700 24px 'IBM Plex Sans';padding:0 18px;display:flex;align-items:center">CFO</div>
+            <div style="padding:8px 18px;display:flex;flex-direction:column"><span style="font-size:22px;font-weight:600;line-height:1.1">Ben Okafor</span><span style="font:500 13px 'IBM Plex Sans';letter-spacing:.08em;color:var(--ink2)">YOUR SEAT · FINANCE DESK</span></div>
+          </div>
+          <div style="flex:1"></div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;padding:8px 14px;border:1px solid var(--line);border-radius:10px"><span style="font:500 13px 'IBM Plex Sans';letter-spacing:.12em;color:var(--ink2)">{{ clockLabel }}</span><span style="font:600 22px 'IBM Plex Sans'">{{ clock }}</span></div>
+        </div>
+
+        <sc-if value="{{ resolved }}" hint-placeholder-val="{{ true }}">
+          <div style="padding:32px;display:grid;grid-template-columns:minmax(0,1fr) 540px;gap:28px;align-items:start">
+            <div style="display:flex;flex-direction:column;gap:24px">
+              <div style="display:flex;flex-direction:column;gap:6px"><span style="font:700 14px 'IBM Plex Sans';letter-spacing:.16em;color:var(--gold)">ROUND 2 IS IN</span><span style="font-size:58px;font-weight:700;line-height:1">You finished #4 of 4</span><span style="font-size:22px;color:var(--ink2)">Down one place from #3. Low Tide Brewing leads.</span></div>
+              <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px">
+                <sc-for list="{{ kpis }}" as="k" hint-placeholder-count="3">
+                  <div style="background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;display:flex;flex-direction:column;gap:4px"><span style="font:600 13px 'IBM Plex Sans';letter-spacing:.12em;color:var(--ink2)">{{ k.label }}</span><span style="font-size:32px;font-weight:600">{{ k.value }}</span><span style="font-size:17px;color:{{ k.c }}">{{ k.delta }}</span></div>
+                </sc-for>
+              </div>
+              <div style="background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 24px;display:flex;flex-direction:column;gap:14px">
+                <span style="font:700 13px 'IBM Plex Sans';letter-spacing:.14em;color:var(--ink2)">WHAT HIT THE MARKET</span>
+                <sc-for list="{{ events }}" as="e" hint-placeholder-count="1">
+                  <div style="display:grid;grid-template-columns:8px minmax(0,1fr);gap:16px"><span style="background:{{ e.c }};border-radius:4px"></span><div style="display:flex;flex-direction:column;gap:4px"><span style="font-size:22px;font-weight:600">{{ e.title }}</span><span style="font-size:18px;line-height:1.4"><b style="color:var(--seat)">On your desk:</b> {{ e.desk }}</span></div></div>
+                </sc-for>
+                <sc-if value="{{ noEvents }}" hint-placeholder-val="{{ false }}"><span style="font-size:18px;color:var(--ink2)">A quiet round. No shocks; results came from your team's choices and your rivals'.</span></sc-if>
+              </div>
+              <div style="background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 24px;display:flex;flex-direction:column;gap:10px">
+                <span style="font:700 13px 'IBM Plex Sans';letter-spacing:.14em;color:var(--ink2)">YOUR DESK'S NUMBERS · FINANCE</span>
+                <sc-for list="{{ deskRows }}" as="r" hint-placeholder-count="4">
+                  <div style="display:grid;grid-template-columns:minmax(0,1fr) 140px 140px;font-size:19px;border-top:1px solid var(--line);padding-top:10px"><span>{{ r.label }}</span><span style="text-align:right;color:var(--ink2)">{{ r.before }}</span><span style="text-align:right;font-weight:600;color:{{ r.c }}">{{ r.after }}</span></div>
+                </sc-for>
+                <div style="display:flex;gap:12px;margin-top:8px"><span style="font:700 15px 'IBM Plex Sans';padding:12px 18px;border-radius:10px;border:1px solid var(--line)">Full statements →</span><span style="font:700 15px 'IBM Plex Sans';padding:12px 18px;border-radius:10px;border:1px solid var(--line)">The Tap Dispatch →</span></div>
+              </div>
+            </div>
+            <div style="background:var(--card2);border:1px solid var(--line);border-radius:16px;overflow:hidden">
+              <div style="padding:22px 24px 16px;display:flex;justify-content:space-between;align-items:flex-end;border-bottom:1px dashed var(--line)">
+                <div style="display:flex;flex-direction:column;gap:2px"><span style="font:700 13px 'IBM Plex Sans';letter-spacing:.14em;color:var(--gold)">YOUR CALLS · SETTLED</span><span style="font-size:30px;font-weight:600">{{ callsHeadline }}</span></div>
+                <div style="display:flex;flex-direction:column;align-items:flex-end"><span style="font:600 12px 'IBM Plex Sans';letter-spacing:.12em;color:var(--ink2)">SEASON RECORD</span><span style="font-size:30px;font-weight:600">{{ record }}</span></div>
+              </div>
+              <sc-for list="{{ settled }}" as="c" hint-placeholder-count="3">
+                <div style="padding:18px 24px;border-bottom:1px dashed var(--line);display:flex;flex-direction:column;gap:10px">
+                  <div style="display:flex;justify-content:space-between;align-items:center"><span style="font:600 13px 'IBM Plex Sans';letter-spacing:.12em;color:var(--ink2)">{{ c.kind }}</span><span style="font:700 13px 'IBM Plex Sans';letter-spacing:.1em;padding:5px 10px;border-radius:6px;background:{{ c.c }};color:var(--bg)">{{ c.verdict }}</span></div>
+                  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                    <div style="display:flex;flex-direction:column"><span style="font-size:16px;color:var(--ink2)">You called</span><span style="font-size:30px;font-weight:600;line-height:1.1">{{ c.called }}</span></div>
+                    <div style="display:flex;flex-direction:column"><span style="font-size:16px;color:var(--ink2)">It came in</span><span style="font-size:30px;font-weight:600;line-height:1.1;color:{{ c.c }}">{{ c.actual }}</span></div>
+                  </div>
+                  <span style="font-size:17px;color:var(--ink2)">{{ c.note }}</span>
+                </div>
+              </sc-for>
+              <sc-if value="{{ noCalls }}" hint-placeholder-val="{{ false }}"><div style="padding:22px 24px;font-size:19px;line-height:1.4;color:var(--ink2);border-bottom:1px dashed var(--line)">You made no calls in Round 2, so there's nothing to settle. Your record holds at {{ record }}.</div></sc-if>
+              <div style="padding:18px 24px;display:flex;flex-direction:column;gap:10px">
+                <div style="display:flex;gap:6px"><sc-for list="{{ streak }}" as="s" hint-placeholder-count="6"><span style="flex:1;height:10px;border-radius:5px;background:{{ s.c }}"></span></sc-for></div>
+                <span style="font-size:17px;color:var(--ink2)">Last 6 calls. Close means within 2 points or one rank place.</span>
+              </div>
+              <div style="padding:0 24px 24px"><div style="font:700 16px 'IBM Plex Sans';background:var(--btn);color:var(--btnInk);padding:16px;border-radius:10px;text-align:center">ON TO ROUND 3 →</div></div>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ logging }}" hint-placeholder-val="{{ false }}">
+          <div style="padding:32px;display:grid;grid-template-columns:minmax(0,1fr) 560px;gap:28px;align-items:start">
+            <div style="background:var(--card);border:1px solid var(--line);border-top:5px solid var(--seat);border-radius:14px;padding:24px;display:flex;flex-direction:column;gap:14px;opacity:.7">
+              <span style="font:700 14px 'IBM Plex Sans';letter-spacing:.14em;color:var(--seat)">FINANCE DESK</span>
+              <span style="font-size:19px;color:var(--ink2)">Draw debt $50,000 · Repay $0 · Raise equity $0 · Dividend $10,000</span>
+            </div>
+            <div style="background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden">
+              <div style="padding:20px 24px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--line)"><span style="font:700 13px 'IBM Plex Sans';letter-spacing:.14em;color:var(--gold)">COMMIT THE ROUND</span><span style="font-size:19px">Projected cash <b>$465,000</b></span></div>
+              <div style="padding:20px 24px;display:flex;flex-direction:column;gap:12px;background:var(--card2)">
+                <div style="display:flex;justify-content:space-between;align-items:baseline"><span style="font-size:24px;font-weight:600">Your calls for Round 3</span><span style="font-size:17px;color:var(--ink2)">Record {{ record }}</span></div>
+                <span style="font-size:17px;color:var(--ink2)">Optional. Settled when the round resolves.</span>
+                <sc-for list="{{ tickets }}" as="k" hint-placeholder-count="3">
+                  <div style="border:1px {{ k.borderStyle }} var(--line);border-radius:12px;padding:14px 16px;display:flex;flex-direction:column;gap:10px;background:var(--card)">
+                    <div style="display:flex;justify-content:space-between"><span style="font:600 13px 'IBM Plex Sans';letter-spacing:.12em;color:var(--ink2)">{{ k.kind }}</span><span style="font-size:16px;color:var(--ink2)">{{ k.hint }}</span></div>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap">
+                      <sc-for list="{{ k.opts }}" as="o" hint-placeholder-count="4"><span style="font:600 17px 'IBM Plex Sans';padding:10px 14px;border-radius:10px;min-width:56px;text-align:center;border:1px solid {{ o.bd }};background:{{ o.bg }};color:{{ o.fg }}">{{ o.v }}</span></sc-for>
+                    </div>
+                  </div>
+                </sc-for>
+              </div>
+              <div style="padding:18px 24px 22px"><div style="font:700 16px 'IBM Plex Sans';background:var(--btn);color:var(--btnInk);padding:16px;border-radius:10px;text-align:center">{{ submitLabel }}</div></div>
+            </div>
+          </div>
+        </sc-if>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div style="font:600 14px 'IBM Plex Sans';letter-spacing:.12em;color:#a8916f">390 · {{ t.label }}</div>
+      <div style="width:390px;height:844px;overflow:hidden;background:var(--bg);color:var(--ink);border-radius:28px;display:flex;flex-direction:column;border:4px solid var(--seat)">
+        <div style="background:var(--seat);color:var(--seatInk);padding:12px 18px;display:flex;align-items:center;gap:10px"><span style="font:700 20px 'IBM Plex Sans'">CFO</span><span style="font-size:19px;font-weight:600">Ben Okafor</span><span style="flex:1"></span><span style="font:600 13px 'IBM Plex Sans';letter-spacing:.08em">FINANCE</span></div>
+        <sc-if value="{{ resolved }}" hint-placeholder-val="{{ true }}">
+          <div style="flex:1;overflow:hidden;padding:18px;display:flex;flex-direction:column;gap:14px">
+            <div style="display:flex;flex-direction:column;gap:4px"><span style="font:700 13px 'IBM Plex Sans';letter-spacing:.14em;color:var(--gold)">ROUND 2 IS IN</span><span style="font-size:38px;font-weight:700;line-height:1">You finished #4</span><span style="font-size:18px;color:var(--ink2)">Down from #3. Cash $616,055.</span></div>
+            <sc-for list="{{ events }}" as="e" hint-placeholder-count="1">
+              <div style="border-left:6px solid {{ e.c }};background:var(--card);border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;gap:4px"><span style="font-size:20px;font-weight:600">{{ e.title }}</span><span style="font-size:17px;line-height:1.35"><b style="color:var(--seat)">Your desk:</b> {{ e.deskShort }}</span></div>
+            </sc-for>
+            <sc-if value="{{ noEvents }}" hint-placeholder-val="{{ false }}"><span style="font-size:17px;color:var(--ink2)">A quiet round, no shocks.</span></sc-if>
+            <div style="background:var(--card2);border:1px solid var(--line);border-radius:14px;overflow:hidden">
+              <div style="padding:12px 14px;display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px dashed var(--line)"><span style="font:700 13px 'IBM Plex Sans';letter-spacing:.12em;color:var(--gold)">YOUR CALLS</span><span style="font-size:18px">Record <b>{{ record }}</b></span></div>
+              <sc-for list="{{ settled }}" as="c" hint-placeholder-count="3">
+                <div style="padding:10px 14px;border-bottom:1px dashed var(--line);display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 10px;align-items:center">
+                  <span style="font:600 12px 'IBM Plex Sans';letter-spacing:.1em;color:var(--ink2)">{{ c.kind }}</span><span style="font:700 12px 'IBM Plex Sans';padding:3px 8px;border-radius:5px;background:{{ c.c }};color:var(--bg);justify-self:end">{{ c.verdict }}</span>
+                  <span style="font-size:18px;grid-column:1 / -1">Called <b>{{ c.called }}</b>, came in <b style="color:{{ c.c }}">{{ c.actual }}</b></span>
+                </div>
+              </sc-for>
+              <sc-if value="{{ noCalls }}" hint-placeholder-val="{{ false }}"><div style="padding:12px 14px;font-size:17px;color:var(--ink2)">No calls made in Round 2.</div></sc-if>
+            </div>
+            <span style="font:700 15px 'IBM Plex Sans';color:var(--ink2)">Full statements →</span>
+          </div>
+          <div style="padding:12px 16px 26px;border-top:1px solid var(--line);background:var(--bg2)"><div style="font:700 15px 'IBM Plex Sans';background:var(--btn);color:var(--btnInk);padding:15px;border-radius:10px;text-align:center">ON TO ROUND 3 →</div></div>
+        </sc-if>
+        <sc-if value="{{ logging }}" hint-placeholder-val="{{ false }}">
+          <div style="padding:12px 18px;display:flex;justify-content:space-between;background:var(--bg2);border-bottom:1px solid var(--line)"><span style="font-size:26px;font-weight:600">Round 3</span><span style="font:600 19px 'IBM Plex Sans'">1:52</span></div>
+          <div style="flex:1;overflow:hidden;padding:16px;display:flex;flex-direction:column;gap:12px">
+            <div style="display:flex;justify-content:space-between;align-items:baseline"><span style="font-size:24px;font-weight:600">Your calls</span><span style="font-size:17px;color:var(--ink2)">Record {{ record }}</span></div>
+            <sc-for list="{{ tickets }}" as="k" hint-placeholder-count="3">
+              <div style="border:1px {{ k.borderStyle }} var(--line);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:8px;background:var(--card)">
+                <span style="font:600 12px 'IBM Plex Sans';letter-spacing:.1em;color:var(--ink2)">{{ k.kind }}</span>
+                <div style="display:flex;gap:6px;flex-wrap:wrap"><sc-for list="{{ k.opts }}" as="o" hint-placeholder-count="4"><span style="font:600 16px 'IBM Plex Sans';padding:12px 10px;border-radius:10px;min-width:48px;text-align:center;border:1px solid {{ o.bd }};background:{{ o.bg }};color:{{ o.fg }}">{{ o.v }}</span></sc-for></div>
+              </div>
+            </sc-for>
+          </div>
+          <div style="padding:12px 16px 26px;border-top:1px solid var(--line);background:var(--bg2)"><div style="font:700 15px 'IBM Plex Sans';background:var(--btn);color:var(--btnInk);padding:15px;border-radius:10px;text-align:center">{{ submitShort }}</div></div>
+        </sc-if>
+      </div>
+    </div>
+  </div>
+  </sc-for>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+const THEMES = [
+  { label: 'DARK', bg: '#1b130c', bg2: '#22180f', card: '#2c2117', card2: '#33261a', line: '#4d3b28', ink: '#f4e8d2', ink2: '#c4ad8c', gold: '#ecb54a', red: '#ef8a64', amber: '#eab84c', green: '#8ec95a', btn: '#7fb544', btnInk: '#15230a', field: '#1a120b', seat: '#9bcb5e', seatInk: '#1a120a' },
+  { label: 'LIGHT', bg: '#f2e6cd', bg2: '#ebdbbb', card: '#fcf6ea', card2: '#f6ecd9', line: '#d6bf98', ink: '#2a1b0f', ink2: '#65503a', gold: '#9a5512', red: '#a3321f', amber: '#8f5c06', green: '#3d6b18', btn: '#6ea83a', btnInk: '#13210a', field: '#efdfc0', seat: '#3d6b18', seatInk: '#fdf8ee' }
+];
+const CALLS = [
+  { kind: 'TEAM RANK', called: '#3', actual: '#4', verdict: 'CLOSE', tone: 'amber', note: 'One place off. The water shortage hit high-volume brewers hardest.' },
+  { kind: 'YOUR GROSS MARGIN', called: '38%', actual: '31.9%', verdict: 'MISSED', tone: 'red', note: '6.1 points under. Unit cost rose $0.96 with the shortage.' },
+  { kind: 'LOW TIDE PRICE MOVE', called: 'Raise', actual: 'Raised $0.40', verdict: 'NAILED', tone: 'green', note: 'Right direction. Low Tide passed the cost on.' }
+];
+const EV = {
+  water: { title: 'Water shortage hit', c: 'var(--red)', desk: 'Net income fell to $55,390 from $107,145 as unit cost rose. Interest coverage dropped to 17.8×, still strong.', deskShort: 'Net income fell to $55,390. Coverage still strong at 17.8×.' },
+  tastes: { title: 'Tastes are shifting toward quality', c: 'var(--amber)', desk: 'No hit to finance this round. Quality spend on the COO desk now pays off more, so expect a capex ask.', deskShort: 'No hit yet. Expect a quality capex ask from the COO.' }
+};
+class Component extends DCLogic {
+  state = { phase: 'resolved', calls: 3, ev: 'two' };
+  renderVals() {
+    const { phase, calls, ev } = this.state;
+    const chip = on => ({ bg: on ? '#f4e8d2' : 'transparent', fg: on ? '#1b130c' : '#e7d6b8' });
+    const settled = CALLS.slice(0, calls).map(c => ({ ...c, c: `var(--${c.tone})` }));
+    const hits = settled.filter(c => c.tone !== 'red').length;
+    const pastHits = 3, pastTotal = 5;
+    const record = `${pastHits + hits} of ${pastTotal + calls}`;
+    const events = ev === 'none' ? [] : ev === 'one' ? [EV.water] : [EV.water, EV.tastes];
+    const past = ['green', 'red', 'amber', 'green', 'red'];
+    const streak = [...past, ...settled.map(s => s.tone)].slice(-6).map(t => ({ c: `var(--${t})` }));
+    const sel = (v, on) => ({ v, bd: on ? 'var(--ink)' : 'var(--line)', bg: on ? 'var(--ink)' : 'transparent', fg: on ? 'var(--bg)' : 'var(--ink)' });
+    const T = [
+      { kind: 'WHERE WE FINISH', hint: 'team rank', vals: ['#1', '#2', '#3', '#4'], pick: 2 },
+      { kind: 'MY GROSS MARGIN', hint: 'last round 31.9%', vals: ['<28%', '28–32%', '32–36%', '>36%'], pick: 1 },
+      { kind: 'LOW TIDE\u2019S PRICE', hint: 'now $8.05', vals: ['Cut', 'Hold', 'Raise'], pick: 1 }
+    ];
+    const tickets = T.map((k, i) => ({ kind: k.kind, hint: k.hint, borderStyle: i < calls ? 'solid' : 'dashed', opts: k.vals.map((v, j) => sel(v, i < calls && j === k.pick)) }));
+    return {
+      phaseOpts: [['logging', 'Before lock'], ['resolved', 'Round resolved']].map(([k, l]) => ({ label: l, ...chip(phase === k), pick: () => this.setState({ phase: k }) })),
+      callOpts: [0, 1, 3].map(k => ({ label: String(k), ...chip(calls === k), pick: () => this.setState({ calls: k }) })),
+      evOpts: [['none', 'None'], ['one', 'One'], ['two', 'Two']].map(([k, l]) => ({ label: l, ...chip(ev === k), pick: () => this.setState({ ev: k }) })),
+      themes: THEMES, resolved: phase === 'resolved', logging: phase === 'logging',
+      roundLabel: phase === 'resolved' ? 'Round 2 resolved' : 'Round 3 / 8',
+      clockLabel: phase === 'resolved' ? 'ROUND 3 OPENS' : 'ROUND CLOSES', clock: phase === 'resolved' ? 'when ready' : '1:52',
+      kpis: [
+        { label: 'NET INCOME', value: '$55,390', delta: '▼ $51,755 vs R1', c: 'var(--red)' },
+        { label: 'CASH', value: '$616,055', delta: '▲ $6,430', c: 'var(--green)' },
+        { label: 'GROSS MARGIN', value: '31.9%', delta: '▼ 15.9 pts', c: 'var(--red)' }
+      ],
+      events, noEvents: events.length === 0,
+      deskRows: [
+        { label: 'Cash', before: '$609,625', after: '$616,055', c: 'var(--green)' },
+        { label: 'Debt', before: '$130,000', after: '$130,000', c: 'var(--ink)' },
+        { label: 'Interest coverage', before: '33.7×', after: '17.8×', c: 'var(--red)' },
+        { label: 'Return on equity', before: '13.6%', after: '6.6%', c: 'var(--red)' }
+      ],
+      settled, noCalls: calls === 0, record,
+      callsHeadline: calls === 0 ? 'No calls this round' : `${hits} of ${calls} came good`,
+      streak, tickets,
+      submitLabel: calls ? `SUBMIT MY DESK + ${calls} CALL${calls > 1 ? 'S' : ''}` : 'SUBMIT MY DESK (NO CALLS)',
+      submitShort: calls ? `SUBMIT + ${calls} CALL${calls > 1 ? 'S' : ''}` : 'SUBMIT MY DESK'
+    };
+  }
+}
+</script>
+</body>
+</html>

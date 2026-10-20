@@ -18,7 +18,7 @@
  */
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type {
-  AgreementRow, BeliefRow, DecisionRecord, DistinctivenessRow, FirmRoundRow, GameRecord,
+  AgreementRow, BeliefRow, ForecastRecord, DecisionRecord, DistinctivenessRow, FirmRoundRow, GameRecord,
   Lifecycle, MemberDecisionRecord, PublicRoundRecord, ReflectionRow, RoundResultRecord, StorageAdapter, TeamRecord, TeamMemberRecord, TelemetryRow,
   UserRecord, WorldStateRecord,
 } from "../types.js";
@@ -33,6 +33,12 @@ const fromTsN = (s: string | null | undefined): number | null => (s ? new Date(s
 function must<T>(res: { data: T; error: { message?: string } | null }): T {
   if (res.error) throw new Error(`supabase: ${res.error.message ?? JSON.stringify(res.error)}`);
   return res.data;
+}
+
+function forecastsMust<T>(res: { data: T; error: { message?: string } | null }): T {
+  if (res.error && /forecasts/.test(res.error.message ?? "") && /does not exist|schema cache/i.test(res.error.message ?? ""))
+    throw new Error("calls are switched on for this game but the `forecasts` table is missing — apply migration 0009 (npm run db:push --workspace server)");
+  return must(res);
 }
 
 const mapGame = (r: any): GameRecord => ({
@@ -57,11 +63,21 @@ const mapMember = (m: any): TeamMemberRecord => ({
   user_id: m.user_id, role: m.role ?? null,
   display_name: m.users?.display_name ?? null, external_id: m.users?.external_id ?? null, claim_code: m.users?.claim_code ?? null,
 });
-const mapTeam = (r: any): TeamRecord => ({
-  id: r.id, game_id: r.game_id, firm_id: r.firm_id, name: r.name, color: r.color ?? null, emblem: r.emblem ?? null,
-  member_user_ids: (r.team_members ?? []).map((m: any) => m.user_id),
-  members: (r.team_members ?? []).map(mapMember),
-});
+/** DW-080: PostgREST promises no row order — not for teams, not for an embed — while the memory
+ *  adapter returns creation order, and the instructor's rows, the round-0 rival a call targets and
+ *  the brewery-name rule all read that order. Pin it: firms by their number, members by chair. */
+const firmNum = (id: string): number => Number(/(\d+)$/.exec(id)?.[1] ?? 0);
+const CHAIRS = ["ceo", "cfo", "coo", "cmo", "chro"];
+const chairRank = (role: string | null | undefined): number => { const i = CHAIRS.indexOf(role ?? ""); return i < 0 ? CHAIRS.length : i; };
+const byFirm = (a: TeamRecord, b: TeamRecord): number => firmNum(a.firm_id) - firmNum(b.firm_id) || a.id.localeCompare(b.id);
+const mapTeam = (r: any): TeamRecord => {
+  const ms = [...(r.team_members ?? [])].sort((a: any, b: any) => chairRank(a.role) - chairRank(b.role) || String(a.user_id).localeCompare(String(b.user_id)));
+  return {
+    id: r.id, game_id: r.game_id, firm_id: r.firm_id, name: r.name, color: r.color ?? null, emblem: r.emblem ?? null,
+    member_user_ids: ms.map((m: any) => m.user_id),
+    members: ms.map(mapMember),
+  };
+};
 const mapWorldState = (r: any): WorldStateRecord => ({
   game_id: r.game_id, round: r.round, state: r.state, seed: Number(r.seed), created_at: fromTs(r.created_at),
 });
@@ -150,7 +166,7 @@ export class SupabaseAdapter implements StorageAdapter {
   }
   async getTeams(gameId: string): Promise<TeamRecord[]> {
     const rows = must(await this.db.from("teams").select(TEAM_COLS).eq("game_id", gameId));
-    return (rows ?? []).map(mapTeam);
+    return (rows ?? []).map(mapTeam).sort(byFirm);
   }
   async getTeam(id: string): Promise<TeamRecord | null> {
     const r = must(await this.db.from("teams").select(TEAM_COLS).eq("id", id).maybeSingle());
@@ -190,7 +206,7 @@ export class SupabaseAdapter implements StorageAdapter {
     const ids = (mine ?? []).map((m: any) => m.team_id);
     if (!ids.length) return [];
     const rows = must(await this.db.from("teams").select(TEAM_COLS).in("id", ids));
-    return (rows ?? []).map(mapTeam);
+    return (rows ?? []).map(mapTeam).sort(byFirm);
   }
 
   // ── Member (per-seat) decisions — multi-seat composition (mutable until lock) ──
@@ -359,6 +375,23 @@ export class SupabaseAdapter implements StorageAdapter {
   async getDistinctiveness(gameId: string): Promise<DistinctivenessRow[]> {
     const rows = must(await this.db.from("distinctiveness").select("*").eq("game_id", gameId));
     return (rows ?? []) as DistinctivenessRow[];
+  }
+
+  // ── Calls / forecast commitment (DW-074; migration 0009) ────────────────────
+  // Reached only for games with the flag on. An un-migrated project answers with Postgres'
+  // "relation forecasts does not exist"; say what to do about it.
+  async upsertForecast(rec: ForecastRecord): Promise<void> {
+    forecastsMust(await this.db.from("forecasts").upsert({
+      game_id: rec.game_id, round: rec.round, team_id: rec.team_id, user_id: rec.user_id,
+      role: rec.role, calls: rec.calls, updated_at: toTs(rec.updated_at),
+    }, { onConflict: "game_id,round,user_id" }));
+  }
+  async getForecasts(gameId: string): Promise<ForecastRecord[]> {
+    const rows = forecastsMust(await this.db.from("forecasts").select("*").eq("game_id", gameId));
+    return (rows ?? []).map((r: any): ForecastRecord => ({
+      game_id: r.game_id, round: r.round, team_id: r.team_id, user_id: r.user_id,
+      role: r.role ?? null, calls: r.calls ?? {}, updated_at: fromTs(r.updated_at),
+    }));
   }
 }
 

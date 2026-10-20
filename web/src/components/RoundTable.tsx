@@ -9,19 +9,24 @@
  * so spending desks and the financing desk see each other before anyone locks. Refreshes
  * on the same 2.5s poll as the rest of the view (real-ish time).
  */
-import type { GameView } from "../game/controller.js";
+import type { FirmDecision } from "drinkwars-engine";
+import { ROLE_DESK } from "drinkwars-engine";
+import type { GameView, TeamPlanSeat } from "../game/controller.js";
 import { PERSONAS, type CockpitDesk } from "../deskMeta.js";
-import { deskLines, planCash } from "../lib/planSummary.js";
+import { planCash } from "../lib/planSummary.js";
+import { leverText } from "../lib/reconcile.js";
+import { planTable, TABLE_DESKS, type TableDesk } from "../lib/roundTable.js";
 import { fmt } from "../labels.js";
 import { Card, Eyebrow } from "./ui.js";
 import { InfoDot } from "./InfoDot.js";
 
 const DESK_ORDER: CockpitDesk[] = ["commercial", "operations", "people", "finance", "strategy"];
 
-export function RoundTable({ view, rationale, seatRole, onFocusDesk }: {
+export function RoundTable({ view, rationale, seatRole, standing, onFocusDesk }: {
   view: GameView;
   rationale: Record<string, string>;
   seatRole?: string | null;
+  standing?: FirmDecision | null; // DW-076: the firm's standing plan — what "unchanged" means
   onFocusDesk: (desk: CockpitDesk) => void;
 }) {
   const mpSeats = view.seats.length > 0;
@@ -33,13 +38,13 @@ export function RoundTable({ view, rationale, seatRole, onFocusDesk }: {
         <Eyebrow>Round table</Eyebrow>
         <InfoDot title="The huddle" align="right">
           {mpSeats
-            ? "Each seat drafts its slice; the firm's decision is composed from all of them. Watch who's still out before you lock the round."
+            ? "Each seat submits its desk; the engine composes one plan from all of them, and this is that plan — every value, who it came from, and any entry that will NOT run. Anything you change on your desk is used; a lever you leave at last round's value follows the CEO's call."
             : "You hold every chair. Make each officer's call (jot it in their cockpit), then commit as the firm. In team play these become each teammate's proposal to the table."}
         </InfoDot>
       </div>
 
       {mpSeats ? (
-        <TeamPlanBoard view={view} seatRole={seatRole} />
+        <TeamPlanBoard view={view} seatRole={seatRole} standing={standing} />
       ) : (
         <>
           <div className="mb-1 mt-0.5 font-mono text-[0.58rem] uppercase tracking-wide text-inksoft">{called}/{DESK_ORDER.length} calls made</div>
@@ -67,21 +72,28 @@ export function RoundTable({ view, rationale, seatRole, onFocusDesk }: {
   );
 }
 
+
 /**
- * The live team plan (DW-038): readiness rail + the composed decision desk by desk,
- * each slice attributed to the seat that owns it, closing with the cash check. What
- * renders here IS what resolves — the server's merged decision, not local drafts.
+ * The live team plan (DW-038 → DW-076): readiness rail + the plan the server holds, lever by
+ * lever, each value credited to the seat the ENGINE credits (composeTeamDecision's provenance,
+ * DW-073), with ✎ where that seat changed it this round and ✗ under every entry a chair made
+ * that will NOT run — including the Sprint-1 case, spelled out: "the COO left this at last
+ * round's value, so the CEO's entry runs". What renders here IS what resolves at lock; the
+ * form above is only this seat's draft until it is submitted.
  */
-function TeamPlanBoard({ view, seatRole }: { view: GameView; seatRole?: string | null }) {
+function TeamPlanBoard({ view, seatRole, standing }: { view: GameView; seatRole?: string | null; standing?: FirmDecision | null }) {
   const plan = view.teamPlan;
-  const composed = plan?.composed ?? null;
   const seats = plan?.seats ?? [];
-  // Who owns a desk right now: a submitted specialist, else a submitted generalist
-  // (CEO / founder gap-fill), else nobody — the desk rides the house defaults.
-  const ownerOf = (desk: CockpitDesk) =>
-    seats.find((s) => s.desk === desk && s.submitted) ?? seats.find((s) => s.desk === "all" && s.submitted) ?? null;
-  const waitingSpecialist = (desk: CockpitDesk) => seats.find((s) => s.desk === desk && !s.submitted) ?? null;
+  const table = planTable(plan, standing);
+  const composed = table.composed ?? plan?.composed ?? null;
+  const me = seats.find((s) => s.me) ?? null;
   const cash = composed ? planCash(composed, view) : null;
+  const t = (f: keyof FirmDecision, v: unknown) => leverText(String(f), v, view);
+  const who = (s: TeamPlanSeat) => (s.me ? "you" : `${s.name}${s.role ? ` · ${s.role.toUpperCase()}` : ""}`);
+  const chairOf = (desk: TableDesk) => seats.find((s) => (s.desk ?? (s.role ? ROLE_DESK[s.role] : null)) === desk) ?? null;
+  const ceoSeated = seats.some((s) => (s.desk ?? (s.role ? ROLE_DESK[s.role] : null)) === "all");
+  const myUnused = table.rows.reduce((n, r) => n + r.unused.filter((u) => u.seat.me).length, 0);
+  void seatRole;
 
   return (
     <div className="mt-1 grid gap-2">
@@ -95,35 +107,57 @@ function TeamPlanBoard({ view, seatRole }: { view: GameView; seatRole?: string |
         ))}
       </div>
 
-      {/* the composed plan, desk by desk */}
+      {/* the plan, lever by lever */}
       {!composed ? (
         <div className="rounded-lg border border-dashed border-line2 bg-panel px-2.5 py-2 text-[0.72rem] text-inksoft">
-          Nothing on the table yet — as each desk submits, the firm's composed plan appears here for everyone to review.
+          Nothing on the table yet — as each desk submits, what the firm will actually do appears here for everyone to check.
         </div>
       ) : (
         <div className="grid gap-1.5">
-          <div className="flex items-baseline justify-between">
-            <span className="font-mono text-[0.58rem] font-bold uppercase tracking-[0.12em] text-copperdeep">The firm's plan {plan?.locked ? "· LOCKED" : "· live"}</span>
-            {seatRole === "ceo" && !plan?.locked && <span className="text-[0.62rem] italic text-inksoft">you hold the gavel — this is what commits at lock</span>}
+          <div className="flex flex-wrap items-baseline justify-between gap-x-2">
+            <span className="font-mono text-[0.58rem] font-bold uppercase tracking-[0.12em] text-copperdeep">What will run {plan?.locked ? "· LOCKED" : "· live"}</span>
+            {table.unusedCount > 0 && <span className="rounded-full border border-brick/60 px-1.5 py-0.5 font-mono text-[0.56rem] uppercase tracking-wide text-brick">✗ {table.unusedCount} entr{table.unusedCount === 1 ? "y" : "ies"} not used</span>}
           </div>
-          {DESK_ORDER.map((desk) => {
+          {me && !me.submitted && !plan?.locked && (
+            <div className="text-[0.68rem] italic text-inksoft">You haven't submitted this round — your desk isn't on the table yet.</div>
+          )}
+          {myUnused > 0 && (
+            <div className="rounded-md border border-brick/50 px-2 py-1 text-[0.7rem] text-brick">{myUnused === 1 ? "One of your entries" : `${myUnused} of your entries`} will not run — see the ✗ rows. Change it on your desk and submit again, or settle it with the chair who owns it.</div>
+          )}
+          {TABLE_DESKS.map((desk) => {
             const p = PERSONAS[desk];
-            const owner = ownerOf(desk);
-            const waiting = !owner ? waitingSpecialist(desk) : null;
-            const lines = deskLines(desk, composed, view);
+            const chair = chairOf(desk);
+            const rows = table.rows.filter((r) => r.desk === desk);
             return (
               <div key={desk} className="rounded-lg border border-line2 bg-panel px-2.5 py-1.5">
                 <div className="flex items-baseline justify-between gap-2">
                   <span className="font-mono text-[0.58rem] font-bold uppercase tracking-wide" style={{ color: p.accent }}>{p.short}</span>
                   <span className="truncate font-mono text-[0.56rem] uppercase tracking-wide text-inksoft">
-                    {owner ? `${owner.name}${owner.desk === "all" && desk !== "strategy" ? " (gap-fill)" : ""}${owner.me ? " · you" : ""}`
-                      : waiting ? `waiting on ${waiting.name}`
-                      : "unmanned · house defaults"}
+                    {chair ? `${chair.me ? "you" : chair.name} · ${chair.submitted ? "in" : "waiting"}`
+                      : desk === "strategy" ? (ceoSeated ? "the CEO's desk" : "no CEO seated")
+                      : ceoSeated ? "empty chair · the CEO covers it" : "empty chair"}
                   </span>
                 </div>
-                {lines.length > 0 ? (
+                {rows.length > 0 ? (
                   <div className="mt-0.5 grid gap-0.5">
-                    {lines.map((l, i) => <div key={i} className="truncate text-[0.72rem] text-ink">{l}</div>)}
+                    {rows.map((r) => (
+                      <div key={String(r.field)} className="grid gap-0.5">
+                        <div className="flex flex-wrap items-baseline gap-x-1.5 text-[0.72rem]">
+                          <span className="text-inksoft">{r.label}</span>
+                          <span className="font-semibold text-ink">{t(r.field, r.value)}</span>
+                          <span className="flex-1" />
+                          <span className="font-mono text-[0.56rem] uppercase tracking-wide" style={{ color: r.author?.me ? "var(--color-hop)" : "var(--color-inksoft)" }} title={r.author ? (r.authorChanged ? "changed this round" : "submitted unchanged") : "nobody set it; last round's plan carries"}>
+                            {r.author ? `${r.authorChanged ? "✎ " : ""}${who(r.author)}` : "carried"}
+                          </span>
+                        </div>
+                        {r.chairYielded && (
+                          <div className="text-[0.66rem] italic text-inksoft">{r.chairYielded.me ? "You" : who(r.chairYielded)} left this at last round's value, so the CEO's entry runs.{r.chairYielded.me ? " To keep yours, change it (or press Keep mine in the commit panel) and submit again." : ""}</div>
+                        )}
+                        {r.unused.map((u, i) => (
+                          <div key={i} className="text-[0.66rem] text-brick">✗ {u.seat.me ? "You" : who(u.seat)} entered {t(r.field, u.value)} — not used{r.author && r.author !== u.seat ? ` (${r.author.me ? "yours" : who(r.author) + "'s"} stands)` : ""}.</div>
+                        ))}
+                      </div>
+                    ))}
                   </div>
                 ) : (
                   <div className="mt-0.5 text-[0.7rem] italic text-inksoft/80">no moves this round</div>

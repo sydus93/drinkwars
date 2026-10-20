@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { FirmDecision } from "drinkwars-engine";
 import type { RawView, StudentClient } from "../game/multiplayer.js";
-import { Play } from "./Play.js";
+import { Play, UTIL_BTN } from "./Play.js";
 import { setSelfFirm } from "../lib/teamColors.js";
 
 /**
@@ -57,6 +57,7 @@ export function MultiplayerPlay({ client, onExit }: { client: StudentClient; onE
   const [busy, setBusy] = useState(false);
   const [submitErr, setSubmitErr] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<string | null>(null); // "Submitted ✓ 14:02" — cleared on next edit/round
+  const [unsent, setUnsent] = useState(false); // DW-080: edited since that submit — the receipt must stop saying ✓
   const [stale, setStale] = useState(false); // the poll has been failing — the view may be behind
   const [dead, setDead] = useState<string | null>(null); // session rejected by the server (401) → exit with a reason
   // A casual (anonymous) joiner gets a durable claim code auto-issued — surface it ONCE
@@ -155,15 +156,17 @@ export function MultiplayerPlay({ client, onExit }: { client: StudentClient; onE
 
   const defaultDecision = useCallback(() => client.defaultDecision(), [client, raw?.round]);
   const submit = useCallback(
-    async (d: FirmDecision, covers?: Set<string>) => {
+    async (d: FirmDecision, covers?: Set<string>, forRound?: number) => {
       setBusy(true);
       setSubmitErr(null);
       try {
-        await client.submit(d, covers);
+        await client.submit(d, covers, forRound);
+        setUnsent(false);
         setRaw({ ...(await client.fetchView()) });
         lastFull.current = Date.now();
         stamp.current = null; // next tick re-reads the stamp after our own write
         setReceipt(`Submitted ✓ ${new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`);
+        return true;
       } catch (e) {
         const status = (e as { status?: number })?.status;
         const m = e instanceof Error ? e.message : String(e);
@@ -171,10 +174,12 @@ export function MultiplayerPlay({ client, onExit }: { client: StudentClient; onE
         // plain ("cannot submit: round is "locked", not open"); add the next step.
         setSubmitErr(
           status === 401 ? "Your session expired — reload the page and join again with your code; your seat is kept."
+          : /already closed/i.test(m) ? `Not submitted — ${m}.`
           : /locked|not open/i.test(m) ? "Not submitted — the instructor has locked this round. Your standing plan trades this quarter; the next round opens after the resolve."
           : /Failed to fetch|NetworkError|network/i.test(m) ? "Not submitted — couldn't reach the game server. Check your connection and press Submit again."
           : `Not submitted — ${m}. Press Submit again.`,
         );
+        return false;
       } finally {
         setBusy(false);
       }
@@ -222,44 +227,54 @@ export function MultiplayerPlay({ client, onExit }: { client: StudentClient; onE
     ? (mineIn ? "Update my desk" : `Submit my desk (round ${view.round + 1})`)
     : (raw.submitted ? "Update my decision" : `Submit decision (round ${view.round + 1})`);
 
-  return (
-    <>
+  // DW-078: the return-code card and the submit/receipt/stale notices render INSIDE Play, under the
+  // header and wire strip (they used to sit above the page, pushing the phone seat bar down), and
+  // the "Return code" button joins Leave in the header's utility line.
+  const notices = (showClaim || submitErr || receipt || stale) ? (
+    <div className="mb-3 grid gap-2">
       {showClaim && (
-        <div className="mx-auto mt-3 max-w-[980px] px-4">
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border px-3 py-2" style={{ borderColor: "color-mix(in srgb, var(--color-copper) 55%, transparent)", background: "color-mix(in srgb, var(--color-copper) 10%, var(--color-panel))" }}>
-            <span className="font-mono text-[0.56rem] font-bold uppercase tracking-[0.12em] text-copperdeep">Your return code</span>
-            <span className="wordmark text-lg tracking-[0.22em] text-copperdeep">{client.claim}</span>
-            <span className="min-w-0 flex-1 text-[0.78rem] leading-snug text-inksoft">Save this to pick your brewery back up on any device — enter it under “Returning player.”</span>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border px-3 py-2" style={{ borderColor: "color-mix(in srgb, var(--color-copper) 55%, transparent)", background: "color-mix(in srgb, var(--color-copper) 10%, var(--color-panel))" }}>
+          <span className="font-mono text-[0.56rem] font-bold uppercase tracking-[0.12em] text-copperdeep">Your return code</span>
+          <span className="wordmark text-lg tracking-[0.22em] text-copperdeep">{client.claim}</span>
+          <span className="min-w-0 flex-1 basis-[14rem] text-[0.78rem] leading-snug text-inksoft">Save this to pick your brewery back up on any device — enter it under “My games” on the start screen.</span>
+          <span className="flex gap-2">
             <button onClick={copyClaim} className="rounded-md border border-line2 bg-panel px-2.5 py-1 font-mono text-[0.6rem] uppercase tracking-wide text-inksoft transition-colors hover:text-copper">Copy</button>
             <button onClick={dismissClaim} className="rounded-md border border-copper px-2.5 py-1 font-mono text-[0.6rem] font-bold uppercase tracking-wide text-copperdeep transition-colors hover:bg-copper/10">Got it</button>
-          </div>
+          </span>
         </div>
       )}
-      {(submitErr || receipt || stale || (!showClaim && client.claim)) && (
-        <div className="mx-auto mt-3 max-w-[980px] px-4">
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-            {submitErr && (
-              <div role="alert" className="min-w-0 flex-1 rounded-lg border border-brick/50 bg-brick/10 px-3 py-2 text-sm text-ink">
-                <span className="font-semibold text-brick">Heads up.</span> {submitErr}
-              </div>
-            )}
-            {!submitErr && receipt && (
-              <div className="rounded-lg border border-hop/50 bg-hop/10 px-3 py-1.5 font-mono text-[0.62rem] font-bold uppercase tracking-wide text-ink">{receipt}</div>
-            )}
-            {stale && <div className="rounded-lg border border-gold bg-gold/10 px-3 py-1.5 text-[0.72rem] text-inksoft">Having trouble reaching the game server — showing the last view we got; retrying.</div>}
-            <span className="flex-1" />
-            {!showClaim && client.claim && (
-              <button onClick={() => setShowClaim(true)} title="Show your return code again" className="rounded-md border border-line2 bg-panel px-2.5 py-1 font-mono text-[0.58rem] uppercase tracking-wide text-inksoft transition-colors hover:text-copper">Return code</button>
-            )}
-          </div>
+      {submitErr && (
+        <div role="alert" className="rounded-lg border border-brick/50 bg-brick/10 px-3 py-2 text-sm text-ink">
+          <span className="font-semibold text-brick">Heads up.</span> {submitErr}
         </div>
       )}
+      {(receipt && !submitErr) || stale ? (
+        <div className="flex flex-wrap gap-2">
+          {!submitErr && receipt && (unsent
+            ? <div className="rounded-lg border border-gold bg-gold/10 px-3 py-1.5 font-mono text-[0.62rem] font-bold uppercase tracking-wide text-ink">Changed since you submitted — submit again to send it</div>
+            : <div className="rounded-lg border border-hop/50 bg-hop/10 px-3 py-1.5 font-mono text-[0.62rem] font-bold uppercase tracking-wide text-ink">{receipt}</div>)}
+          {stale && <div className="rounded-lg border border-gold bg-gold/10 px-3 py-1.5 text-[0.72rem] text-inksoft">Having trouble reaching the game server — showing the last view we got; retrying.</div>}
+        </div>
+      ) : null}
+    </div>
+  ) : null;
+  const utilities = !showClaim && client.claim
+    ? <button onClick={() => setShowClaim(true)} title="Show your return code again" className={UTIL_BTN}>Return code</button>
+    : null;
+
+  return (
+    <>
       <Play
+        notices={notices}
+        utilities={utilities}
+        calls={client} // DW-077: the calls channel (tickets in the commit panel + the settled column on the results page); inert unless the game has calls on
+        gameKey={`${client.gameId || client.claim || "mp"}:${client.firmId}`}
         key={view.own?.id ?? client.firmId} // DW-066: a move to another firm remounts the form (fresh draft for the new desk)
         view={view}
         busy={busy || !open}
         infoCost={client.infoCost()}
         onPlay={submit}
+        onUnsentChange={setUnsent}
         defaultDecision={defaultDecision}
         onReset={onExit}
         mp
@@ -269,6 +284,8 @@ export function MultiplayerPlay({ client, onExit }: { client: StudentClient; onE
         footerNote="Your classmates brew at the same time; the instructor resolves the round."
         onExit={onExit}
         standing={raw.standing ?? null}
+        gameId={client.gameId || client.token} // DW-077: keys the per-student takeover dismissals (token = a session saved before gameId was persisted)
+        deadlineAt={deadline}
       />
     </>
   );

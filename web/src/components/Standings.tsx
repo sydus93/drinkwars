@@ -37,7 +37,9 @@ export function Standings({ view, onSelect }: { view: GameView; onSelect?: (firm
   return (
     <Card>
       <Eyebrow>Standings — Sustained Scorecard</Eyebrow>
-      <div className="grid gap-1.5">
+      {/* grid-cols-1 = minmax(0,1fr): a long brewery name truncates instead of widening the row
+          past the card (it pushed the page to 404px on a phone and hid the scores on desktop). */}
+      <div className="grid grid-cols-1 gap-1.5">
         {view.standings.map((s, i) => {
           const clickable = !!onSelect;
           const Inner = (
@@ -54,7 +56,7 @@ export function Standings({ view, onSelect }: { view: GameView; onSelect?: (firm
                   <div className="h-full" style={{ width: `${((s.score - lo) / span) * 100}%`, background: s.isYou ? "var(--color-copper)" : "var(--color-inksoft)" }} />
                 </div>
               </div>
-              <span className="tnum w-14 text-right text-sm">{s.score.toFixed(3)}</span>
+              <span className="tnum w-14 flex-none text-right text-sm">{s.score.toFixed(3)}</span>
             </>
           );
           // DW-071: you have to survive to win — firms that have left the game rank below every
@@ -67,12 +69,12 @@ export function Standings({ view, onSelect }: { view: GameView; onSelect?: (firm
               key={s.firm_id}
               onClick={() => onSelect!(s.firm_id)}
               title="Open dossier"
-              className={`flex items-center gap-2 rounded-[2px] px-2 py-1 text-left transition-colors hover:bg-panel2 ${s.isYou ? "bg-panel2" : ""}`}
+              className={`flex min-w-0 items-center gap-2 rounded-[2px] px-2 py-1 text-left transition-colors hover:bg-panel2 ${s.isYou ? "bg-panel2" : ""}`}
             >
               {Inner}
             </button>
           ) : (
-            <div key={s.firm_id} className={`flex items-center gap-2 rounded-[2px] px-2 py-1 ${s.isYou ? "bg-panel2" : ""}`}>
+            <div key={s.firm_id} className={`flex min-w-0 items-center gap-2 rounded-[2px] px-2 py-1 ${s.isYou ? "bg-panel2" : ""}`}>
               {Inner}
             </div>
           )}</Fragment>;

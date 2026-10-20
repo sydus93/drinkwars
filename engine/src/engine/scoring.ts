@@ -49,6 +49,8 @@ export interface ScoreResult {
 }
 
 const EPS = 1e-6;
+/** Bound on |net income ÷ invested capital| — the same 10× finance.ts puts on leverage. */
+export const PROFITABILITY_CLAMP = 10;
 
 function normalizeWithin(values: number[], mode: Config["scoring"]["normalization"]): number[] {
   const n = values.length;
@@ -97,7 +99,22 @@ export function scoreRound(snaps: ScoreSnapshot[], c: Config, firmsById: Map<Fir
   if (snaps.length === 0) return out;
 
   // Raw sub-components.
-  const profitability = snaps.map((s) => s.net_income / Math.max(s.invested_capital, EPS));
+  // Clamped at ±10× (DW-072 #3), mirroring finance.ts's leverage clamp: once debt + equity ≤ 0 the
+  // raw ratio divides by EPS — a bankrupt firm 1 scored −1.33e11 (students read "−$80 billion")
+  // and its outlier flattened every rival's profitability z-score that round.
+  // A firm whose invested capital is ≤ 0 has burned through everything put into it: there is no
+  // capital base left to earn a return ON, so the ratio is meaningless, not large. It takes the
+  // clamp's floor whatever this round's income was — otherwise one positive quarter on a wiped-out
+  // balance sheet divides by EPS and scores +10×, the best profitability in the room.
+  const profitability = snaps.map((s) => s.invested_capital > 0
+    ? Math.max(-PROFITABILITY_CLAMP, Math.min(PROFITABILITY_CLAMP, s.net_income / Math.max(s.invested_capital, EPS)))
+    : -PROFITABILITY_CLAMP);
+  // Firms at the floor (wiped out, or a loss of 10× their capital in one quarter) are left OUT of
+  // the profitability comparison (decided 2026-10-04): even clamped, −10 is ~100× a normal quarterly
+  // return, and with one such firm in the room the survivors' z-scores bunched into a few
+  // hundredths — the pillar stopped telling them apart for that round. The mean and spread are
+  // taken over everyone else; a floored firm is pinned one unit below the lowest score among them.
+  const floored = profitability.map((p) => p <= -PROFITABILITY_CLAMP);
   const soundness = snaps.map((s) => Math.min(s.coverage / c.scoring.healthy_coverage, 1.5) - Math.max(0, s.leverage / c.scoring.healthy_leverage - 1));
   const cashResilience = snaps.map((s) => Math.min(s.cash / c.scoring.cash_safety_threshold, 3));
   const market = snaps.map((s) => s.shareSum);
@@ -122,7 +139,11 @@ export function scoreRound(snaps: ScoreSnapshot[], c: Config, firmsById: Map<Fir
 
   // Within-round normalization.
   const mode = c.scoring.normalization;
-  const nProfit = normalizeWithin(profitability, mode);
+  const inPlay = profitability.filter((_, i) => !floored[i]);
+  const nInPlay = normalizeWithin(inPlay, mode);
+  const profitFloor = nInPlay.length ? Math.min(...nInPlay) - 1 : 0; // one unit below the worst firm still in play
+  let k = 0;
+  const nProfit = profitability.map((_, i) => (floored[i] ? profitFloor : nInPlay[k++]));
   const nSound = normalizeWithin(soundness, mode);
   const nCash = normalizeWithin(cashResilience, mode);
   const nMarket = normalizeWithin(market, mode);

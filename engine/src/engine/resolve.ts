@@ -6,7 +6,7 @@
  * it clones the input world and never mutates it.
  */
 import type {
-  Config, CostBuildup, FirmDecision, FirmId, FirmRoundResult, RoundResult, SegmentId, SegmentResult, WorldState,
+  Config, CostBuildup, FirmDecision, FirmId, FirmRoundResult, OpexLineKey, RoundResult, SegmentId, SegmentResult, WorldState,
 } from "../types.js";
 import { advancePipeline, updateStock } from "./stocks.js";
 import { computeUnitCost } from "./cost.js";
@@ -21,9 +21,9 @@ import { resolveRnd, rndFirstMoverBonus } from "./rndrace.js";
 import { resolveAssets, verticalCostReduction, verticalRegRelief } from "./assets.js";
 import { resolveFacilities, facilityCapacity } from "./facilities.js";
 import { computeMarketConduct } from "./conduct.js";
-import { resolveEmployees } from "./employees.js";
+import { peopleSnapshot, resolveEmployees } from "./employees.js";
 import { resolveMa } from "./ma.js";
-import { buildStatements, equityCapacity, firmValuation } from "./finance.js";
+import { buildStatements, equityCapacity, firmValuation, nonZero, type PostCloseLedger } from "./finance.js";
 import { invCfg, computeInventory, type InventoryFlow } from "./inventory.js";
 import { resolveAgreementActions, computeAgreementEffects, resolveContingentClauses } from "./coopetition.js";
 import { resolveLobbying } from "./lobbying.js";
@@ -370,13 +370,38 @@ export function resolveRound(prevWorld: WorldState, decisionList: FirmDecision[]
       cogs = f.unit_cost * qSold; // legacy: cost of what sold, nothing carried
     }
 
+    // DW-070: the module costs that hit opex, kept apart for the itemized statement. Summed below in
+    // exactly the order the old one-line expression added them, so `extraOpex` is bit-identical.
+    const extraLines: [OpexLineKey, number][] = [
+      ["alliances", agRes.extraOpex.get(f.id) ?? 0],
+      ["market_research", d.buy_info ? c.information.cost : 0],
+      ["inventory_holding", holdingCost],
+      ["pr_events", prRes.costByFirm.get(f.id) ?? 0],
+      ["sustainability", sustRes.costByFirm.get(f.id) ?? 0],
+      ["public_goods", pgRes.costByFirm.get(f.id) ?? 0],
+      ["distribution", geoOpexByFirm.get(f.id) ?? 0],
+      ["rnd", rndRes.costByFirm.get(f.id) ?? 0],
+      ["key_hires", assetsRes.opexByFirm.get(f.id) ?? 0],
+      ["lobbying", loRes.costByFirm.get(f.id) ?? 0],
+      ["facilities", facRes.opexByFirm.get(f.id) ?? 0],
+      ["staff", empRes.opexByFirm.get(f.id) ?? 0],
+      ["conduct_fines", conduct.fineByFirm.get(f.id) ?? 0],
+    ];
+    const extraOpex = extraLines.reduce((a, [, v]) => a + v, 0);
+    const extraOpexLines: Partial<Record<OpexLineKey, number>> = {};
+    for (const [k, v] of extraLines) if (v) extraOpexLines[k] = (extraOpexLines[k] ?? 0) + v;
+    const capexTanks = d.invest_cap;
+    const capexVertical = assetsRes.capexByFirm.get(f.id) ?? 0;
+    const capexFacilities = facRes.capexByFirm.get(f.id) ?? 0;
+
     const fin = buildStatements({
       firm: f, revenue, cogs, spoilage, inventoryValueBegin: invValueBegin, inventoryValueEnd: invValueEnd,
       // Vertical purchases (MOD-B06) are capitalized through the capex channel:
       // cash swaps into PP&E without adding brewing capacity.
-      invest: { Q: d.invest_Q, B: d.invest_B, T_emp: d.invest_T_emp, T_inv: d.invest_T_inv, T_gov: d.invest_T_gov, process: d.invest_process, cap: d.invest_cap + (assetsRes.capexByFirm.get(f.id) ?? 0) + (facRes.capexByFirm.get(f.id) ?? 0) },
+      invest: { Q: d.invest_Q, B: d.invest_B, T_emp: d.invest_T_emp, T_inv: d.invest_T_inv, T_gov: d.invest_T_gov, process: d.invest_process, cap: capexTanks + capexVertical + capexFacilities },
       financing: { debt_draw: d.debt_draw, debt_repay: d.debt_repay, equity_raise: d.equity_raise, dividend: d.dividend },
-      extraOpex: (agRes.extraOpex.get(f.id) ?? 0) + (d.buy_info ? c.information.cost : 0) + holdingCost + (prRes.costByFirm.get(f.id) ?? 0) + (sustRes.costByFirm.get(f.id) ?? 0) + (pgRes.costByFirm.get(f.id) ?? 0) + (geoOpexByFirm.get(f.id) ?? 0) + (rndRes.costByFirm.get(f.id) ?? 0) + (assetsRes.opexByFirm.get(f.id) ?? 0) + (loRes.costByFirm.get(f.id) ?? 0) + (facRes.opexByFirm.get(f.id) ?? 0) + (empRes.opexByFirm.get(f.id) ?? 0) + (conduct.fineByFirm.get(f.id) ?? 0),
+      extraOpex, extraOpexLines,
+      capexLines: { tanks: capexTanks, facilities: capexFacilities, vertical_assets: capexVertical },
       cashHit: shock.perFirm.get(f.id)?.cash_hit ?? 0,
       spreadReduction: reputationSpread(f, c),
       regBurdenReduction: verticalRegRelief(f, c, round),
@@ -408,7 +433,11 @@ export function resolveRound(prevWorld: WorldState, decisionList: FirmDecision[]
 
   // Step 9.5: M&A (MOD-B07) — bids on distressed rivals settle after the books are
   // closed; an acquired firm is out before exits are processed.
-  events.push(...resolveMa(w, decisions, c));
+  // DW-076: cash that moves from here on happens AFTER the statements above were struck. Each move
+  // is ledgered and folded into cf_lines.post_close below, so a firm's closing cash + post_close =
+  // the cash it opens next round with (the totals themselves are untouched).
+  const postClose: PostCloseLedger = new Map();
+  events.push(...resolveMa(w, decisions, c, postClose));
 
   // Step 10: solvency / exit / investor elections.
   const coverageByFirm = new Map<FirmId, number>();
@@ -423,8 +452,9 @@ export function resolveRound(prevWorld: WorldState, decisionList: FirmDecision[]
     for (const [seg, r] of Object.entries(segs)) m.set(seg, r.share);
     sharesByFirm.set(id, m);
   }
-  const exitRes = processExits({ world: w, decisions, config: c, round, coverageByFirm, sharesByFirm, valuationByFirm });
+  const exitRes = processExits({ world: w, decisions, config: c, round, coverageByFirm, sharesByFirm, valuationByFirm, ledger: postClose });
   events.push(...exitRes.events);
+  for (const [id, lines] of postClose) { const cf = finByFirm.get(id)?.cash_flow.cf_lines; if (cf) cf.post_close = nonZero(lines); }
 
   // Step 11: distinctiveness on the round's strategy profile (participants).
   const vectors: StrategyVector[] = participants.map((id) => ({ firm_id: id, vector: buildStrategyVector(firmsById.get(id)!, decisions.get(id), activeSegmentIds, c) }));
@@ -478,7 +508,9 @@ export function resolveRound(prevWorld: WorldState, decisionList: FirmDecision[]
       cost_buildup: cb,
       effective_cap: effectiveCap(id),
       pnl: fin.pnl, balance_sheet: fin.balance_sheet, cash_flow: fin.cash_flow, cost_of_capital: fin.cost_of_capital,
-      state: { cash: f.cash, cap: f.cap, Q: f.Q, B: f.B, T_emp: f.T_emp, T_inv: f.T_inv, T_gov: f.T_gov, process: f.process, cum_output: f.cum_output, debt: f.debt, equity: fin.balance_sheet.equity, inventory_units: f.inventory_units, reputation: f.reputation ?? 0, water_efficiency: f.water_efficiency ?? 0, rnd_progress: f.rnd_progress ?? 0 },
+      state: { cash: f.cash, cap: f.cap, Q: f.Q, B: f.B, T_emp: f.T_emp, T_inv: f.T_inv, T_gov: f.T_gov, process: f.process, cum_output: f.cum_output, debt: f.debt, equity: fin.balance_sheet.equity, inventory_units: f.inventory_units, reputation: f.reputation ?? 0, water_efficiency: f.water_efficiency ?? 0, rnd_progress: f.rnd_progress ?? 0,
+        // DW-075: people position for debriefs; only when a people module is on (export shape parity otherwise)
+        ...(c.modules?.employees?.enabled || c.modules?.laborMarket?.enabled ? peopleSnapshot(f) : {}) },
       scorecard_raw: sc.raw, scorecard_norm: sc.norm, scorecard_cumulative: sc.cumulative,
       scored: sc.scored, scorecard_bridge: sc.bridge, penalty_multipliers: sc.penalties,
       distinctiveness: distinct.get(id) ?? null,

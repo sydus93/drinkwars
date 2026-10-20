@@ -7,6 +7,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { loadConfig } from "drinkwars-engine/node";
+import { initGame, resolveRound } from "drinkwars-engine";
 import type { Config, FirmDecision, SegmentId, WorldState } from "drinkwars-engine";
 import { GameOrchestrator, InMemoryAdapter, LifecycleError } from "../src/index.js";
 
@@ -231,4 +232,65 @@ test("DW-066: a resolve that dies half-way can be re-run — twice-written fill-
   await store.setGameLifecycle(gameId, "resolving", 1);
   await assert.rejects(() => orch.resolveRound(gameId), /not locked/);
   assert.equal((await orch.resolveRound(gameId, { force: true })).lifecycle, "published");
+});
+
+test("DW-072 #8: a game with instructor-fired shocks replays end to end (planted + removed + live trigger)", async () => {
+  const { config, store, orch, gameId, teamRecords } = await setup();
+  // Round 0: arm a live water trigger. Round 1: plant a harvest shock for round 2, and remove one
+  // engine-rolled shock if any is still pending.
+  await orch.setLiveTrigger(gameId, "water", true);
+  for (let r = 0; r < config.game.n_rounds; r++) {
+    if (r === 1) {
+      await orch.scheduleShock(gameId, { type_id: "harvest", round: 2, magnitude: 0.5, duration: 1 });
+      const pending = (await orch.getTimeline(gameId)).timeline.find((s) => !s.fired && !s.locked && s.round >= 1);
+      if (pending) await orch.unscheduleShock(gameId, pending.id);
+    }
+    await submitAll(orch, gameId, teamRecords, config);
+    await orch.lockRound(gameId);
+    await orch.resolveRound(gameId);
+    if (r < config.game.n_rounds - 1) await orch.advanceRound(gameId);
+  }
+  const rep = await orch.replay(gameId);
+  assert.deepEqual(rep.mismatches, [], "replay reproduces every round incl. the instructor-fired shocks");
+  assert.ok(rep.ok);
+  assert.ok(rep.interventions.some((i) => i.round === 0 && i.liveTriggers.includes("water")), "the live trigger is reported");
+  assert.ok(rep.interventions.some((i) => i.round === 1 && i.added.some((s) => s.type_id === "harvest")), "the planted shock is reported");
+
+  // And the test is meaningful: a config-only chain (the pre-DW-072 replay) diverges.
+  let world = initGame(config);
+  let diverged = false;
+  for (const rr of await store.getRoundResults(gameId)) {
+    const { world: next, result } = resolveRound(world, (await store.getDecisions(gameId, rr.round)).map((d) => d.decision), config);
+    for (const fr of result.firm_results) {
+      const s = rr.result.firm_results.find((x) => x.firm_id === fr.firm_id)!;
+      if (Math.abs(s.state.cash - fr.state.cash) > 1e-6) diverged = true;
+    }
+    world = next;
+  }
+  assert.ok(diverged, "without the overlay the shocks are lost and the replay diverges");
+});
+
+test("DW-072 #8: replay does NOT wave through a stored shock no instructor action could produce", async () => {
+  const { config, store, orch, gameId, teamRecords } = await setup();
+  for (let r = 0; r < config.game.n_rounds; r++) {
+    await submitAll(orch, gameId, teamRecords, config);
+    await orch.lockRound(gameId);
+    await orch.resolveRound(gameId);
+    if (r < config.game.n_rounds - 1) await orch.advanceRound(gameId);
+  }
+  assert.ok((await orch.replay(gameId)).ok, "clean game replays");
+  // Corrupt an engine-rolled shock IN PLACE in a stored round (what an engine bug in the
+  // schedule, or a damaged row, would look like). The overlay must not launder it into "ok".
+  let tampered = false;
+  for (let r = 0; r < config.game.n_rounds && !tampered; r++) {
+    // Reach past the adapter: resolved rounds are append-only through its API (as on Postgres).
+    for (const ws of (store as unknown as { worldStates: Map<string, { game_id: string; round: number; state: { shock_timeline?: { locked?: boolean; magnitude?: number }[] } }> }).worldStates.values()) {
+      const sh = ws.game_id === gameId && ws.round === r ? ws.state.shock_timeline?.find((s) => !s.locked) : undefined;
+      if (sh) { sh.magnitude = (sh.magnitude ?? 0) * 3 + 0.1; tampered = true; }
+    }
+  }
+  assert.ok(tampered, "fixture must roll at least one engine shock, or this test proves nothing");
+  const rep = await orch.replay(gameId);
+  assert.equal(rep.ok, false, "an in-place schedule change is a mismatch");
+  assert.ok(rep.mismatches.some((m) => /shock/.test(m)));
 });

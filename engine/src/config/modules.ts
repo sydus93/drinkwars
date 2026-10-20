@@ -151,6 +151,10 @@ export const defaultModules: ModulesConfig = {
     departure_prob: 0.07,
     t_emp_mitigation: 0.6,
     t_emp_halfsat: 20,
+    // DW-075: a head brewer's flat +5 Q grows +0.5/round to a +10 ceiling after 10 quarters;
+    // at Q≈40 depreciation alone drains 7.2/round, so even the doubled bonus is a modest,
+    // slow-earned edge — the point is that it WALKS OUT with them (removed in full).
+    tenure_bonus: { rate: 0.1, cap: 2.0 },
   },
   rndRace: { enabled: false, gain: 0.05, threshold: 60, first_mover_brand_bonus: 8, first_mover_duration: 3 }, // gain: sqrt conversion on $ (toy 1.0 ÷ √400); threshold stays in progress units
   teamRoles: { enabled: false, noise: { cfo: 0.08, cmo: 0.1, coo: 0.05, ceo: 0.15 } },
@@ -259,6 +263,29 @@ export const defaultModules: ModulesConfig = {
     // steady-state ceiling) — top talent still beats direct investment early, but a
     // full roster can no longer compound Q past ~2× the base-game ceiling.
     stock_halfsat: 35,
+    // DW-075 loyalty dividend — sized against the direct invest channel so it rewards
+    // retention without becoming the dominant Q/B engine:
+    //  · A skill-5 head brewer (gain 2.25, morale 0.9, $22k/qtr) at Q=40 adds
+    //    11.25 × 0.9 × 35/75 ≈ 4.7 Q/round — UNDER what $22k of direct invest buys
+    //    (0.0425 × √22k ≈ 6.3). At the cap (×1.8) that is ≈ 8.5/round ≈ a $40k/qtr budget,
+    //    so a fully loyal top hire out-earns their payroll ~2:1, never 10:1. Measured in a
+    //    staffed-up scenario game: two brewers' inflow 3.7 vs 3.1 Q/round at Q=45, against a
+    //    depreciation drain of 8.1 — the dividend cannot out-run the invest channels.
+    //  · Reaching the cap takes cap/(rate × morale) ≈ 12–13 engaged quarters, i.e. only a
+    //    round-1 hire kept happy for the whole 16-round game; midgame reads ≈ +50%. An
+    //    unhappy veteran (morale 0.3) accrues at a third of that pace and is still scaled
+    //    down by morale in the contribution itself.
+    //  · stock_halfsat + depreciation bound the stock, not just the flow (two fully loyal
+    //    brewers hold Q ≈ 45 in steady state vs ≈ 30 unloyal — vs ≈ 75 for a $100k/qtr budget).
+    //  · Tuned DOWN from the first cut (0.1 / 1.0): on the all-adaptive balance sweep (agents
+    //    hire 2–3 people and never lose them, so the dividend lands as a near-universal
+    //    uplift on the firms rich enough to staff) final output HHI went 0.368 → 0.405,
+    //    tripping the §16.1 FAIL line at 0.40; 0.08 / 0.8 holds it at 0.396 (WARN, as before)
+    //    with bankruptcies back at 3.5/8 vs 3.4. The response is non-monotone in cap at 24
+    //    seeds, so this is a gate-status choice, not a fine optimum.
+    //  · poach_shield 0.5 halves the anonymous poach roll at the cap (2%→1%/round at morale
+    //    0.6): a nudge, not immunity — an unhappy veteran is still a target.
+    loyalty: { rate: 0.08, cap: 0.8, poach_shield: 0.5 },
   },
   // MOD-A10 — market conduct & stakeholder backlash. OFF by default (all-off parity). Noticeable
   // when on: a firm holding >40% share at a markup over 2.2× cost is fined + loses brand, worse

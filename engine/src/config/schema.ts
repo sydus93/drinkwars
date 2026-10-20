@@ -251,6 +251,16 @@ export function validateConfig(c: Config): Config {
         nonneg(r.salary, `modules.laborMarket.roles[${i}].salary`);
         nonneg(r.signing_bonus, `modules.laborMarket.roles[${i}].signing_bonus`);
       }
+      if (lab.tenure_bonus != null) { // DW-075 (optional block; absent ⇒ off)
+        nonneg(lab.tenure_bonus.rate, "modules.laborMarket.tenure_bonus.rate");
+        req(isNum(lab.tenure_bonus.cap) && lab.tenure_bonus.cap >= 1, "modules.laborMarket.tenure_bonus.cap must be ≥ 1");
+      }
+    }
+    const emp = mods.employees;
+    if (emp?.loyalty != null) { // DW-075 (optional block; absent ⇒ off)
+      nonneg(emp.loyalty.rate, "modules.employees.loyalty.rate");
+      pos(emp.loyalty.cap, "modules.employees.loyalty.cap");
+      rate(emp.loyalty.poach_shield, "modules.employees.loyalty.poach_shield");
     }
     const fi = mods.financialInstruments;
     if (fi) {
