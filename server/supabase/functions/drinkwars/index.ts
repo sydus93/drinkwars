@@ -276,7 +276,7 @@ Deno.serve(async (req: Request) => {
       const game = await store.getGame(s.gameId);
       // Team firms: a submit is this SEAT's slice, merged server-side. Solo: full decision.
       const forRound = typeof body.round === "number" ? body.round : undefined; // DW-080: the form's own round
-      if (game?.firm_mode === "team") await orch.submitMemberDecision(s.gameId, s.teamId, s.userId, body.decision, s.role, body.touched, forRound);
+      if (game?.firm_mode === "team") await orch.submitMemberDecision(s.gameId, s.teamId, s.userId, body.decision, s.role, body.touched, forRound, body.touched_at); // DW-082: per-lever change dates
       else await orch.submitDecision(s.gameId, s.teamId, body.decision, s.userId, forRound);
       return json(200, { ok: true });
     }

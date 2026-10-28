@@ -86,6 +86,13 @@ ok(await seatOf(cfo) === "cfo" && await has(cfo, /SEDIMENT & SONS/i), "CFO lands
 const cfoStyle = await cfo.evaluate(async (api) => { const v = await (await fetch(`${api}/view?token=${JSON.parse(localStorage.getItem("dw_mp")).token}`)).json(); return v.styles?.[v.own?.id] ?? null; }, API);
 const cfoChip = await cfo.evaluate(() => { const el = [...document.querySelectorAll("span")].find((s) => /#7c4f86|rgb\(124, 79, 134\)/i.test(s.getAttribute("style") ?? "")); return el ? { bg: el.style.background, svg: !!el.querySelector("svg") } : null; });
 ok(cfoStyle?.color === "#7c4f86" && !!cfoStyle?.emblem && !!cfoChip?.svg, "CFO sees the CEO's house colour (Plum) + mark on the HUD chip", JSON.stringify({ cfoStyle, cfoChip }));
+// ── DW-082c (audit #10): the CEO on a second device goes straight to the chair — the founding step re-styled the firm ──
+const ceo2 = await mk("ceo-2nd"); await clickText(ceo2, "Join a game"); await ceo2.type('input[placeholder="6 characters"]', code); await ceo2.type('input[placeholder="optional"]', claimOf("ceo01")); await clickText(ceo2, "Continue");
+await waitText(ceo2, /round open|submitted|name your brewery/);
+const refounding = await has(ceo2, /Open the brewery/);
+const style2 = refounding ? null : await ceo2.evaluate(async (api) => { const v = await (await fetch(`${api}/view?token=${JSON.parse(localStorage.getItem("dw_mp")).token}`)).json(); return v.styles?.[v.own?.id] ?? null; }, API);
+ok(!refounding && await seatOf(ceo2) === "ceo" && await has(ceo2, /SEDIMENT & SONS/i) && style2?.color === "#7c4f86" && style2?.emblem === cfoStyle?.emblem, "CEO on a second device: straight to the chair; the firm keeps its name, colour + mark", refounding ? "founding step shown again" : JSON.stringify(style2));
+await ceo2.browserContext().close();
 // ── DW-051: fresh round, nobody submitted — a specialist's form mirrors the STANDING plan (no phantom "$0" edits) ──
 ok(!(await has(cfo, /Not your desk/)), "fresh round: CFO form mirrors the standing plan — no off-desk notice");
 // ── DW-051: "?" cards render above the commit dial (portalled, fixed) ──
@@ -134,7 +141,8 @@ logs.push(`[cfo] number inputs: ${JSON.stringify(priceInputs.slice(0, 8))}`);
 const handles = await cfo.$$("input[type=number]");
 await handles[pi.idx].click({ clickCount: 3 }); await handles[pi.idx].type("9.99");
 await sleep(400);
-ok(await has(cfo, /Prices\s*\n\s*Not your desk — the CMO chair is empty, so yours is used and the CEO will see it/), "CFO editing a price sees 'Not your desk' (empty CMO chair → a cover the CEO will see) as a panel row", (await text(cfo)).match(/Prices\s*\n[^\n]*\n[^\n]*/)?.[0]?.slice(0, 200));
+// DW-082: an edit the CFO hasn't sent yet says so ("once you submit") — it becomes the latest change only then
+ok(await has(cfo, /Prices\s*\n\s*Not your desk — the CMO chair is empty, so yours is used( once you submit)? and the CEO will see it/), "CFO editing a price sees 'Not your desk' (empty CMO chair → a cover the CEO will see) as a panel row", (await text(cfo)).match(/Prices\s*\n[^\n]*\n[^\n]*/)?.[0]?.slice(0, 200));
 // CFO submits → confirm dialog lists it → accepted → CEO still shows firm price
 await clickText(cfo, "my desk");
 await sleep(3000);

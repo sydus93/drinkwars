@@ -243,7 +243,7 @@ test("DW-050: seat plan seats provisioned students; join by claim lands in the c
   const anaU = await store.getUserByClaim(prov.find((p) => p.external_id === "ana01")!.claim_code);
   await orch.joinGame(code, "", anaU!.id, { teamName: "Sediment & Sons" }); // the pre-seated CEO names it on arrival
   assert.equal((await store.getTeam(hop.id))!.name, "Sediment & Sons");
-  assert.deepEqual(await orch.seatOf(gameId, u!.id), { teamId: hop.id, team: "Sediment & Sons", role: "cfo" });
+  assert.deepEqual(await orch.seatOf(gameId, u!.id), { teamId: hop.id, team: "Sediment & Sons", role: "cfo", founded: false }); // named, no style picked
 
   // Re-applying is a no-op; re-planning Ben to Barrel & Vine moves him.
   // Re-pasting the ORIGINAL plan after the CEO renamed the firm resolves by membership — nobody moves.

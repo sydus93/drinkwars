@@ -351,14 +351,14 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     return send(res, 200, await orch.pulse(s.gameId, s.teamId));
   }
   if (method === "POST" && path === "/submit") {
-    const { token, decision, touched, round } = await readJson(req);
+    const { token, decision, touched, touched_at, round } = await readJson(req);
     const s = sessions.get(token);
     if (!s) return send(res, 401, { error: "invalid or expired token" });
     try {
       const game = await store.getGame(s.gameId);
       // Team firms: a submit is this SEAT's slice, merged server-side. Solo: the full decision.
       const forRound = typeof round === "number" ? round : undefined; // DW-080: the form's own round
-      if (game?.firm_mode === "team") await orch.submitMemberDecision(s.gameId, s.teamId, s.userId, decision as Partial<FirmDecision>, s.role, touched, forRound);
+      if (game?.firm_mode === "team") await orch.submitMemberDecision(s.gameId, s.teamId, s.userId, decision as Partial<FirmDecision>, s.role, touched, forRound, touched_at); // DW-082: per-lever change dates
       else await orch.submitDecision(s.gameId, s.teamId, decision as FirmDecision, s.userId, forRound);
     } catch (e) {
       return send(res, 400, { error: msg(e) });

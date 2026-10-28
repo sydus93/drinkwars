@@ -58,16 +58,17 @@ export function Join({ onJoined, onBack }: { onJoined: (c: StudentClient) => voi
       const p = await peekGame(code.trim().toUpperCase(), claim.trim() || undefined);
       setPeek(p);
       // DW-050: pre-seated (or returning) claim holder — the chair is already theirs; no picker.
-      // A pre-seated CEO still founds the firm ONCE per device: name + house colour/mark.
+      // A pre-seated CEO still founds the firm ONCE: name + house colour/mark. Once per FIRM (DW-082c):
+      // the server says whether it's founded — on a new device the step re-styled the firm.
       if (p.yourSeat) {
         setName((n) => n || p.yourName || "");
-        let founded = false;
-        try { founded = localStorage.getItem(`dw_founded:${p.yourSeat.teamId}`) === "1"; } catch { /* ignore */ }
+        let founded = !!p.yourSeat.founded;
+        try { founded = founded || localStorage.getItem(`dw_founded:${p.yourSeat.teamId}`) === "1"; } catch { /* ignore */ }
         if (p.yourSeat.role === "ceo" && p.firmMode === "team" && !founded) {
           setPreSeat(p.yourSeat); setFirmName(p.yourSeat.team); setRole("ceo"); setTeamId(p.yourSeat.teamId); setStep("found");
           return;
         }
-        await join();
+        await join(true);
         return;
       }
       // Solo firms have no seats. Team founders take the CEO's chair unless they pick
@@ -82,13 +83,13 @@ export function Join({ onJoined, onBack }: { onJoined: (c: StudentClient) => voi
     }
   };
 
-  const join = async () => {
+  const join = async (seated = false) => {
     setBusy(true);
     setErr(null);
     try {
-      // Taking a seat at a founded firm: no cosmetics to set — the firm reads in its
-      // board color on this device too, instead of a second founder's picks.
-      const founding = !!preSeat || !(peek?.firmMode === "team" && (teamId ? (peek?.teams?.find((t) => t.teamId === teamId)?.members ?? 0) > 0 : !(peek?.teams ?? []).some((t) => t.members === 0)));
+      // Taking a seat at a founded firm (or back to your own — `seated`): no cosmetics to set — the
+      // firm reads in its board color on this device too, instead of a second founder's picks.
+      const founding = !seated && (!!preSeat || !(peek?.firmMode === "team" && (teamId ? (peek?.teams?.find((t) => t.teamId === teamId)?.members ?? 0) > 0 : !(peek?.teams ?? []).some((t) => t.members === 0))));
       if (founding) { setPlayerColor(color); setPlayerEmblem(emblem); }
       const c = new StudentClient();
       await c.join(code.trim().toUpperCase(), name.trim(), {
@@ -253,7 +254,7 @@ export function Join({ onJoined, onBack }: { onJoined: (c: StudentClient) => voi
           </div></>}
           {err && <div className="text-sm text-brick">{err}</div>}
           <div className="flex gap-2">
-            <Button variant="go" onClick={join} disabled={!canJoin}>{busy ? "Joining…" : preSeat ? "Open the brewery →" : joiningFounded ? "Take your seat →" : "Join the game →"}</Button>
+            <Button variant="go" onClick={() => join()} disabled={!canJoin}>{busy ? "Joining…" : preSeat ? "Open the brewery →" : joiningFounded ? "Take your seat →" : "Join the game →"}</Button>
             <Button variant="ghost" onClick={() => { setStep("enter"); setErr(null); }}>← Different code</Button>
           </div>
         </div>

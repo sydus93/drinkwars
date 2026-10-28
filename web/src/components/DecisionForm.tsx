@@ -4,7 +4,7 @@ import { DESK_LEVERS, ROLE_DESK, equityCapacity, equityIssueCost } from "drinkwa
 import type { GameView } from "../game/controller.js";
 import { keepUntouchedMarkets, mergeDecision, type CityActions } from "../game/cityActions.js";
 import { SEG_LABEL, SEG_TAG, STOCK_LABEL, fmt, toDisplayMoney, toEngineMoney, marketName } from "../labels.js";
-import { holdLever, leverText, planDiffs, researchBuyer, teamOutcome, type PlanDiff } from "../lib/reconcile.js";
+import { holdLever, leverText, planDiffs, researchBuyer, teamOutcome, unholdLever, type PlanDiff } from "../lib/reconcile.js";
 import { Button, Card, Eyebrow, Row, Tag } from "./ui.js";
 import { AllocationBar } from "./AllocationBar.js";
 import { CategoryCoin } from "./CategoryIcons.js";
@@ -144,7 +144,11 @@ export function DecisionForm({
   // The decision as it will actually be submitted — draft folded with City View actions + raids.
   // Projected-cash spend is computed from THIS, so market entry / siting done on the City View
   // tab is reflected in the Decide tab's forecast (not just merged silently at submit).
-  const merged = mergeDecision(view, d, cityActions, externalPoaches);
+  // DW-082: a seat off the people desk mirrors the firm's raids — overlaying its empty local list read as
+  // "Your form: none" (a phantom Poach offers row on the CFO / CMO / COO). Play overlays raids only when
+  // the list is non-empty; the panel does the same.
+  const offPeople = !!(seatRole && view.teamPlan) && !["all", "people"].includes(ROLE_DESK[seatRole ?? ""] ?? "all");
+  const merged = mergeDecision(view, d, cityActions, offPeople && !externalPoaches?.length ? undefined : externalPoaches);
   const effective = seatRole && view.teamPlan ? keepUntouchedMarkets(view, merged, d, cityActions) : merged;
   // DW-073: the projection prices the MERGE OUTCOME — the engine's own team merge with this form
   // submitted now (DW-052 overlaid teammates' desks unconditionally, which was wrong once an
@@ -168,11 +172,25 @@ export function DecisionForm({
   ); };
   // "Take the CEO's numbers": the CEO's entry into this form for every differing lever on my desk.
   const takeCeo = () => { const patch: Partial<FirmDecision> = {}; for (const r of diffs.rows) if (r.ceoValue !== undefined) (patch as Record<string, unknown>)[String(r.field)] = r.ceoValue; set(patch); };
-  // "Keep mine": hold every differing own-desk lever at this form's value — a promise until the next submit.
-  // …and, for the CEO, every teammate's cover for an empty chair (DW-080: an unchanged resubmit no longer overrules one).
+  // A hold must carry a value: a lever the form lacks (the CMO's "markets served" before the firm's
+  // first entry) gets an explicit "none", or the hold held nothing and the CEO's entry stood (DW-082).
+  const emptyLike = (v: unknown): unknown => Array.isArray(v) ? [] : v !== null && typeof v === "object" ? {} : typeof v === "number" ? 0 : typeof v === "boolean" ? false : null;
+  const holdRows = (rs: PlanDiff[]) => {
+    const patch: Record<string, unknown> = {};
+    for (const r of rs) { const f = String(r.field); if (r.restore !== undefined) patch[f] = r.restore; else if ((d as unknown as Record<string, unknown>)[f] === undefined) patch[f] = emptyLike(r.locks); holdLever(view.round, f); }
+    if (Object.keys(patch).length) set(patch as Partial<FirmDecision>);
+    onEdited?.(); bump((n) => n + 1);
+  };
+  // "Keep mine" (a specialist's own desk): hold every differing own-desk lever at this form's value.
   const isCeoSeat = (ROLE_DESK[seatRole ?? ""] ?? "all") === "all";
-  const keepMine = () => { for (const r of diffs.rows) if (r.ownDesk || (isCeoSeat && r.cover && r.winner === "them")) holdLever(view.round, String(r.field)); onEdited?.(); bump((n) => n + 1); };
-  const canAct = team && diffs.rows.some((r) => (r.ownDesk && (r.ceoValue !== undefined || r.winner === "them")) || (isCeoSeat && r.cover && r.winner === "them"));
+  const keepMine = () => holdRows(diffs.rows.filter((r) => r.ownDesk));
+  const canAct = team && !isCeoSeat && diffs.rows.some((r) => r.ownDesk && (r.ceoValue !== undefined || r.winner === "them"));
+  // DW-082: one row's own button (a teammate's word on a desk that isn't theirs). Keep mine / Cancel it
+  // hold that lever — a change made now, so it outranks the earlier word and the row flips to "once you
+  // submit"; Undo takes back a hold not yet sent. (One panel-wide Keep mine held every row at once and,
+  // judged as last submitted, flipped none of them — the 10-20 playtest found it looked dead.)
+  const rowAction = (r: PlanDiff) => { if (r.action === "undo") { unholdLever(view.round, String(r.field)); bump((n) => n + 1); } else holdRows([r]); };
+  const actionLabel = (a: PlanDiff["action"]) => (a === "cancel" ? "Cancel it" : a === "undo" ? "Undo" : a === "take" ? "Use theirs" : "Keep mine");
   const roundNo = Math.min(view.round + 1, view.nRounds);
   const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
   // The submit label: counts the levers that still follow a teammate after this submit, then the calls.
@@ -412,7 +430,9 @@ export function DecisionForm({
   const overcommit = projectedCash < 0;
 
   const equity = view.own.paid_in_capital + view.own.retained_earnings;
-  const leverage = view.own.debt / Math.max(equity, 1e-6);
+  // DW-082: with book equity at or below zero the ratio means nothing (it read ~10¹²×); the engine clamps at 10×
+  const leverage = Math.min(10, view.own.debt / Math.max(equity, 1e-6));
+  const levText = equity <= 0 ? "n/m (equity ≤ 0)" : `${leverage.toFixed(2)}×`;
   const lastCov = view.ownResult?.cost_of_capital.coverage ?? null;
   const lastRate = view.ownResult?.cost_of_capital.r_debt ?? null;
 
@@ -589,9 +609,9 @@ export function DecisionForm({
             <span>debt {fmt.money(view.own.debt)}</span>
             <span>equity {fmt.money(equity)}</span>
             <span className={leverage > (view.scoring?.healthy_leverage ?? 1.5) ? "text-brick" : ""}>
-              debt-to-equity {leverage.toFixed(2)}×
+              debt-to-equity {levText}
               <InfoDot title="Debt-to-equity (leverage)">
-                Total debt ÷ book equity, where equity is the capital paid in plus the profit you have kept (retained earnings). At {leverage.toFixed(2)}× you owe {fmt.money(view.own.debt)} against {fmt.money(equity)} of equity.
+                Total debt ÷ book equity, where equity is the capital paid in plus the profit you have kept (retained earnings). {equity <= 0 ? <>Your equity is {fmt.money(equity)}, so the ratio has no meaning: losses have used up the owners' stake and the firm runs on what it owes.</> : <>At {leverage.toFixed(2)}× you owe {fmt.money(view.own.debt)} against {fmt.money(equity)} of equity.</>}
                 {view.finance && <> Lenders start charging more once you pass <b>{view.finance.leverage_ref.toFixed(1)}×</b>, and will not lend at all beyond <b>{view.finance.max_leverage.toFixed(1)}×</b>.</>}
                 {" "}Above <b>{(view.scoring?.healthy_leverage ?? 1.5).toFixed(1)}×</b> the figure turns red: your scorecard reads the balance sheet as stretched. Raising equity or repaying debt lowers it; a loss lowers equity and so raises it even if you borrow nothing.
               </InfoDot>
@@ -1301,6 +1321,7 @@ export function DecisionForm({
                       <div className="leading-snug"><b>{r.label}</b><span className="block text-[0.74rem]" style={{ color: "#bda079" }}>{r.who}</span></div>
                       <div className="flex min-w-0 items-baseline gap-2"><span className={tag} style={{ color: "#bda079" }}>Locks</span><span className="tnum min-w-0 font-bold" style={{ color: mineWins ? "#9fce63" : "#e59178" }}>{T(r.field, r.locks)}</span></div>
                       {!mineWins && <div className="flex min-w-0 items-baseline gap-2"><span className={tag} style={{ color: "#bda079" }}>{r.changed ? "You typed" : "Your form"}</span><span className="tnum min-w-0" style={{ color: "#bda079", textDecoration: sameVal ? "none" : "line-through" }}>{T(r.field, r.mine)}</span></div>}
+                      {r.action && <button type="button" data-dw-action={r.action} onClick={() => rowAction(r)} className="justify-self-start rounded-[8px] px-2.5 py-1 font-mono text-[0.6rem] font-bold uppercase tracking-wide" style={{ border: `${r.action === "undo" ? 1 : 2}px solid ${r.action === "undo" ? "rgba(255,240,205,.35)" : "#f2e4c4"}`, color: r.action === "undo" ? "#bda079" : "#f2e4c4" }}>{actionLabel(r.action)}</button>}
                     </div>
                   );
                 })}
@@ -1313,7 +1334,7 @@ export function DecisionForm({
               )}
               <div className="text-[0.74rem] leading-snug" style={{ color: "#bda079" }}>
                 {(ROLE_DESK[seatRole ?? ""] ?? "all") === "all"
-                  ? "These levers sit on a seated teammate's desk, so their number is used where they changed it; where they left a lever at last round's value, yours runs. An empty chair carries last round's plan unless someone covers it — the latest change wins. Resubmitting without changing a lever leaves a teammate's cover in place; Keep mine holds yours."
+                  ? "These levers sit on a seated teammate's desk, so their number is used where they changed it; where they left a lever at last round's value, yours runs. An empty chair carries last round's plan unless someone covers it. A teammate's cover stands until you change that lever — then, as CEO, yours is final for the round: Keep mine (or Cancel it, for a build or hire) overrules a cover, and Use theirs takes their number."
                   : `A lever you leave at last round's value follows the CEO. Change it yourself (or Keep mine) to override.${canAct ? " A hold is a promise until you submit." : ""}`}
               </div>
             </div>
@@ -1344,6 +1365,7 @@ export function DecisionForm({
               <div key={String(r.field)} className="grid min-w-0 gap-0.5 border-t border-line pt-1 text-[0.82rem]">
                 <span className="min-w-0 truncate"><b className="text-ink">{r.label}</b> <span className="text-inksoft">· {r.winner === "me" ? "yours" : r.whoShort}</span></span>
                 <span className="min-w-0 leading-snug"><b className={`tnum ${r.winner === "me" ? "text-hop" : "text-brick"}`}>{T(r.field, r.locks)}</b> {r.winner === "them" && <span className="tnum text-inksoft line-through">{T(r.field, r.mine)}</span>}</span>
+                {r.action && <button type="button" data-dw-action={r.action} onClick={() => rowAction(r)} className="justify-self-start rounded-md border border-line2 px-2 py-0.5 font-mono text-[0.6rem] font-bold uppercase tracking-wide text-ink">{actionLabel(r.action)}</button>}
               </div>
             ))}
             {diffs.rows.length > 2 && <button type="button" onClick={() => setSheetAll((v) => !v)} className="text-left font-mono text-[0.62rem] font-semibold text-inksoft">{sheetAll ? "show less" : `+${diffs.rows.length - 2} more · see all`}</button>}

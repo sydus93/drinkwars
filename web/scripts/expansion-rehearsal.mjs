@@ -21,6 +21,8 @@
 //          (h) DW-073 on `market_presence`: CMO untouched + CEO changed → the CEO's wins (ALPHA);
 //   BRAVO      CMO changed → the CMO's wins, even after the CEO entered a different market first;
 //          (j) the Trade tab says when exports open (export_unlock_round passed through the tuning-override path);
+//          (k) DW-082d: a build the CEO cancelled for an empty desk reads "not in the team plan" on the CMO's map,
+//              and the CMO can withdraw it there;
 //          (i) no pageerror / console error on any page, all game long.
 // Assertions are about OUTCOMES (what the composed plan holds, what resolved, what the screen says).
 // Prints PASS/FAIL per check; exits 1 on any FAIL. NOTE: a hidden tab does not poll — every read brings
@@ -295,6 +297,33 @@ const cityB = await enterMarketUI(P.b_cmo, 0); // the first not-yet-entered row 
 const dlgB = await submit(P.b_cmo, "b_cmo", B.cmo.token);
 c = await composed(B.ceo);
 ok(keysOn(c.market_presence).includes(firstB) && !keysOn(c.market_presence).includes(otherB), "(h) DW-073: CMO CHANGED markets after the CEO did → the CMO's set wins (CEO's other market is not in the plan)", `${cityB} → ${J(keysOn(c.market_presence))} · CEO had ${otherB} · confirm: ${dlgB.join(" | ").slice(0, 120) || "none"}`);
+// (k) DW-082d: BRAVO's COO chair is empty. The CMO sites a facility for it and submits; the CEO cancels it (a
+// deliberate "none"). On an empty desk the CEO has the final say — so the CMO's map must stop drawing the build
+// as breaking ground: mark it, say whose call it was, and let the CMO withdraw it (which frees the parcel).
+const siteB = await siteFacilityUI(P.b_cmo); // the tab remounts on its home city
+await submit(P.b_cmo, "b_cmo", B.cmo.token);
+const builtB = (await composed(B.ceo)).build_facilities ?? [];
+const vBk = await view(B.ceo.token);
+const cancelB = { ...vBk.standing, hire_roles: [], hire_employees: [], hire_bids: {}, raise_employees: {}, fire_employees: [], poach_employees: [], build_facilities: [], debt_draw: 0, debt_repay: 0, equity_raise: 0, dividend: 0, buy_info: false };
+const rk = await fetch(`${API}/submit`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token: B.ceo.token, decision: cancelB, touched: ["build_facilities"] }) });
+if (!rk.ok) throw new Error(`api cancel ceo@firm_2: ${rk.status} ${await rk.text()}`);
+const afterCancel = (await composed(B.ceo)).build_facilities ?? [];
+await front(P.b_cmo); await sleep(4500);
+await goTab(P.b_cmo, "City");
+const lostSel = '[data-dw="fac-marker"][title*="not in the team plan"]';
+const nLost = await P.b_cmo.evaluate((sel) => document.querySelectorAll(sel).length, lostSel);
+ok(builtB.length === 1 && afterCancel.length === 0 && nLost === 1, "(k) DW-082d: the CEO cancels the CMO's build for the empty COO desk → the CMO's map marks it \"not in the team plan\"", `${siteB}: plan ${builtB.length} → ${afterCancel.length} · marked ${nLost}`);
+if (nLost === 1) {
+  await P.b_cmo.$eval(lostSel, (b) => b.click()); await sleep(400);
+  const says = await has(P.b_cmo, /cancelled it\. On an empty desk the CEO has the final say/);
+  const wd = await P.b_cmo.evaluateHandle(() => [...document.querySelectorAll("button")].find((b) => b.textContent.trim() === "Withdraw my proposal") ?? null);
+  if (await wd.evaluate((x) => !!x)) { await wd.evaluate((x) => x.click()); await sleep(400); }
+  const left = await P.b_cmo.evaluate(() => document.querySelectorAll('[data-dw="fac-marker"][title*="not in the team plan"], [data-dw="fac-marker"][title*="breaking ground"]').length);
+  ok(says && left === 0, "(k) its popover names the CEO's final say, and Withdraw takes it off the CMO's map (the parcel is free again)", `explains ${says} · queued markers left ${left}`);
+  await submit(P.b_cmo, "b_cmo", B.cmo.token);
+  const mineB = (await view(B.cmo.token)).teamPlan?.seats?.find((x) => x.me)?.partial?.build_facilities ?? [];
+  ok(mineB.length === 0 && ((await composed(B.ceo)).build_facilities ?? []).length === 0, "(k) the CMO's next submit no longer proposes it; the plan stays without it", `slice ${mineB.length} · plan ${((await composed(B.ceo)).build_facilities ?? []).length}`);
+}
 // (c) ALPHA's CHRO: a raise for the hire, and a poach from BRAVO's dossier (research is live once the CMO's buy composed)
 await front(P.a_chro);
 for (let i = 0; i < 20 && !(await view(A.chro.token)).infoActive; i++) await sleep(1000);

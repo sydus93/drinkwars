@@ -73,13 +73,24 @@ export function wouldSubmit(view: GameView, seatRole: string, form: FirmDecision
 }
 
 // ── DW-074: which levers this seat has changed ──────────────────────────────
-// "Keep mine" on a lever the player left at last round's value: an explicit hold, so a chair can
-// stand on the existing number against the CEO's change without retyping it. Per browser until
-// submitted; the server then keeps it for the round (touched is sticky there).
+// "Keep mine" / "Cancel it": an explicit hold, so a chair can stand on its own number (or on "none")
+// without retyping it. DW-082: a hold is a change made NOW — the next submit dates the lever then, so
+// it outranks a teammate's earlier cover (seats.ts touched_at). Per browser: `held` = pressed since
+// this seat's last submit; `sentHolds` = holds a landed submit carried (the server keeps them as
+// touched for the round, dated that submit).
 const held = new Map<number, Set<string>>();
-export const isHeld = (round: number, f: string) => held.get(round)?.has(f) ?? false;
-export const resetHolds = () => held.clear(); // a new game session in the same tab starts clean
-export const holdLever = (round: number, f: string) => { (held.get(round) ?? held.set(round, new Set()).get(round)!).add(f); };
+const sentHolds = new Map<number, Set<string>>();
+const holdSet = (m: Map<number, Set<string>>, r: number) => m.get(r) ?? m.set(r, new Set()).get(r)!;
+/** Held this round, sent or not. */
+export const isHeld = (round: number, f: string) => (held.get(round)?.has(f) || sentHolds.get(round)?.has(f)) ?? false;
+/** Held since this seat's last submit — the next submit carries it as a change made now. */
+export const isFreshHold = (round: number, f: string) => held.get(round)?.has(f) ?? false;
+export const resetHolds = () => { held.clear(); sentHolds.clear(); }; // a new game session in the same tab starts clean
+export const holdLever = (round: number, f: string) => { holdSet(held, round).add(f); };
+/** Take back a hold before it is sent ("Undo"). */
+export const unholdLever = (round: number, f: string) => { held.get(round)?.delete(f); };
+/** A submit landed: its holds are on the server now (touched, dated that submit). */
+export const holdsSent = (round: number) => { const h = held.get(round); if (!h?.size) return; const s = holdSet(sentHolds, round); for (const f of h) s.add(f); h.clear(); };
 /** The levers this slice CHANGED — differs from the firm's standing plan, or explicitly held.
  *  Sent with every submit; the merge trusts it over the values. Undefined without a standing
  *  plan to compare against (the server then infers it, exactly as for an older client). */
@@ -87,9 +98,31 @@ export function touchedLevers(slice: Partial<FirmDecision>, standing: FirmDecisi
   if (!standing) return undefined;
   const src = slice as unknown as Record<string, unknown>;
   const base = standing as unknown as Record<string, unknown>;
-  const out = new Set<string>(held.get(round) ?? []);
+  const out = new Set<string>([...(held.get(round) ?? []), ...(sentHolds.get(round) ?? [])]);
   for (const k of Object.keys(src)) if (k !== "firm_id" && !same(src[k], base[k])) out.add(k);
   return [...out];
+}
+/** DW-082: the touched levers this seat's NEXT submit changes — a value unlike the one its last
+ *  submit sent (or a lever it hadn't touched yet), or a hold made since. The submit dates them now;
+ *  every other touched lever keeps the date of the submit that last changed it. */
+export function freshLevers(view: GameView, slice: Partial<FirmDecision>, touched: readonly string[]): Set<string> {
+  const me = view.teamPlan?.seats.find((s) => s.me);
+  const stored = (me?.submitted ? me.partial : null) as Record<string, unknown> | null;
+  const kept = new Set(me?.touched ?? []);
+  const src = slice as unknown as Record<string, unknown>;
+  const out = new Set<string>();
+  for (const f of touched) if (!stored || !kept.has(f) || !(f in stored) || !same(src[f], stored[f]) || isFreshHold(view.round, f)) out.add(f);
+  return out;
+}
+/** The dates a submit sends with its touched levers: 0 (the server stamps "now") for fresh ones, the
+ *  stored date for the rest — for a slice stored before DW-082, its submit time, which is what the
+ *  merge used for it. */
+export function touchedDates(view: GameView, slice: Partial<FirmDecision>, touched: readonly string[]): Record<string, number> {
+  const me = view.teamPlan?.seats.find((s) => s.me);
+  const fresh = freshLevers(view, slice, touched);
+  const out: Record<string, number> = {};
+  for (const f of touched) out[f] = fresh.has(f) ? 0 : (me?.touched_at?.[f] ?? me?.updated_at ?? 0);
+  return out;
 }
 
 /** DW-073: the engine's own merge over the standing plan, with every teammate's submitted slice
@@ -104,15 +137,22 @@ export function teamOutcome(view: GameView, seatRole: string | null | undefined,
   const refs: (TeamPlanSeat | null)[] = []; // DW-077: seats[i] ↔ the plan seat it came from (null = me)
   for (const s of plan.seats) {
     if (s.me || !s.partial) continue;
-    seats.push({ desk: (s.desk ?? (s.role ? ROLE_DESK[s.role] ?? "all" : "all")) as SeatPartial["desk"], partial: s.partial, updated_at: s.updated_at, touched: s.touched });
+    seats.push({ desk: (s.desk ?? (s.role ? ROLE_DESK[s.role] ?? "all" : "all")) as SeatPartial["desk"], partial: s.partial, updated_at: s.updated_at, touched: s.touched, touched_at: s.touched_at });
     refs.push(s);
   }
   const meIdx = seats.length;
+  // DW-082 (audit #5): once the round is locked, the record that will run IS the plan. A submit that
+  // raced the lock can leave its slice saved yet outside that record, so composing the slices could show
+  // numbers that won't run. Winners then go by value (no provenance).
+  if (plan.locked && plan.composed) { refs.push(null); return { decision: { ...plan.composed, firm_id: form.firm_id }, from: {}, seats, meIdx, refs }; }
   const myAt = when === "now" ? Number.MAX_SAFE_INTEGER : (plan.seats.find((s) => s.me)?.updated_at ?? 0);
   const slice = wouldSubmit(view, seatRole, form, standing);
-  // What the server will hold after my submit: what I've changed now, plus what it already kept.
+  // What the server will hold after my submit: what I've changed now, plus what it already kept —
+  // a lever I change (or hold) now dated now, the rest at the submit that last changed it (DW-082).
   const touched = [...new Set([...(plan.seats.find((x) => x.me)?.touched ?? []), ...(touchedLevers(slice, standing, view.round) ?? [])])];
-  seats.push({ desk: ROLE_DESK[seatRole] ?? "all", partial: slice, updated_at: myAt, touched });
+  const dates = touchedDates(view, slice, touched);
+  const touched_at = Object.fromEntries(touched.map((f) => [f, dates[f] === 0 ? myAt : dates[f]]));
+  seats.push({ desk: ROLE_DESK[seatRole] ?? "all", partial: slice, updated_at: myAt, touched, touched_at });
   refs.push(null);
   return { ...composeTeamDecision({ ...standing, firm_id: form.firm_id }, seats), seats, meIdx, refs };
 }
@@ -125,9 +165,11 @@ export function teamOutcome(view: GameView, seatRole: string | null | undefined,
  *  strict guard: their form defaults ride along and are not decisions.
  */
 const ONE_SHOT = new Set(["build_facilities", "maintain_facilities", "mothball_facilities", "reactivate_facilities", "divest_facilities", "buy_vertical", "hire_roles", "fire_roles", "hire_employees", "hire_bids", "fire_employees", "raise_employees", "poach_employees", "invest_rnd", "invest_water_efficiency", "acquisition_bid", "agreement_actions", "lobby_spend", "lobby_initiative", "lobby_counter", "exit_action", "public_good_contributions", "market_supply", "draw_convertible", "draw_rbf", "pr_action", "buy_info"]);
-/** Does the firm's plan meaningfully speak to this lever? (see ONE_SHOT) */
-const planCarries = (plan: FirmDecision | null | undefined, f: keyof FirmDecision): boolean =>
-  plan != null && (plan[f] !== undefined || ONE_SHOT.has(f as string));
+/** Does the firm's plan meaningfully speak to this lever? (see ONE_SHOT) DW-082: with geography on,
+ *  "markets served" is a decision even before the firm's first entry (the standing plan has no key
+ *  until then) — a teammate's entry that round showed on nobody's panel. */
+const planCarries = (plan: FirmDecision | null | undefined, f: keyof FirmDecision, view?: GameView): boolean =>
+  plan != null && (plan[f] !== undefined || ONE_SHOT.has(f as string) || (f === "market_presence" && !!view?.modules?.geography?.enabled));
 
 const MONEY = new Set(["invest_cap", "invest_process", "invest_Q", "invest_B", "invest_T_emp", "invest_T_inv", "invest_T_gov", "invest_rnd", "invest_water_efficiency", "debt_draw", "debt_repay", "equity_raise", "dividend", "draw_convertible", "draw_rbf", "lobby_spend"]);
 
@@ -143,6 +185,8 @@ const blankOverReal = (blank: unknown, real: unknown): boolean => {
   return coll(blank) && real != null && typeof real === "object" && !coll(real);
 };
 const empty = (v: unknown): boolean => sameLever(v, null);
+/** DW-082: holding "none" against a teammate's build / hire / offer cancels it ("Cancel it", not "Keep mine"). */
+export const cancelsRequest = (f: string, mine: unknown): boolean => ONE_SHOT.has(f) && empty(mine);
 /** DW-081: market research is a team purchase — any chair buys it for the firm and none can veto it
  *  (engine seats.ts rule 4), so it is never a disagreement to reconcile. */
 const TEAM_BUY = "buy_info";
@@ -216,9 +260,11 @@ export function leverText(field: string, v: unknown, view: GameView): string {
     if (field === "maintain_facilities") return ents.length ? `${fmt.money(ents.reduce((s, [, x]) => s + Number(x), 0))} across ${ents.length} site${ents.length === 1 ? "" : "s"}` : "none";
     if (field === "market_presence" || field === "market_supply") {
       const mk = (id: string) => { const m = view.markets?.find((x) => x.id === id) as { label?: string; name?: string } | undefined; return marketName(id, m?.label ?? m?.name); };
+      // presence = relative weights (the split across markets); supply = explicit units per market,
+      // the markets left out sharing the rest (DW-082). A 0 offer is kept: it ships nothing there.
+      if (field === "market_supply") { const offers = Object.entries(v as Record<string, unknown>).filter(([, x]) => typeof x === "number"); return offers.length ? `${offers.map(([k, x]) => `${mk(k)} ${fmt.int(Number(x))}`).join(" · ")} · rest auto` : "auto (split by presence)"; }
       if (!ents.length) return "home only";
-      // presence = relative weights (the split across markets); supply = explicit units per market
-      return field === "market_presence" ? shareText(ents, mk) : ents.map(([k, x]) => `${mk(k)} ${fmt.int(Number(x))}`).join(" · ");
+      return shareText(ents, mk);
     }
   }
   return fmtLever(field, v);
@@ -233,7 +279,11 @@ export function computeConflicts(view: GameView, seatRole: string | null | undef
   const round = view.round;
   // DW-073: who wins is never re-derived here — it is read off the engine's merge of the team's
   // slices with this form submitted now. The rules below only decide WHICH rows are worth showing.
-  const outcome = teamOutcome(view, seatRole, mine, standing, "asSubmitted");
+  // DW-082: "now" — this is what the submit check shows right before a submit. Judged "as last
+  // submitted", a Keep mine (or an edit) never flipped a row, and the check said "theirs" for a
+  // number that then locked as the CEO's. A lever the seat left alone keeps its old date (seats.ts),
+  // so "now" is also exactly what the server holds for it.
+  const outcome = teamOutcome(view, seatRole, mine, standing, "now");
   // Provenance, not value: when my form already mirrors a teammate's cover, the values match but
   // the plan still holds THEIR submission until I submit after them.
   const winnerOf = (f: keyof FirmDecision): "me" | "them" => {
@@ -271,7 +321,7 @@ export function computeConflicts(view: GameView, seatRole: string | null | undef
           // shown even when my form already mirrors it — the point is that the CEO NOTICES
           // (levers the standing plan doesn't carry AND aren't one-shots — e.g. market weights
           // with geography off — are form defaults riding along in their slice, not a decision)
-          if (theirs === undefined || f === TEAM_BUY || !planCarries(standing, f) || same(theirs, standing?.[f])) continue;
+          if (theirs === undefined || f === TEAM_BUY || !planCarries(standing, f, view) || same(theirs, standing?.[f])) continue;
           if (owner && same(theirs, owner.partial?.[f])) continue; // matches the owner's own word — nothing to flag
           const winner = winnerOf(f);
           // sticks: a build / hire / offer survives the seated chair's silent submit — its untouched "none"
@@ -318,7 +368,9 @@ export function computeConflicts(view: GameView, seatRole: string | null | undef
 /** A specialist's value on a desk that isn't theirs. `ownerName` = the seated chair that owns
  *  it (null = empty chair); `applies`: the chair is empty, so — among non-owners the later
  *  submission wins — this seat's value goes through at lock unless the CEO submits after. */
-export interface OffDeskEdit { field: keyof FirmDecision; label: string; mine: unknown; firm: unknown; deskOwner: string; ownerName: string | null; ceoSeated: boolean; applies: boolean }
+export interface OffDeskEdit { field: keyof FirmDecision; label: string; mine: unknown; firm: unknown; deskOwner: string; ownerName: string | null; ceoSeated: boolean; applies: boolean;
+  /** DW-082b: the CEO's own change holds this lever — on an empty desk the CEO has the final say */
+  byCeo?: boolean }
 export function offDeskEdits(view: GameView, seatRole: string | null | undefined, mine: FirmDecision | null, standing: FirmDecision | null | undefined): OffDeskEdit[] {
   if (!view.teamPlan || !seatRole || !mine) return [];
   const myDesk = ROLE_DESK[seatRole] ?? "all";
@@ -328,6 +380,8 @@ export function offDeskEdits(view: GameView, seatRole: string | null | undefined
   const own = new Set<string>(DESK_LEVERS[myDesk] as string[]);
   const out: OffDeskEdit[] = [];
   const ceoSeated = view.teamPlan.seats.some((s) => s.role && (ROLE_DESK[s.role] ?? "all") === "all");
+  const now = teamOutcome(view, seatRole, mine, standing, "now");
+  const ceoHolds = (f: keyof FirmDecision) => { const i = now?.from[f]; const a = i === undefined || i === now!.meIdx ? null : now!.refs[i]; return !!a && (a.desk ?? (a.role ? ROLE_DESK[a.role] ?? "all" : "all")) === "all"; };
   for (const [desk, fields] of Object.entries(DESK_LEVERS) as [string, (keyof FirmDecision)[]][]) {
     if (desk === myDesk) continue;
     const seated = view.teamPlan.seats.find((s) => !s.me && s.role && ROLE_DESK[s.role] === desk);
@@ -336,8 +390,8 @@ export function offDeskEdits(view: GameView, seatRole: string | null | undefined
       // geography off) have nothing to disagree with — the form's default is not an edit.
       // One-shot levers (builds, hires, poaches — see ONE_SHOT) ARE edits even against an
       // absent key: absent just means "none planned" (DW-052).
-      if (own.has(f as string) || f === TEAM_BUY || mine[f] === undefined || !planCarries(firm, f)) continue;
-      if (!same(mine[f], firm[f])) out.push({ field: f, label: leverLabel(f), mine: mine[f], firm: firm[f], deskOwner: DESK_OWNER[desk], ownerName: seated?.name ?? null, ceoSeated, applies: !seated });
+      if (own.has(f as string) || f === TEAM_BUY || mine[f] === undefined || !planCarries(firm, f, view)) continue;
+      if (!same(mine[f], firm[f])) out.push({ field: f, label: leverLabel(f), mine: mine[f], firm: firm[f], deskOwner: DESK_OWNER[desk], ownerName: seated?.name ?? null, ceoSeated, applies: !seated, ...(ceoHolds(f) ? { byCeo: true } : {}) });
     }
   }
   return out;
@@ -377,6 +431,12 @@ export interface PlanDiff {
   changed: boolean;
   /** still follows a teammate AFTER this seat submits now (the submit label's count) */
   follows: boolean;
+  /** DW-082: this row's own button — "keep" (Keep mine: my number over a teammate's cover), "cancel"
+   *  (Cancel it: my "none" over a teammate's build / hire / offer), "undo" (take back a hold not yet
+   *  sent), "take" (Use theirs: the CEO adopts a teammate's suggestion — `restore` is their value) */
+  action?: "keep" | "cancel" | "undo" | "take";
+  /** the value Keep mine puts back in the form first (a cover I sent, which my form no longer shows) */
+  restore?: unknown;
 }
 export interface PlanDiffs { rows: PlanDiff[]; follow: number }
 const NO_DIFFS: PlanDiffs = { rows: [], follow: 0 };
@@ -391,14 +451,26 @@ export function planDiffs(view: GameView, seatRole: string | null | undefined, f
   const plan = view.teamPlan;
   if (!plan || !seatRole || !form || !standing) return NO_DIFFS;
   const me = plan.seats.find((s) => s.me);
-  // A seat that has submitted sees the plan as the server holds it (a teammate's later cover IS
-  // winning — "theirs, unless you submit again"); a seat that hasn't yet sees what its first
-  // submit produces (its own cover for an empty chair lands — "yours, and the CEO will see it").
-  const outcome = teamOutcome(view, seatRole, form, standing, me?.submitted ? "asSubmitted" : "now");
-  const after = teamOutcome(view, seatRole, form, standing, "now");
+  // DW-082: ONE outcome — the plan with this form submitted now. A lever this seat left alone keeps
+  // the date of its last change (seats.ts touched_at), so for it "now" is exactly what the server
+  // holds; a lever it changed or held since its last submit reads "yours once you submit". (Judged
+  // "as last submitted", a Keep mine never flipped its row — the button looked dead.)
+  const outcome = teamOutcome(view, seatRole, form, standing, "now");
+  const after = outcome;
   if (!outcome || !after) return NO_DIFFS;
   const myDesk = ROLE_DESK[seatRole] ?? "all";
   const isCeo = myDesk === "all";
+  if (plan.locked && plan.composed) {
+    // DW-082: locked — the record that runs is the answer, and nothing on this screen can change it
+    const L = plan.composed as unknown as Record<string, unknown>, Fm = form as unknown as Record<string, unknown>;
+    const locked: PlanDiff[] = [];
+    for (const f of Object.keys(Fm) as (keyof FirmDecision)[]) {
+      const k = String(f);
+      if (SKIP_DIFF.has(k) || !planCarries(standing, f, view) || same(L[k], Fm[k])) continue;
+      locked.push({ field: f, label: leverLabel(k), locks: L[k], mine: Fm[k], winner: "them", who: "Locked — the team's plan runs this number", whoShort: "locked", ownDesk: false, pending: false, changed: false, follows: true });
+    }
+    return { rows: locked, follow: locked.length };
+  }
   const stored = (me?.partial ?? null) as Record<string, unknown> | null;
   const storedTouched = me?.touched ?? [];
   const F = form as unknown as Record<string, unknown>;
@@ -410,11 +482,24 @@ export function planDiffs(view: GameView, seatRole: string | null | undefined, f
     return i === undefined ? (same(outcome.decision[f], F[f as string]) ? "me" : "them") : i === outcome.meIdx ? "me" : "them";
   };
   const follows = (f: keyof FirmDecision) => !same(after.decision[f], F[f as string]);
+  // what this seat has changed this round, exactly as its submit will report it (teamOutcome's touched),
+  // and which of those its next submit changes (DW-082: dated now — a hold, or an edit since the last submit)
+  const slice = wouldSubmit(view, seatRole, form, standing);
+  const changedList = [...new Set([...storedTouched, ...(touchedLevers(slice, standing, view.round) ?? [])])];
+  const changed = new Set(changedList);
+  const fresh = freshLevers(view, slice, changedList);
   // pending: the server hasn't seen it yet — a hold, an edit since the last submit, or no submit at all
   const pendingOf = (f: string, winner: "me" | "them") =>
-    winner === "me" && (!me?.submitted || (isHeld(view.round, f) && !storedTouched.includes(f)) || (stored != null && f in stored && !same(stored[f], F[f])));
-  // what this seat has changed this round, exactly as its submit will report it (teamOutcome's touched)
-  const changed = new Set([...storedTouched, ...(touchedLevers(wouldSubmit(view, seatRole, form, standing), standing, view.round) ?? [])]);
+    winner === "me" && (!me?.submitted || fresh.has(f) || (stored != null && f in stored && !same(stored[f], F[f])));
+  // the row's button: the CEO's word over a teammate's (Keep mine, or Cancel it when mine is "none"
+  // against their build / hire / offer); Undo for a hold that hasn't gone out yet
+  // DW-082b: once the CEO's word holds a cover's lever it is final, and a teammate's different value is a
+  // suggestion the CEO can adopt in one click (Use theirs) — a cancelled build need not be rebuilt by hand.
+  const actionOf = (f: string, w: "me" | "them", theirs?: unknown): PlanDiff["action"] =>
+    w === "them" ? (ONE_SHOT.has(f) && empty(F[f]) ? "cancel" : "keep")
+      : isFreshHold(view.round, f) && pendingOf(f, w) ? "undo"
+      : isCeo && theirs !== undefined && !pendingOf(f, w) && !same(theirs, F[f]) ? "take" : undefined;
+  const withAction = (a: PlanDiff["action"], theirs: unknown): Partial<PlanDiff> => (a ? { action: a, ...(a === "take" ? { restore: theirs } : {}) } : {});
   const rows = new Map<string, PlanDiff>();
   const add = (field: keyof FirmDecision, winner: "me" | "them", who: string, whoShort: string, extra: Partial<PlanDiff> = {}) => {
     const f = String(field);
@@ -427,26 +512,33 @@ export function planDiffs(view: GameView, seatRole: string | null | undefined, f
     const theirs = T(String(f), c.theirs);
     const w = winnerOf(f); // provenance from THIS outcome (computeConflicts judged "as submitted")
     const they = seatName({ role: c.whoRole, name: c.who });
-    const mirrored = same(outcome.decision[f], F[String(f)]); // my form already carries the plan's value
     if (c.suggestion) {
       add(f, w, w === "me" ? `${they} suggested ${theirs} for your desk; yours is used` : `${they} suggested ${theirs} for your desk; leave it alone and it trades, or Keep mine to decline`, w === "me" ? `instead of ${they}'s suggestion` : `${they}'s suggestion`);
     } else if (c.cover) {
       // A teammate's entry on a desk that isn't theirs: shown even when my form mirrors it — the
       // point is that the CEO NOTICES who set what for an empty chair (DW-051/052).
       const deskLbl = DESK_OWNER[c.cover.desk] ?? c.cover.desk;
+      const k = String(f);
+      // DW-082: against a teammate's build / hire / offer, a "none" in my form is a CANCEL, not "mine"
+      const cancel = ONE_SHOT.has(k) && empty(F[k]);
+      const pend = pendingOf(k, w);
+      const hint = cancel ? "Cancel it to drop it" : "change it, or Keep mine, to use yours";
       if (c.cover.ownerName) {
         // a seated chair that hasn't submitted: a peer's suggestion trades until that chair submits; the
         // CEO's own change (or Keep mine) stands unless the chair changes the lever itself (seats.ts)
         const open = !c.cover.ownerSubmitted;
-        const tail = !open ? `the ${deskLbl} decides` : w === "me" ? `yours, unless the ${deskLbl} changes it` : c.cover.sticks ? `theirs unless the ${deskLbl} cancels it` : `theirs until the ${deskLbl} submits`;
-        add(f, w, `${they} suggested ${theirs} for the ${deskLbl}'s desk (${c.cover.ownerName}) · ${tail}${open && w === "them" ? " — change it, or Keep mine, to use yours" : ""}`, `${they} suggests · ${tail}`, { cover: open });
+        const tail = !open ? `the ${deskLbl} decides`
+          : w === "me" ? (cancel ? `cancelled${pend ? " once you submit" : ""}, unless the ${deskLbl} puts it back` : `yours${pend ? " once you submit" : ""}, unless the ${deskLbl} changes it`)
+          : c.cover.sticks ? `theirs unless the ${deskLbl} cancels it` : `theirs until the ${deskLbl} submits`;
+        add(f, w, `${they} suggested ${theirs} for the ${deskLbl}'s desk (${c.cover.ownerName}) · ${tail}${open && w === "them" ? ` — ${hint}` : ""}`, `${they} suggests · ${tail}`, { cover: open, ...(open ? withAction(actionOf(k, w, c.theirs), c.theirs) : {}) });
       } else {
-        // A cover my form already mirrors locks at my number either way — a notice, not a warning
-        // (DW-080: it stays the teammate's word until I change or hold the lever, which only
-        // matters if they change it again — then the row comes back as theirs).
-        const shown = mirrored ? "me" : w;
-        const tail = shown === "them" ? "theirs — change it, or Keep mine, to use yours" : mirrored ? "it's in your form, so yours carries it" : "yours — you changed it";
-        add(f, shown, `${they} set this for the empty ${deskLbl} desk · ${tail}`, `${they} covers the empty ${deskLbl} chair`, { cover: true });
+        // An empty chair: a teammate's cover stands until the CEO changes the lever; then the CEO's word
+        // is final for the round (seats.ts, DW-082b) and their different value is a suggestion.
+        const tail = w === "them" ? `theirs — ${hint}`
+          : pend ? (cancel ? "cancelled once you submit" : "yours once you submit")
+          : same(c.theirs, F[k]) ? "it's in your form too"
+          : cancel ? "you cancelled it — as CEO you have the final say" : "yours — as CEO you have the final say";
+        add(f, w, `${they} set this for the empty ${deskLbl} desk · ${tail}`, `${they} covers the empty ${deskLbl} chair`, { cover: true, ...withAction(actionOf(k, w, c.theirs), c.theirs) });
       }
     } else if (isCeo) {
       // a seated teammate's OWN lever: a notification to the CEO (DW-060), never approve/deny
@@ -458,18 +550,47 @@ export function planDiffs(view: GameView, seatRole: string | null | undefined, f
   }
   // 2. My own entries on desks that aren't mine (DW-050): a cover for an empty chair, or a suggestion.
   for (const e of offDeskEdits(view, seatRole, form, standing)) {
-    if (rows.has(String(e.field))) continue;
+    const k = String(e.field);
+    if (rows.has(k)) continue;
     const w = winnerOf(e.field);
+    const i = outcome.from[e.field];
+    const author = i === undefined || i === outcome.meIdx ? null : outcome.refs[i];
+    const by = author ? seatName(author) : "a teammate";
+    // DW-082: a later change by a teammate wins an empty chair's lever (resubmitting doesn't take it back —
+    // it keeps your earlier date), and the CEO's change is final (DW-082b): no button here — talk to them.
+    const gone = ONE_SHOT.has(k) && empty(outcome.decision[e.field]);
+    const did = `${by} ${gone ? "cancelled it" : "changed it"}`;
     const who = e.applies
-      ? (w === "me" ? `Not your desk — the ${e.deskOwner} chair is empty, so yours is used${e.ceoSeated ? " and the CEO will see it" : ""}` : `Not your desk — the ${e.deskOwner} chair is empty; the plan holds a later entry · theirs, unless you submit again`)
+      ? (w === "me" ? `Not your desk — the ${e.deskOwner} chair is empty, so yours is used${pendingOf(k, w) ? " once you submit" : ""}${e.ceoSeated ? " and the CEO will see it" : ""}` : e.byCeo ? `Not your desk — the ${e.deskOwner} chair is empty; ${did} — on an empty desk the CEO has the final say` : `Not your desk — the ${e.deskOwner} chair is empty; ${did} after you · theirs`)
       : `Not your desk — ${e.ownerName} (${e.deskOwner}) decides; yours is only a suggestion`;
-    add(e.field, w, who, "not your desk");
+    add(e.field, w, who, e.applies && w === "them" ? `${by} ${gone ? "cancelled" : "changed"} it` : "not your desk");
+  }
+  // 2b. DW-082: a cover I SENT that the plan no longer runs. Off my desk my form follows the plan
+  // (DW-050), so once a teammate changed the lever after me my form quietly showed their number and no
+  // row told me my suggestion was overruled. Until my next submit drops it, say so.
+  if (!isCeo && me?.submitted && stored) {
+    for (const [k, sent] of Object.entries(stored)) {
+      const f = k as keyof FirmDecision;
+      if (k === "firm_id" || SKIP_DIFF.has(k) || rows.has(k) || leverDesk(k) === myDesk || sent === undefined) continue;
+      if (same(sent, outcome.decision[f]) || same(sent, (standing as unknown as Record<string, unknown>)[k]) || !same(F[k], outcome.decision[f])) continue;
+      const i = outcome.from[f];
+      const author = i === undefined || i === outcome.meIdx ? null : outcome.refs[i];
+      const chair = chairOf(leverDesk(k));
+      const deskLbl = DESK_OWNER[leverDesk(k)] ?? leverDesk(k);
+      const by = author ? seatName(author) : "a teammate";
+      const gone = ONE_SHOT.has(k) && empty(outcome.decision[f]);
+      const byCeo = !!author && (author.desk ?? (author.role ? ROLE_DESK[author.role] ?? "all" : "all")) === "all";
+      const who = chair
+        ? `You suggested ${T(k, sent)} for the ${deskLbl}'s desk; ${chair.name} decides — theirs is used`
+        : `You set ${T(k, sent)} for the empty ${deskLbl} desk; ${by} ${gone ? "cancelled it" : "changed it"}${byCeo ? " — on an empty desk the CEO has the final say" : " after you"}`;
+      add(f, "them", who, chair ? `the ${deskLbl} decides` : `${by} ${gone ? "cancelled" : "changed"} it`, { mine: sent });
+    }
   }
   // 3. Anything else the merge still prices differently from this form.
   const keys = isCeo ? (Object.keys(F) as (keyof FirmDecision)[]) : (Object.keys(wouldSubmit(view, seatRole, form, standing)) as (keyof FirmDecision)[]);
   for (const f of keys) {
     const k = String(f);
-    if (SKIP_DIFF.has(k) || rows.has(k) || !planCarries(standing, f) || same(outcome.decision[f], F[k])) continue;
+    if (SKIP_DIFF.has(k) || rows.has(k) || !planCarries(standing, f, view) || same(outcome.decision[f], F[k])) continue;
     const i = outcome.from[f];
     const author = i === undefined ? undefined : outcome.refs[i];
     if (i === outcome.meIdx) continue; // mine — then it cannot differ
@@ -484,7 +605,7 @@ export function planDiffs(view: GameView, seatRole: string | null | undefined, f
       const chair = chairOf(desk);
       const deskLbl = DESK_OWNER[desk] ?? desk;
       if (chair?.submitted && aDesk === "all") add(f, "them", `CEO changed this; ${chair.name} left it at last round's value`, "CEO changed it");
-      else add(f, "them", `${they} covers the ${chair ? "" : "empty "}${deskLbl} chair${chair ? ` until ${chair.name} submits` : ""} · theirs — change it, or Keep mine, to use yours`, `${they} covers the ${deskLbl} chair`, { cover: true }); // DW-080: a chair that hasn't spoken yet — the CEO's Keep mine holds against it too
+      else add(f, "them", `${they} covers the ${chair ? "" : "empty "}${deskLbl} chair${chair ? ` until ${chair.name} submits` : ""} · theirs — ${ONE_SHOT.has(k) && empty(F[k]) ? "Cancel it to drop it" : "change it, or Keep mine, to use yours"}`, `${they} covers the ${deskLbl} chair`, { cover: true, ...(isCeo ? { action: actionOf(k, "them") } : {}) }); // DW-080: a chair that hasn't spoken yet — the CEO's Keep mine holds against it too
     }
   }
   const out = [...rows.values()];

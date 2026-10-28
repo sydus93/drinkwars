@@ -346,7 +346,8 @@ const ROLLUPS: { test: RegExp; verb: "hired" | "built"; what: (m: RegExpMatchArr
   // "HIRE: <house> brings on Hana B., a head brewer" → "Hana B. (head brewer)"; the labor-market
   // form "brings on a head brewer" stays as written.
   { test: /^HIRE:\s*(.+?)\s+brings on\s+(.+)$/i, verb: "hired", what: (m) => m[2].replace(/^(.+?),\s+an?\s+(.+)$/i, "$1 ($2)") },
-  { test: /^FACILITY BUILT:\s*(.+?)\s+breaks ground on\s+(.+)$/i, verb: "built", what: (m) => m[2] },
+  // "a taproom in Heartland (online in 1 round)" → the map's city name (DW-082d); older lines carry no market.
+  { test: /^FACILITY BUILT:\s*(.+?)\s+breaks ground on\s+(.+)$/i, verb: "built", what: (m) => m[2].replace(/\bin (.+?) \(online/, (_s, l: string) => `in ${marketName(l)} (online`) },
 ];
 const listOf = (xs: string[]): string => (xs.length <= 1 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);
 

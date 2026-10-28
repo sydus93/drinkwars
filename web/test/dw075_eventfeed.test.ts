@@ -24,3 +24,14 @@ test("DW-075: extended DEPARTURE/POACHED lines parse, and the bare lines still d
   assert.equal(ev[6].title, "Key hire leaves"); assert.doesNotMatch(String(ev[6].body), /tenure/);
   for (const e of ev) assert.doesNotMatch(String(e.body), /^(DEPARTURE|POACHED):/, "no raw prefix leaks");
 });
+
+// DW-082d: a build names its market (geography on), shown as the map's city; a line without one still reads.
+test("DW-082d: two builds in one round say which city each went to", () => {
+  const ev = parseEvents([
+    "FACILITY BUILT: Barrel & Vine breaks ground on a taproom in Home region (online in 1 round)",
+    "FACILITY BUILT: Barrel & Vine breaks ground on a taproom in Heartland (online in 1 round)",
+    "FACILITY BUILT: Hop Theory breaks ground on a nano brewery (online in 1 round)",
+  ], "Barrel & Vine");
+  assert.equal(ev.find((e) => e.mine)?.body, "You broke ground on a taproom in Front Range (online in 1 round) and a taproom in Cedar Falls (online in 1 round).");
+  assert.equal(ev.find((e) => e.title === "Hop Theory")?.body, "Broke ground on a nano brewery (online in 1 round).");
+});

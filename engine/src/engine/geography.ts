@@ -25,9 +25,10 @@ export interface GeoOutcome {
   distCostByFirm: Map<FirmId, number>; // distribution + tariff (→ opex)
   entryCostByFirm: Map<FirmId, number>; // one-time market-entry cost (→ opex)
   // Per market: revenue/units, plus the trade-flow read for the lane viz — producer capacity sited
-  // here (`produced`), units sold here (`q_sold`), their balance (`net`), and any inbound shipment
-  // lanes (the shortfall, from the nearest base). `consumed` == q_sold.
-  marketBreakdown: Map<FirmId, Record<string, { revenue: number; q_sold: number; entered: boolean; bySeg: Record<SegmentId, { q_sold: number; share: number; price: number }>; produced: number; net: number; lanes: { origin_market: string; units: number; cost: number }[] }>>;
+  // here (`produced`), units sold here (`q_sold`), their balance (`net`), the units routed here to
+  // sell (`supplied`: the offer, or the presence share — DW-082d), and any inbound shipment lanes
+  // (the shortfall, from the nearest base). `consumed` == q_sold.
+  marketBreakdown: Map<FirmId, Record<string, { revenue: number; q_sold: number; entered: boolean; bySeg: Record<SegmentId, { q_sold: number; share: number; price: number }>; produced: number; net: number; supplied: number; lanes: { origin_market: string; units: number; cost: number }[] }>>;
   events: string[];
 }
 
@@ -186,28 +187,31 @@ export function resolveGeography(
     }
     const operating = markets.filter((m) => m.kind === "home" || f.markets_entered.includes(m.id));
     const frac = new Map<string, number>();
-    if (supply) {
+    // Presence weights. Home gets weight 1 by default so a firm that sets no weights stays
+    // entirely at home (legacy-like).
+    const presenceW = (m: MarketConfig) => Math.max(0, m.kind === "home" ? (weights[m.id] ?? 1) : (weights[m.id] ?? 0));
+    const listed = supply ? operating.filter((m) => typeof supply[m.id] === "number") : [];
+    if (listed.length) {
       // Explicit allocation: supplyOf(m) = market_supply[m] (units), scaled down to fit total
-      // sellable (supplyOf = sellable × frac ⇒ frac = clampedUnits / sellable).
+      // sellable (supplyOf = sellable × frac ⇒ frac = clampedUnits / sellable). A market left OUT
+      // is "auto" (DW-082): it shares what the offers leave, by presence. It used to get 0, so
+      // one offer for Heartland zeroed Home's sales while the drawer said "leave blank for auto".
       const cap = sellableByFirm.get(f.id) ?? 0;
-      const raw = new Map<string, number>();
       let total = 0;
-      for (const m of operating) { const u = Math.max(0, supply[m.id] ?? 0); raw.set(m.id, u); total += u; }
-      if (total <= 0) frac.set(home.id, 1);
-      else { const scale = cap > 0 && total > cap ? cap / total : 1; for (const [id, u] of raw) frac.set(id, cap > 0 ? (u * scale) / cap : 0); }
+      for (const m of listed) total += Math.max(0, supply![m.id]);
+      const scale = cap > 0 && total > cap ? cap / total : 1;
+      for (const m of listed) frac.set(m.id, cap > 0 ? (Math.max(0, supply![m.id]) * scale) / cap : 0);
+      const left = cap > 0 ? Math.max(0, 1 - (total * scale) / cap) : 0;
+      const blank = operating.filter((m) => !frac.has(m.id));
+      const wsum = blank.reduce((a, m) => a + presenceW(m), 0);
+      if (left > 1e-9 && wsum > 0) for (const m of blank) frac.set(m.id, (left * presenceW(m)) / wsum);
+      if (total <= 0 && !(wsum > 0)) frac.set(home.id, 1); // all offers 0, nothing on auto: stay home (as before)
     } else {
-      // Presence path (default): split the sellable pool by market-presence weights. Home gets
-      // weight 1 by default so a firm that sets no weights stays entirely at home (legacy-like).
-      const raw = new Map<string, number>();
+      // Presence path (default; also an empty offer map): split the sellable pool by presence.
       let total = 0;
-      for (const m of operating) {
-        const wRaw = m.kind === "home" ? (weights[m.id] ?? 1) : (weights[m.id] ?? 0);
-        const w = Math.max(0, wRaw);
-        raw.set(m.id, w);
-        total += w;
-      }
+      for (const m of operating) total += presenceW(m);
       if (total <= 0) frac.set(home.id, 1);
-      else for (const [id, w] of raw) frac.set(id, w / total);
+      else for (const m of operating) frac.set(m.id, presenceW(m) / total);
     }
     fracByFirm.set(f.id, frac);
   }
@@ -304,7 +308,7 @@ export function resolveGeography(
       const producedHere = localProd.get(f.id)?.get(m.id) ?? 0;
       out.marketBreakdown.get(f.id)![m.id] = {
         revenue: mRevenue, q_sold: mQ, entered: m.kind === "home" || f.markets_entered.includes(m.id), bySeg,
-        produced: producedHere, net: producedHere - mQ,
+        produced: producedHere, net: producedHere - mQ, supplied: arena.supplyOf(f.id),
         lanes: plan.units > 0 && plan.origin ? [{ origin_market: plan.origin, units: plan.units, cost: plan.cost }] : [],
       };
     }

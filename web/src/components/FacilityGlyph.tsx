@@ -241,8 +241,8 @@ export function RoleShape({ role, size = 11, color = "#9a8048" }: { role: Facili
 /** The directional trade badge text + tone from a facility/market flow balance.
  *  net = produced − consumed: positive ships out, negative ships in. */
 export function flowBadge(net: number, eps = 5): { text: string; tone: "in" | "out" | "neutral" } {
-  if (net > eps) return { text: `↑ ships ${Math.round(net)}`, tone: "out" };
-  if (net < -eps) return { text: `↓ in ${Math.round(-net)}`, tone: "in" };
+  if (net > eps) return { text: `↑ ships ${Math.round(net).toLocaleString("en-US")}`, tone: "out" };
+  if (net < -eps) return { text: `↓ in ${Math.round(-net).toLocaleString("en-US")}`, tone: "in" };
   return { text: "= balanced", tone: "neutral" };
 }
 

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { composeTeamDecision, DESK_LEVERS, ROLE_DESK, sameLever, type SeatPartial } from "drinkwars-engine";
 import type { FirmDecision } from "drinkwars-engine";
 import type { GameView } from "../src/game/controller.js";
-import { computeConflicts, planDiffs, teamOutcome, touchedLevers, wouldSubmit } from "../src/lib/reconcile.js";
+import { computeConflicts, freshLevers, planDiffs, teamOutcome, touchedDates, touchedLevers, wouldSubmit } from "../src/lib/reconcile.js";
 
 // "The card and the engine agree" (DW-059's standing obligation, DW-074). The Reconcile card and
 // the commit dial are the only place a student learns whose number will trade. Here a tiny model
@@ -15,6 +15,8 @@ import { computeConflicts, planDiffs, teamOutcome, touchedLevers, wouldSubmit } 
 //   • DW-077: every commit-panel row's LOCKS value = the stored plan's value, and every row
 //     that says "yours is used" is credited to that seat by the engine's provenance
 //   • submitting again without touching anything changes nothing
+//   • DW-082: each touched lever is dated by the submit that last CHANGED it (the client sends the
+//     dates it holds, the server stamps the fresh ones) — so the model keeps `touched_at` too
 
 const rng = (seed: number) => () => { // mulberry32
   let t = (seed += 0x6d2b79f5);
@@ -30,7 +32,7 @@ const deskOf = (f: string) => Object.entries(DESK_LEVERS).find(([, fs]) => (fs a
 const val = (r: () => number, f: string): unknown =>
   NUM.includes(f) ? Math.round(r() * 5) * 10_000 : LIST.includes(f) ? (r() < 0.4 ? [] : ["x" + Math.floor(r() * 3)]) : f === "price" ? { mass: 5 + Math.floor(r() * 4) } : r() < 0.5;
 
-interface Stored { role: string; name: string; partial: Rec | null; touched?: string[]; updated_at: number | null }
+interface Stored { role: string; name: string; partial: Rec | null; touched?: string[]; touched_at?: Record<string, number>; updated_at: number | null }
 
 class Firm {
   seats: Stored[];
@@ -38,23 +40,27 @@ class Firm {
   constructor(public standing: FirmDecision, roles: string[]) { this.seats = roles.map((role) => ({ role, name: role.toUpperCase(), partial: null, updated_at: null })); }
   private parts(): { idx: number[]; parts: SeatPartial[] } {
     const idx: number[] = [], parts: SeatPartial[] = [];
-    this.seats.forEach((s, i) => { if (s.partial) { idx.push(i); parts.push({ desk: ROLE_DESK[s.role] ?? "all", partial: s.partial as Partial<FirmDecision>, updated_at: s.updated_at, touched: s.touched }); } });
+    this.seats.forEach((s, i) => { if (s.partial) { idx.push(i); parts.push({ desk: ROLE_DESK[s.role] ?? "all", partial: s.partial as Partial<FirmDecision>, updated_at: s.updated_at, touched: s.touched, touched_at: s.touched_at }); } });
     return { idx, parts };
   }
   composed(): FirmDecision | null { const { parts } = this.parts(); return parts.length ? composeTeamDecision(this.standing, parts).decision : null; }
   /** which seat (index into this.seats) the stored plan credits for a lever; null = standing */
   credit(f: string): number | null { const { idx, parts } = this.parts(); const k = composeTeamDecision(this.standing, parts).from[f as keyof FirmDecision]; return k === undefined ? null : idx[k]; }
   view(me: number): GameView {
-    return { round: 0, teamPlan: { locked: false, composed: this.composed(), seats: this.seats.map((s, i) => ({ name: s.name, role: s.role, desk: ROLE_DESK[s.role] ?? "all", submitted: !!s.partial, me: i === me, updated_at: s.updated_at, partial: s.partial as Partial<FirmDecision> | null, touched: s.touched })) } } as unknown as GameView;
+    return { round: 0, teamPlan: { locked: false, composed: this.composed(), seats: this.seats.map((s, i) => ({ name: s.name, role: s.role, desk: ROLE_DESK[s.role] ?? "all", submitted: !!s.partial, me: i === me, updated_at: s.updated_at, partial: s.partial as Partial<FirmDecision> | null, touched: s.touched, touched_at: s.touched_at })) } } as unknown as GameView;
   }
   /** What MultiplayerClient.submit + lifecycle.submitMemberDecision do, minus the network. */
   submit(me: number, form: FirmDecision) {
     const s = this.seats[me];
-    const slice = wouldSubmit(this.view(me), s.role, form, this.standing) as Rec;
-    const touched = touchedLevers(slice as Partial<FirmDecision>, this.standing, 0)!;
-    s.touched = [...new Set([...(s.touched ?? []), ...touched])].sort();
+    const v = this.view(me);
+    const slice = wouldSubmit(v, s.role, form, this.standing) as Rec;
+    const touched = [...new Set([...(s.touched ?? []), ...touchedLevers(slice as Partial<FirmDecision>, this.standing, 0)!])].sort();
+    const dates = touchedDates(v, slice as Partial<FirmDecision>, touched); // what the client sends…
+    const now = this.clock++;
+    s.touched_at = Object.fromEntries(touched.map((f) => [f, dates[f] > 0 && dates[f] <= now ? dates[f] : now])); // …and packTouched stores
+    s.touched = touched;
     s.partial = slice;
-    s.updated_at = this.clock++;
+    s.updated_at = now;
   }
   /** A seat's form as the app shows it: own desk free, other desks mirroring the firm's plan, plus the
    *  occasional deliberate off-desk edit. The CEO's form is all its own — it copies nobody (DW-081). */
@@ -106,11 +112,16 @@ test(`dial, card and stored plan agree across ${N} random team rounds`, () => {
       firm.seats.forEach((s, i) => {
         if (!forms[i]) return;
         const myForm = forms[i]!;
-        // a seat's card speaks about its form as last submitted (or as it would submit now)
+        // DW-082: the card and panel speak about the plan AS IF this seat submitted now. A lever its next
+        // submit would change (fresh — an unsent edit, a hold, a stale mirror) is a forecast, checked by
+        // (1) when it lands; every other lever keeps its stored date, so the row must match the server now.
+        const vi = firm.view(i);
+        const sliceI = wouldSubmit(vi, s.role, myForm, firm.standing);
+        const freshI = freshLevers(vi, sliceI, [...new Set([...(s.touched ?? []), ...touchedLevers(sliceI, firm.standing, 0)!])]);
         for (const row of computeConflicts(firm.view(i), s.role, myForm, firm.standing)) {
           rows++;
           const f = String(row.field);
-          if (!s.partial) continue; // not yet submitted: the row is a forecast, checked by (1) when they do
+          if (!s.partial || freshI.has(f)) continue; // not yet submitted / changing on the next submit: a forecast
           if (!sameLever((wouldSubmit(firm.view(i), s.role, myForm, firm.standing) as Rec)[f], (s.partial as Rec)[f])) continue; // form moved since their submit
           const credit = firm.credit(f);
           if (row.winner === "me") assert.ok(credit === i || sameLever(stored[f], (myForm as unknown as Rec)[f]), `${tag}: ${s.role}'s card says "yours" for ${f}, but the plan holds ${JSON.stringify(stored[f])} from ${credit === null ? "standing" : firm.seats[credit].role}`);
@@ -123,7 +134,7 @@ test(`dial, card and stored plan agree across ${N} random team rounds`, () => {
           diffRows++;
           const f = String(row.field);
           assert.ok(row.who.length > 0 && row.whoShort.length > 0, `${tag}: ${s.role}'s row for ${f} has no WHO DECIDES text`);
-          if (!s.partial) continue; // not yet submitted: a forecast, checked by (1) when they do
+          if (!s.partial || row.pending || freshI.has(f)) continue; // a forecast of this seat's next submit, checked by (1) when they do
           if (!sameLever((wouldSubmit(firm.view(i), s.role, myForm, firm.standing) as Rec)[f], (s.partial as Rec)[f])) continue; // form moved since their submit
           assert.ok(sameLever(row.locks, stored[f]), `${tag}: ${s.role}'s panel says ${f} LOCKS at ${JSON.stringify(row.locks)}, but the server composed ${JSON.stringify(stored[f])}`);
           const credit = firm.credit(f);

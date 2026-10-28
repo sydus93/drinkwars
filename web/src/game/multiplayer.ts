@@ -27,6 +27,7 @@ export interface TeamPlanSeat {
   name: string; role: string | null; desk: string | null; submitted: boolean; me: boolean;
   updated_at: number | null; partial: Partial<FirmDecision> | null;
   touched?: string[]; // DW-074: the levers this seat changed this round
+  touched_at?: Record<string, number>; // DW-082: when it last changed each of them (the merge orders covers by it)
 }
 /** The team's live plan: every seat's submitted slice + the composed firm decision
  *  they merge into (the record the engine will resolve). Refreshed by the 2.5s poll. */
@@ -35,7 +36,7 @@ import type { InstructorDashboard, InstructorTeamDecisions } from "drinkwars-ser
 import type { ForecastCall, InstructorForecasts, SeatForecasts } from "drinkwars-server"; // DW-074 calls channel
 import type { GameView, Standing } from "./controller.js";
 import { setFirmStyles } from "../lib/teamColors.js";
-import { resetHolds, specialistSlice, touchedLevers } from "../lib/reconcile.js";
+import { holdsSent, resetHolds, specialistSlice, touchedDates, touchedLevers } from "../lib/reconcile.js";
 
 // Unset (a local dev run): the game server on THIS page's host, port 8787 — so a phone that opened
 // http://<laptop-ip>:5173 reaches http://<laptop-ip>:8787, on whatever network the laptop is on
@@ -155,7 +156,7 @@ export async function fetchMyGames(claim: string, base: string = TRANSPORT_URL):
 export interface GamePeek {
   firmMode: "solo" | "team"; title: string | null; nRounds: number; round: number; lifecycle: string; slotsTotal: number; slotsOpen: number;
   teams?: { teamId: string; name: string; members: number; roles: string[] }[];
-  yourSeat?: { teamId: string; team: string; role: string | null }; // DW-050: pre-seated / returning claim holder
+  yourSeat?: { teamId: string; team: string; role: string | null; founded?: boolean }; // DW-050: pre-seated / returning claim holder; DW-082c founded = colour & mark picked
   yourName?: string | null;
 }
 
@@ -371,8 +372,12 @@ export class StudentClient {
       // `presence` undefined and the form threw on the first render after a submit + refresh
       // ("Something broke." — the app boundary — for every non-CEO seat that reloaded).
       // (other desks are then mirrored from the firm's plan by mirrorFirm, after seeding)
-      const firm = (v.teamPlan?.composed ?? v.standing ?? null) as FirmDecision | null;
-      const base = firm ?? this.houseDecision(v);
+      // DW-082: under the slice, the STANDING plan — never the composed one. A key the slice lacks
+      // (a market entry before the firm's first one, a teammate's same-round cover) took the
+      // teammate's value from the composed plan, and the next submit claimed it as this seat's change
+      // ("differs from standing"): a refreshed CMO's tweak re-sent the CEO's entry as the CMO's, which
+      // then outranked the CEO's next entry. Other desks are still mirrored from the plan (mirrorFirm).
+      const base = v.standing ? this.standingForm(v) : ((v.teamPlan?.composed as FirmDecision | null | undefined) ?? this.houseDecision(v));
       this.lastDecision = { ...base, ...(mine.partial as Partial<FirmDecision>), firm_id: this.firmId } as FirmDecision;
       this.lastDecisionRound = v.round;
       // A reload must not forget the covers this seat already sent (DW-052) — they're the
@@ -394,19 +399,7 @@ export class StudentClient {
     // STANDING plan — the same carry-forward the server trades on if this seat says nothing
     // — never the house defaults, which silently re-priced the firm at 1.8× cost and put it
     // back in every segment the moment an inattentive teammate hit Submit (DW-048).
-    if (!this.lastDecision && v.standing) {
-      const s = v.standing;
-      return {
-        ...s, firm_id: this.firmId,
-        debt_draw: 0, debt_repay: 0, equity_raise: 0, dividend: 0, buy_info: false, beliefs: {}, reflection: "",
-        agreement_actions: [], exit_action: null,
-        pr_action: null, invest_water_efficiency: 0, public_good_contributions: {},
-        invest_rnd: 0, buy_vertical: [], hire_roles: [], fire_roles: [],
-        draw_convertible: 0, draw_rbf: 0, acquisition_bid: null,
-        build_facilities: [], maintain_facilities: {}, mothball_facilities: [], reactivate_facilities: [], divest_facilities: [],
-        hire_employees: [], hire_bids: {}, fire_employees: [], raise_employees: {}, poach_employees: [],
-      } as FirmDecision;
-    }
+    if (!this.lastDecision && v.standing) return this.standingForm(v);
 
     if (this.lastDecision) {
       const price: Record<SegmentId, number> = {};
@@ -433,6 +426,19 @@ export class StudentClient {
     }
 
     return this.houseDecision(v);
+  }
+  /** The firm's standing plan as a fresh form: carried levers, one-shots and flows at zero. */
+  private standingForm(v: RawView): FirmDecision {
+    return {
+      ...v.standing!, firm_id: this.firmId,
+      debt_draw: 0, debt_repay: 0, equity_raise: 0, dividend: 0, buy_info: false, beliefs: {}, reflection: "",
+      agreement_actions: [], exit_action: null,
+      pr_action: null, invest_water_efficiency: 0, public_good_contributions: {},
+      invest_rnd: 0, buy_vertical: [], hire_roles: [], fire_roles: [],
+      draw_convertible: 0, draw_rbf: 0, acquisition_bid: null,
+      build_facilities: [], maintain_facilities: {}, mothball_facilities: [], reactivate_facilities: [], divest_facilities: [],
+      hire_employees: [], hire_bids: {}, fire_employees: [], raise_employees: {}, poach_employees: [],
+    } as FirmDecision;
   }
   /** The house defaults — a first-round firm with nothing in memory and no standing plan. */
   private houseDecision(v: RawView): FirmDecision {
@@ -497,7 +503,11 @@ export class StudentClient {
     // team plan) is re-sent with what changed now, so a lever put back to last round's value stays ours.
     const inferred = this.firmMode === "team" && planView ? touchedLevers(slice, planView.standing, planView.round) : undefined;
     const touched = inferred ? [...new Set([...(planView?.teamPlan?.seats.find((s) => s.me)?.touched ?? []), ...inferred])] : undefined;
-    await api(this.base, "/submit", { method: "POST", body: JSON.stringify({ token: this.token, decision: slice, touched, round: forRound ?? this.lastDecisionRound }) });
+    // DW-082: when each of them last changed — 0 (the server stamps now) for what this submit changes or
+    // holds, the stored date for the rest, so a resubmit never re-dates a lever this seat left alone.
+    const touched_at = touched && planView ? touchedDates(planView as unknown as GameView, slice, touched) : undefined;
+    await api(this.base, "/submit", { method: "POST", body: JSON.stringify({ token: this.token, decision: slice, touched, touched_at, round: forRound ?? this.lastDecisionRound }) });
+    if (touched && planView) holdsSent(planView.round); // landed: those holds are on the server now
   }
 }
 

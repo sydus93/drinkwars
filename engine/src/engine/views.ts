@@ -321,7 +321,8 @@ export function projectFirms(world: WorldState, c: Config, viewerId: FirmId, las
       share: fr ? Object.values(fr.segments).reduce((a, s) => a + s.share, 0) : 0,
       Q: show ? f.Q : 0, B: show ? f.B : 0, cap: show ? f.cap : 0, unitCost: show ? f.unit_cost : 0,
       T_emp: show ? f.T_emp : 0, T_inv: show ? f.T_inv : 0, T_gov: show ? f.T_gov : 0,
-      leverage: show ? f.debt / Math.max(f.paid_in_capital + f.retained_earnings, 1e-6) : 0,
+      // clamped at 10× like the engine's own figure (finance.ts) — equity ≤ 0 read ~10¹²× (DW-082)
+      leverage: show ? Math.min(10, f.debt / Math.max(f.paid_in_capital + f.retained_earnings, 1e-6)) : 0,
       netIncome: show ? (fr?.pnl.net_income ?? 0) : 0,
       priceBySeg, shareBySeg, focus,
       cash: show ? f.cash : 0, debt: show ? f.debt : 0,

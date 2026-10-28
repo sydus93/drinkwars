@@ -27,12 +27,14 @@ import { TapDispatch } from "../components/TapDispatch.js";
 import { Emblem } from "../components/FacilityGlyph.js";
 import { firmColor, firmEmblem } from "../lib/teamColors.js";
 import { DESK_LEVERS, ROLE_DESK } from "drinkwars-engine";
-import { ackConflict, computeConflicts, leverText, offDeskEdits, openConflicts, same } from "../lib/reconcile.js";
-import { cityActionsFrom, dedupeBuilds, keepUntouchedMarkets, marketPresenceFrom, marketsTouched, poachesFrom, type CityActions } from "../game/cityActions.js";
+import { ackConflict, cancelsRequest, computeConflicts, leverText, offDeskEdits, openConflicts, same } from "../lib/reconcile.js";
+import { buildKey, cityActionsFrom, dedupeBuilds, keepUntouchedMarkets, marketPresenceFrom, marketsTouched, poachesFrom, type CityActions, type CityBuildOrder } from "../game/cityActions.js";
 import { CallsTickets, useCallsDesk, type CallsClient } from "../components/Calls.js"; // DW-077 calls tickets
 import { RoundResolved } from "../components/RoundResolved.js"; // DW-077 results page
 import { ModeToggle, useInlineModeToggle } from "../components/ModeToggle.js";
 import { SubmitConfirm } from "../components/SubmitConfirm.js";
+/** DW-082: off-desk levers that follow the plan even when the form lacks the key (see the DW-050 follow). */
+const MARKET_KEYS = new Set(["market_presence", "market_supply"]);
 
 /** DW-077: the results page is remembered per game + round so a reload never re-opens a page already read. */
 const ackKey = (gameKey: string, round: number) => `dw077_resolved_ack:${gameKey}:${round}`;
@@ -157,6 +159,18 @@ export function Play({
   const markEdited = useCallback(() => setEditedSinceSubmit(true), []);
   const editDecision = useCallback((d: FirmDecision) => { setEditedSinceSubmit(true); setDecision(d); }, []);
   const editCity = useCallback((u: (a: CityActions) => CityActions) => { setEditedSinceSubmit(true); setCityActions(u); }, []);
+  // DW-082d: Withdraw on the map — the build leaves the City View queue AND the form's copy (the two
+  // are unioned at submit, so dropping it from one only would send it again).
+  const withdrawBuild = useCallback((b: CityBuildOrder) => {
+    const k = buildKey(b);
+    setEditedSinceSubmit(true);
+    setCityActions((a) => ({ ...a, builds: a.builds.filter((x) => buildKey(x) !== k) }));
+    setDecision((d) => (d?.build_facilities?.some((x) => buildKey(x as CityBuildOrder) === k) ? { ...d, build_facilities: d.build_facilities.filter((x) => buildKey(x as CityBuildOrder) !== k) } : d));
+  }, []);
+  // The form's builds are this seat's own for the CEO, solo play and the operations chair; any other
+  // specialist's form mirrors the team plan's builds there, so the map can't withdraw them.
+  const seatDesk = mp && seatRole ? ROLE_DESK[seatRole] ?? "all" : "all";
+  const buildsMine = seatDesk === "all" || (DESK_LEVERS[seatDesk] as string[]).includes("build_facilities");
   const queuePoach = (firm: string, employee: string, offer: number) =>
     (setEditedSinceSubmit(true), setPoaches((prev) => {
       const rest = prev.filter((p) => p.employee !== employee);
@@ -233,7 +247,9 @@ export function Play({
       const src = srcS;
       let changed = false;
       for (const k of Object.keys(src)) {
-        if (own.has(k) || k === "firm_id" || !(k in next)) continue;
+        // DW-082: the market levers follow even when the form lacks the key — a form seeded from the standing
+        // plan has no "markets served" before the firm's first entry, so a teammate's entry this round never showed
+        if (own.has(k) || k === "firm_id" || (!(k in next) && !MARKET_KEYS.has(k))) continue;
         if (prevS && prevS[k] === snapS[k]) continue;
         if (JSON.stringify(next[k]) !== snapS[k]) { next[k] = src[k]; changed = true; }
       }
@@ -335,7 +351,7 @@ export function Play({
         if (cityActions.reactivations.length) out.reactivate_facilities = Array.from(new Set([...(((raw.reactivate_facilities as unknown) ?? []) as string[]), ...cityActions.reactivations]));
         if (cityActions.divests.length) out.divest_facilities = Array.from(new Set([...(((raw.divest_facilities as unknown) ?? []) as string[]), ...cityActions.divests]));
         if (Object.keys(cityActions.maintain).length) out.maintain_facilities = { ...(((raw.maintain_facilities as unknown) ?? {}) as Record<string, number>), ...cityActions.maintain };
-        if (Object.keys(cityActions.supply).length) out.market_supply = cityActions.supply;
+        if (cityActions.supply) out.market_supply = cityActions.supply; // the drawer was edited (DW-082)
         if (marketsTouched(view, cityActions)) out.market_presence = marketPresenceFrom(view, cityActions.markets);
         if (poaches.length) out.poach_employees = poaches;
         d = out as unknown as FirmDecision;
@@ -353,13 +369,15 @@ export function Play({
       const off = offDeskEdits(view, seatRole, d, standing);
       if (open.length || off.length) {
         const T = (f: string, v: unknown) => leverText(f, v, view);
+        // DW-082: against a teammate's build / hire / offer, your "none" is a cancel — the button says so
+        const useYours = (c: { field: unknown; mine: unknown }) => cancelsRequest(String(c.field), c.mine) ? "press Cancel it in the commit panel to drop it" : "change it, or press Keep mine in the commit panel, to use yours";
         const lines = [
           ...open.slice(0, 6).map((c) => c.cover?.ownerName
-            ? `${c.label}: ${c.who} suggested ${T(String(c.field), c.theirs)} for ${c.cover.ownerName}'s desk; you have ${T(String(c.field), c.mine)}. ${c.cover.ownerSubmitted ? `${c.cover.ownerName} decides — it's their desk.` : c.winner === "me" ? `Yours will be used unless ${c.cover.ownerName} changes it.` : `Theirs will be used ${c.cover.sticks ? `unless ${c.cover.ownerName} cancels it` : `until ${c.cover.ownerName} submits`} — change it, or press Keep mine in the commit panel, to use yours.`}`
+            ? `${c.label}: ${c.who} suggested ${T(String(c.field), c.theirs)} for ${c.cover.ownerName}'s desk; you have ${T(String(c.field), c.mine)}. ${c.cover.ownerSubmitted ? `${c.cover.ownerName} decides — it's their desk.` : c.winner === "me" ? `${cancelsRequest(String(c.field), c.mine) ? "It's cancelled" : "Yours will be used"} unless ${c.cover.ownerName} changes it.` : `Theirs will be used ${c.cover.sticks ? `unless ${c.cover.ownerName} cancels it` : `until ${c.cover.ownerName} submits`} — ${useYours(c)}.`}`
             : c.cover
-            ? `${c.label}: ${c.who} set ${T(String(c.field), c.theirs)} for an empty desk; you have ${T(String(c.field), c.mine)}. ${c.winner === "me" ? "Yours will be used — you changed it." : "Theirs will be used — change it, or press Keep mine in the commit panel, to use yours."}`
+            ? `${c.label}: ${c.who} set ${T(String(c.field), c.theirs)} for an empty desk; you have ${T(String(c.field), c.mine)}. ${c.winner === "me" ? (cancelsRequest(String(c.field), c.mine) ? "It's cancelled — as CEO you have the final say." : "Yours will be used — as CEO you have the final say.") : `Theirs will be used — ${useYours(c)}.`}`
             : `${c.label}: ${c.who} submitted ${T(String(c.field), c.theirs)}; you have ${T(String(c.field), c.mine)}. ${c.winner === "me" ? "Yours will be used — it's your desk." : c.untouched ? "The CEO's will be used — you haven't changed it this round. Go back and press Keep mine in the commit panel to hold your number." : "Theirs will be used — it's their desk."}`),
-          ...off.slice(0, 6).map((e) => `${e.label} is the ${e.deskOwner}'s desk${e.ownerName ? ` (${e.ownerName})` : e.ceoSeated ? " — empty, so the CEO covers it" : " — empty, no CEO seated"}. You set ${T(String(e.field), e.mine)}; the firm's plan has ${T(String(e.field), e.firm)}. ${e.applies ? "Yours will be used, and the CEO will see it." : `${e.ownerName ?? "The owner"} decides — yours is only a suggestion.`}`),
+          ...off.slice(0, 6).map((e) => `${e.label} is the ${e.deskOwner}'s desk${e.ownerName ? ` (${e.ownerName})` : e.ceoSeated ? " — empty, so the CEO covers it" : " — empty, no CEO seated"}. You set ${T(String(e.field), e.mine)}; the firm's plan has ${T(String(e.field), e.firm)}. ${e.applies ? (e.byCeo ? "The CEO has the final say on an empty desk — yours reaches them as a suggestion." : "Yours will be used, and the CEO will see it.") : `${e.ownerName ?? "The owner"} decides — yours is only a suggestion.`}`),
         ];
         if (!(await askConfirm(lines))) return;
         if (roundRef.current !== formRound) return; // the round moved while the check was open
@@ -481,7 +499,7 @@ export function Play({
       {/* destination */}
       <main className="min-w-0">
           {dest === "map" && (cityEnabled
-            ? <CityView view={view} actions={cityActions} setActions={editCity} onInspect={setDetailFirm} extraBuilds={decision?.build_facilities ?? []} />
+            ? <CityView view={view} actions={cityActions} setActions={editCity} onInspect={setDetailFirm} extraBuilds={decision?.build_facilities ?? []} extraOwn={buildsMine} onWithdrawBuild={withdrawBuild} carriedSupply={decision?.market_supply} />
             : <MarketMap view={view} onInspect={setDetailFirm} />)}
 
           {dest === "decide" && (

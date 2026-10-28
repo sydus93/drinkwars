@@ -62,11 +62,12 @@ test("market research is the team's purchase: bought by the CFO, it stands throu
   }
 });
 
-test("a suggested HIRE for a seated CHRO survives that chair's silent submit, so it reads 'unless the CHRO cancels it'", () => {
+test("a suggested HIRE for a seated CHRO survives that chair's silent submit, so it reads 'unless the CHRO cancels it' (and the CEO's button is Cancel it)", () => {
   submit(CFO, { ...standing, price: { mass: 7.65, niche: 9.99 }, buy_info: true, hire_roles: ["ops_manager"] } as FirmDecision);
   const r = row(CEO, standing, "hire_roles")!;
   assert.equal(r.winner, "them");
-  assert.match(r.who, /theirs unless the CHRO cancels it — change it, or Keep mine/);
+  assert.match(r.who, /theirs unless the CHRO cancels it — Cancel it to drop it/); // DW-082: the CEO has no hire of their own, so the button cancels
+  assert.equal(r.action, "cancel");
   submit(CHRO, { ...standing } as FirmDecision); // the CHRO submits without touching hires
   assert.deepEqual(view(CEO).teamPlan!.composed!.hire_roles, ["ops_manager"], "the price would have reverted; the hire stands");
 });

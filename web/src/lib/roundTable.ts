@@ -49,7 +49,7 @@ export interface PlanTable {
 }
 
 const seatPart = (s: TeamPlanSeat): SeatPartial =>
-  ({ desk: (s.desk ?? (s.role ? ROLE_DESK[s.role] ?? "all" : "all")) as SeatPartial["desk"], partial: s.partial as Partial<FirmDecision>, updated_at: s.updated_at, touched: s.touched });
+  ({ desk: (s.desk ?? (s.role ? ROLE_DESK[s.role] ?? "all" : "all")) as SeatPartial["desk"], partial: s.partial as Partial<FirmDecision>, updated_at: s.updated_at, touched: s.touched, touched_at: s.touched_at });
 const deskOf = (s: TeamPlanSeat): string => s.desk ?? (s.role ? ROLE_DESK[s.role] ?? "all" : "all");
 
 /** Rows for every lever the plan speaks to (a non-empty value, or an entry someone changed). */
@@ -71,15 +71,19 @@ export function planTable(plan: TeamPlan | null | undefined, standing: FirmDecis
   }
   const parts = submitted.map(seatPart);
   const comp = composeTeamDecision({ ...standing, firm_id: plan.composed?.firm_id ?? standing.firm_id }, parts);
+  // DW-082 (audit #5): once the round is locked, the record that will run is the table's value — a slice
+  // that raced the lock can sit in the seats without being in it. Credit a seat only if it says the same.
+  const lockedRec = plan.locked && plan.composed ? plan.composed : null;
   const changed = (s: TeamPlanSeat, f: Lever) => seatTouched(seatPart(s), f, standing);
   const rows: PlanRow[] = [];
   let unusedCount = 0;
   for (const desk of TABLE_DESKS) {
     for (const f of DESK_LEVERS[desk] as Lever[]) {
       if (SKIP.has(f as string)) continue;
-      const value = comp.decision[f];
+      const value = lockedRec ? lockedRec[f] : comp.decision[f];
       const k = comp.from[f];
-      const author = k === undefined ? null : submitted[k];
+      const credited = k === undefined ? null : submitted[k];
+      const author = lockedRec && credited && !sameLever((credited.partial as Record<string, unknown>)[f as string], value) ? null : credited;
       const entries = submitted.filter((s) => (s.partial as Record<string, unknown>)[f as string] !== undefined);
       const anyChange = entries.some((s) => changed(s, f));
       if (sameLever(value, null) && !anyChange) continue; // nothing planned, nobody moved it
@@ -92,5 +96,5 @@ export function planTable(plan: TeamPlan | null | undefined, standing: FirmDecis
       rows.push({ field: f, label: leverLabel(f as string), desk, value, author, authorChanged: !!author && changed(author, f), chairYielded, unused });
     }
   }
-  return { rows, composed: comp.decision, unusedCount };
+  return { rows, composed: lockedRec ?? comp.decision, unusedCount };
 }

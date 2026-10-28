@@ -172,7 +172,9 @@ export function resolveFacilities(world: WorldState, decisions: Map<FirmId, Firm
         condition: 1, active: true, location_id, market_id, lot_id,
       });
       capex += t.base_cost;
-      out.events.push(`FACILITY BUILT: ${f.id} breaks ground on a ${t.label.toLowerCase()} (online in ${t.build_rounds} round${t.build_rounds === 1 ? "" : "s"})`);
+      // DW-082d: name the market (geography on) — two taprooms read as one line twice, so a team couldn't tell where each went.
+      const where = market_id ? c.modules?.geography?.markets.find((m) => m.id === market_id)?.label : undefined;
+      out.events.push(`FACILITY BUILT: ${f.id} breaks ground on a ${t.label.toLowerCase()}${where ? ` in ${where}` : ""} (online in ${t.build_rounds} round${t.build_rounds === 1 ? "" : "s"})`);
     }
 
     // ---- Mothball / reactivate ----

@@ -33,7 +33,7 @@ export const engineWhoWins: WhoWins = (lever, seats, composed, standing) => {
     seats.forEach((s, i) => {
       if (!s.submitted || !s.partial) return;
       idx.push(i);
-      parts.push({ desk: (s.desk ?? (s.role ? ROLE_DESK[s.role] ?? "all" : "all")) as SeatPartial["desk"], partial: s.partial, updated_at: s.updatedAt, touched: s.touched });
+      parts.push({ desk: (s.desk ?? (s.role ? ROLE_DESK[s.role] ?? "all" : "all")) as SeatPartial["desk"], partial: s.partial, updated_at: s.updatedAt, touched: s.touched, touched_at: s.touched_at });
     });
     hit = standing ? { comp: composeTeamDecision({ ...standing, firm_id: composed.firm_id }, parts), idx, standing } : null;
     compCache.set(seats, hit);

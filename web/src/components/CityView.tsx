@@ -16,7 +16,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Config } from "drinkwars-engine";
 import type { GameView, MarketView, MarketSegmentStanding, MarketLot } from "../game/controller.js";
 import type { CityActions, CityBuildOrder } from "../game/cityActions.js";
-import { dedupeBuilds, marketPresenceFrom } from "../game/cityActions.js";
+import { buildKey, dedupeBuilds, marketPresenceFrom, overruledBuilds } from "../game/cityActions.js";
+import type { TeamPlanSeat } from "../game/multiplayer.js";
 import { SEG_LABEL, SEG_CHARACTER, DISTRICT_BEST, MARKET_META, ZONE_OF, ZONE_TONE, FAC_TAG, FAC_NOTE, fmt, rankDistrictsForType, districtFitScore } from "../labels.js";
 import { firmColor } from "../lib/teamColors.js";
 import { FacilityChip, flowBadge } from "./FacilityGlyph.js";
@@ -87,7 +88,11 @@ const FPROF: Record<string, number> = { taproom: 26, brewery_small: 30, canning_
 
 // ───────────────────────── city model + procedural plan ─────────────────────────
 interface DistrictModel { key: string; label: string; arch: string; kind: string; rent: number; out: number; brand: number; best: string }
-interface MineModel { id: string; type: string; district: string; lot?: string; active: boolean; pending: boolean }
+interface MineModel {
+  id: string; type: string; district: string; lot?: string; active: boolean; pending: boolean;
+  // DW-082d — a queued build: its order, whether this seat may withdraw it, and whether a teammate's word dropped it from the plan
+  order?: CityBuildOrder; own?: boolean; overruled?: boolean; lostTo?: TeamPlanSeat | null;
+}
 interface RivalModel { firmId: string; name: string; district: string; type: string; lot?: string }
 interface CityModel {
   id: string; name: string; region: string; kind: string; entered: boolean; entryCost: number; fx: number;
@@ -107,7 +112,7 @@ interface Plan {
 /** extraBuilds: builds already in the round decision but not in cityActions — e.g. the
  *  firm-builder's founding facilities (auto-placed on home lots round 1). Shown as PENDING so
  *  their lots read as taken (no land scramble); display-only, so they're not double-counted. */
-function buildCity(view: GameView, market: MarketView, actions: CityActions, extraBuilds: { type: string; location?: string; market?: string; lot?: string }[] = []): CityModel {
+function buildCity(view: GameView, market: MarketView, actions: CityActions, extraBuilds: { type: string; location?: string; market?: string; lot?: string }[] = [], extraOwn = false, lost: Map<string, TeamPlanSeat | null> = new Map()): CityModel {
   const meta = MARKET_META[market.id] ?? { city: market.label, region: "", geo: [0, 0] as [number, number], coast: null, seed: 1 };
   const dCfg = view.modules?.facilities?.districts ?? [];
   const districts: DistrictModel[] = dCfg.map((d) => ({
@@ -122,9 +127,13 @@ function buildCity(view: GameView, market: MarketView, actions: CityActions, ext
   }));
   // DW-076: the form mirrors builds the queue already holds (a cover the plan carries, or the
   // stored slice after a reload) — one marker per order, never two.
+  // DW-082d: this seat may withdraw its own queue (and the form's builds when the lever is its own);
+  // a build a teammate's word dropped from the plan is marked, not drawn as breaking ground.
+  const ownKeys = new Set(actions.builds.map(buildKey));
   const queued: MineModel[] = dedupeBuilds([...actions.builds, ...extraBuilds] as CityBuildOrder[])
     .filter((b) => b.market === market.id)
-    .map((b, i) => ({ id: `queued_${market.id}_${i}`, type: b.type, district: b.location ?? (market.lots ?? []).find((L) => L.id === b.lot)?.district ?? fallbackDistrict, lot: b.lot, active: true, pending: true }));
+    .map((b, i) => ({ id: `queued_${market.id}_${i}`, type: b.type, district: b.location ?? (market.lots ?? []).find((L) => L.id === b.lot)?.district ?? fallbackDistrict, lot: b.lot, active: true, pending: true,
+      order: b, own: extraOwn || ownKeys.has(buildKey(b)), overruled: lost.has(buildKey(b)), lostTo: lost.get(buildKey(b)) ?? null }));
   const rivals: RivalModel[] = market.rivalSites.map((s) => ({ firmId: s.firmId, name: s.name, district: s.location_id ?? fallbackDistrict, type: s.type, lot: s.lot_id }));
   // A market counts as entered if the engine has it (prior rounds) OR it was committed this
   // round in the City View — otherwise the just-entered market stays "locked" and its siting
@@ -427,8 +436,9 @@ function GlobeOverlay({ cities, homeGeo, onClose, onPick }: { cities: CityModel[
 }
 
 // ───────────────────────── main component ─────────────────────────
-export function CityView({ view, actions, setActions, onInspect, extraBuilds = [] }: { view: GameView; actions: CityActions; setActions: (u: (a: CityActions) => CityActions) => void; onInspect: (firmId: string) => void; extraBuilds?: { type: string; location?: string; market?: string; lot?: string }[] }) {
-  const cities = useMemo(() => view.markets.map((m) => buildCity(view, m, actions, extraBuilds)), [view, actions, extraBuilds]);
+export function CityView({ view, actions, setActions, onInspect, extraBuilds = [], extraOwn = false, onWithdrawBuild, carriedSupply }: { view: GameView; actions: CityActions; setActions: (u: (a: CityActions) => CityActions) => void; onInspect: (firmId: string) => void; extraBuilds?: { type: string; location?: string; market?: string; lot?: string }[]; extraOwn?: boolean; onWithdrawBuild?: (b: CityBuildOrder) => void; carriedSupply?: Record<string, number> }) {
+  const lost = useMemo(() => overruledBuilds(view), [view]);
+  const cities = useMemo(() => view.markets.map((m) => buildCity(view, m, actions, extraBuilds, extraOwn, lost)), [view, actions, extraBuilds, extraOwn, lost]);
   const hasIntl = cities.some((c) => c.kind === "export");
   const homeGeo = cities.find((c) => c.kind === "home")?.geo ?? null;
   const youId = view.own.id;
@@ -507,10 +517,23 @@ export function CityView({ view, actions, setActions, onInspect, extraBuilds = [
   };
 
   const presence = marketPresenceFrom(view, actions.markets);
+  // DW-082: the offers in force — the drawer's once edited, else the form's (carried from last round).
+  const offers = actions.supply ?? carriedSupply ?? {};
+  const offered = (id: string) => typeof offers[id] === "number";
+  const anyOffer = Object.keys(presence).some(offered);
   const selSites = sel.mine.length;
   const tradeOn = layer === "trade";
   // Last resolved round's per-market trade flow (produced/consumed/net/lanes) — engine hook #1.
   const flow = view.ownResult?.markets?.[sel.id] ?? null;
+  // DW-082d: shipments come from the lanes (recorded where they land), not from `net` = brewed − sold,
+  // which also counted beer left unsold — "ships 21600" when 19,372 went out.
+  const flows = view.ownResult?.markets ?? null;
+  const shippedOut = (id: string) => Object.values(flows ?? {}).reduce((a, m) => a + (m.lanes ?? []).filter((L) => L.origin_market === id).reduce((s2, L) => s2 + L.units, 0), 0);
+  const shippedIn = (id: string) => (flows?.[id]?.lanes ?? []).reduce((a, L) => a + L.units, 0);
+  const shipBadge = (id: string): { text: string; tone: "in" | "out" | "neutral" } => { const o = shippedOut(id), i = shippedIn(id); return o > 0.5 ? { text: `↑ shipped out ${fmt.int(o)}`, tone: "out" } : i > 0.5 ? { text: `↓ shipped in ${fmt.int(i)}`, tone: "in" } : { text: "all local", tone: "neutral" }; };
+  const lostCopy = (who: TeamPlanSeat | null | undefined) => !who ? "A teammate's call on builds stands — see your team's rows on Decide."
+    : who.desk === "all" ? `${who.name} (CEO) cancelled it. On an empty desk the CEO has the final say — only the CEO can bring it back (Use theirs, on Decide).`
+    : `${who.name} (${(who.role ?? "").toUpperCase()}) set this round's builds — it's their desk, so their call stands.`;
   const layerTabs: { id: "map" | "traffic" | "zoning" | "trade"; label: string }[] = [{ id: "map", label: "Map" }, { id: "traffic", label: "Traffic" }, { id: "zoning", label: "Zoning" }, { id: "trade", label: "Trade" }];
 
   // ── derived view copy ──
@@ -524,6 +547,7 @@ export function CityView({ view, actions, setActions, onInspect, extraBuilds = [
   const legendNote = layer === "traffic" ? "Traffic — warm = busy streets" : layer === "zoning" ? "Zoning — land use by district" : layer === "trade" ? (exportsOpenRound ? `Trade — flows shipped per round · Exports open in round ${exportsOpenRound}` : "Trade — flows shipped per round") : "Click a FOR-LEASE parcel to site a facility";
   const selKindLabel = sel.kind === "export" ? "International market" : sel.kind === "home" ? "Home market" : "Domestic market";
   const totalPresence = Math.max(0.001, Object.values(presence).reduce((a, b) => a + b, 0));
+  const autoPresence = Math.max(0.001, Object.entries(presence).filter(([id]) => !offered(id)).reduce((a, [, w]) => a + w, 0));
 
   return (
     <div className="relative grid gap-3.5 lg:grid-cols-[248px_minmax(0,1fr)_330px] lg:items-start">
@@ -633,9 +657,9 @@ export function CityView({ view, actions, setActions, onInspect, extraBuilds = [
               </button>
             ); })}
 
-            {plan && plan.facilities.map((f) => { const p = pct(f.cx, f.cy, f.h, layer); const ec = dByKey(f.district); const tt = typeOf(f.type); const dim = hoverFac && hoverFac !== f.id ? 0.5 : !f.active ? 0.5 : f.pending ? 0.6 : 1; const fb = tradeOn ? flowBadge((tt?.production_capacity ?? tt?.capacity_contribution ?? 0) - (tt?.retail_draw ?? 0)) : null; return (
-              <button key={f.id} data-dw="fac-marker" onClick={() => !f.pending && setFacPop(f.id)} onMouseEnter={() => setHoverFac(f.id)} onMouseLeave={() => setHoverFac(null)} title={`${tt?.label ?? f.type} · ${ec?.label ?? f.district}${f.pending ? " · breaking ground" : f.active ? "" : " · mothballed"}`} className="absolute z-[7] flex cursor-pointer flex-col items-center border-none bg-none p-0" style={{ left: `${p.l}%`, top: `${p.t}%`, transform: "translate(-50%,-100%)", opacity: dim, filter: hoverFac === f.id ? "drop-shadow(0 0 5px var(--color-copperdeep))" : "drop-shadow(0 3px 5px rgba(40,25,8,.32))" }}>
-                <FacilityChip type={f.type} color={cssColor(youId)} size={30} mine style={f.pending ? { outline: "2px dashed #7e3f18", outlineOffset: 1 } : undefined} />
+            {plan && plan.facilities.map((f) => { const p = pct(f.cx, f.cy, f.h, layer); const ec = dByKey(f.district); const tt = typeOf(f.type); const lostHere = !!sel.mine.find((x) => x.id === f.id)?.overruled; const dim = hoverFac && hoverFac !== f.id ? 0.5 : !f.active ? 0.5 : lostHere ? 0.45 : f.pending ? 0.6 : 1; const fb = tradeOn ? flowBadge((tt?.production_capacity ?? tt?.capacity_contribution ?? 0) - (tt?.retail_draw ?? 0)) : null; return (
+              <button key={f.id} data-dw="fac-marker" onClick={() => setFacPop(f.id)} onMouseEnter={() => setHoverFac(f.id)} onMouseLeave={() => setHoverFac(null)} title={`${tt?.label ?? f.type} · ${ec?.label ?? f.district}${f.pending ? (lostHere ? " · not in the team plan" : " · breaking ground") : f.active ? "" : " · mothballed"}`} className="absolute z-[7] flex cursor-pointer flex-col items-center border-none bg-none p-0" style={{ left: `${p.l}%`, top: `${p.t}%`, transform: "translate(-50%,-100%)", opacity: dim, filter: hoverFac === f.id ? "drop-shadow(0 0 5px var(--color-copperdeep))" : "drop-shadow(0 3px 5px rgba(40,25,8,.32))" }}>
+                <FacilityChip type={f.type} color={cssColor(youId)} size={30} mine style={f.pending ? { outline: `2px dashed ${lostHere ? "var(--color-brick)" : "#7e3f18"}`, outlineOffset: 1 } : undefined} />
                 {fb && <span className="mt-0.5 rounded-full px-1.5 py-px font-mono text-[0.5rem] font-bold leading-none" style={{ background: fb.tone === "out" ? "var(--color-copper)" : fb.tone === "in" ? "var(--color-aero)" : "var(--color-panel)", color: fb.tone === "neutral" ? "var(--color-inksoft)" : "#fff4e0", whiteSpace: "nowrap" }}>{fb.text}</span>}
               </button>
             ); })}
@@ -652,7 +676,7 @@ export function CityView({ view, actions, setActions, onInspect, extraBuilds = [
               const isRetail = (ty: string) => (typeOf(ty)?.retail_draw ?? 0) > 0;
               const src = plan.facilities.find((f) => isProd(f.type)) ?? plan.facilities[0];
               const retail = plan.facilities.filter((f) => isRetail(f.type) && f !== src);
-              const net = flow?.net ?? 0;
+              const net = shippedOut(sel.id) - shippedIn(sel.id); // DW-082d: what really shipped, not brewed − sold
               const ptOf = (f: { cx: number; cy: number; h: number }) => { const pp = pct(f.cx, f.cy, f.h, layer); return [pp.l, pp.t] as const; };
               if (!src) return null;
               const [sx, sy] = ptOf(src);
@@ -676,6 +700,22 @@ export function CityView({ view, actions, setActions, onInspect, extraBuilds = [
             {/* on-map facility popover — click a site to read its condition/progress + act (design's facPop) */}
             {plan && facPop && (() => {
               const fp = plan.facilities.find((x) => x.id === facPop); const f = sel.mine.find((x) => x.id === facPop); const t = f ? typeOf(f.type) : undefined;
+              if (fp && f && f.pending) {
+                // DW-082d: a queued build — what it costs, whether it is still in the team plan, and (if it is this seat's) Withdraw.
+                const ec = dByKey(f.district); const p = pct(fp.cx, fp.cy, fp.h, "map"); const label = t?.label ?? f.type;
+                const body = (
+                  <>
+                    <div className="flex items-baseline justify-between gap-2"><div className="flex items-center gap-2"><FacilityChip type={f.type} color={cssColor(youId)} size={20} mine /><div className="display text-[0.95rem] text-ink">{label}</div></div><button onClick={() => setFacPop(null)} className="border-none bg-none text-[0.8rem] text-inksoft">✕</button></div>
+                    <div className="text-[0.7rem] italic text-inksoft">{ec?.label ?? f.district} · {f.overruled ? "not in the team plan" : "breaks ground when the round locks"}</div>
+                    {f.overruled && <div className="mt-2 text-[0.68rem] leading-snug text-brick">{lostCopy(f.lostTo)}</div>}
+                    <div className="mt-2 flex justify-between text-[0.8rem]"><span className="text-inksoft">Cost</span><span className="tnum font-semibold text-ink">{fmt.money((t?.base_cost ?? 0) + (f.order?.bid ?? 0))}</span></div>
+                    {f.own && f.order && onWithdrawBuild
+                      ? <button onClick={() => { onWithdrawBuild(f.order!); setFacPop(null); }} className="mt-2.5 w-full rounded-md border border-brick px-2 py-1.5 font-mono text-[0.55rem] font-semibold uppercase tracking-wide text-brick">Withdraw {f.overruled ? "my proposal" : "this build"}</button>
+                      : <div className="mt-2 text-[0.64rem] italic leading-snug text-inksoft">On the team plan from a teammate — talk to them, or answer it on Decide.</div>}
+                  </>
+                );
+                return <AnchoredPopover stage={stageRef} at={p} width={214} label={`${label} · ${ec?.label ?? f.district}`} onClose={() => setFacPop(null)}>{body}</AnchoredPopover>;
+              }
               if (!fp || !f || !t || f.pending) return null;
               const ec = dByKey(f.district); const p = pct(fp.cx, fp.cy, fp.h, "map");
               const prod = t.production_capacity ?? t.capacity_contribution ?? 0;
@@ -826,10 +866,11 @@ export function CityView({ view, actions, setActions, onInspect, extraBuilds = [
                 <div className="flex flex-col gap-1.5">
                   {sel.mine.map((f) => { const t = typeOf(f.type); const ec = dByKey(f.district); return (
                     <div key={f.id} className="flex items-center gap-2.5 rounded-[9px] border border-line2 px-2.5 py-2" style={{ opacity: f.active ? 1 : 0.6 }}>
-                      <button onClick={() => !f.pending && setFacPop(f.id)} onMouseEnter={() => setHoverFac(f.id)} onMouseLeave={() => setHoverFac(null)} className="flex flex-1 items-center gap-2.5 border-none bg-none p-0 text-left" title="Open facility">
+                      <button onClick={() => setFacPop(f.id)} onMouseEnter={() => setHoverFac(f.id)} onMouseLeave={() => setHoverFac(null)} className="flex flex-1 items-center gap-2.5 border-none bg-none p-0 text-left" title="Open facility">
                         <FacilityChip type={f.type} color={cssColor(youId)} size={22} mine />
-                        <div className="min-w-0 flex-1"><div className="text-[0.92rem] font-semibold text-ink">{t?.label ?? f.type}</div><div className="text-[0.72rem] italic text-inksoft">{ec?.label ?? f.district} · {f.pending ? "breaking ground" : f.active ? "running" : "mothballed"}</div></div>
+                        <div className="min-w-0 flex-1"><div className="text-[0.92rem] font-semibold text-ink">{t?.label ?? f.type}</div><div className={`text-[0.72rem] italic ${f.overruled ? "text-brick" : "text-inksoft"}`}>{ec?.label ?? f.district} · {f.pending ? (f.overruled ? "not in the team plan" : "breaking ground") : f.active ? "running" : "mothballed"}</div></div>
                       </button>
+                      {f.pending && f.own && f.order && onWithdrawBuild && <button onClick={() => onWithdrawBuild(f.order!)} className="rounded-[7px] border border-brick px-2 py-1 font-mono text-[0.55rem] font-semibold uppercase tracking-wide text-brick">Withdraw</button>}
                       {!f.pending && <button onClick={() => toggleFac(f.id)} className="rounded-[7px] border px-2 py-1 font-mono text-[0.55rem] font-semibold uppercase tracking-wide" style={{ borderColor: f.active ? "var(--color-inksoft)" : "var(--color-hop)", color: f.active ? "var(--color-inksoft)" : "var(--color-hop)" }}>{f.active ? "Mothball" : "Reopen"}</button>}
                     </div>
                   ); })}
@@ -932,7 +973,7 @@ export function CityView({ view, actions, setActions, onInspect, extraBuilds = [
 
             {/* distribution */}
             <section className="card p-4">
-              {flow && (() => { const fb = flowBadge(flow.net); const ship = (flow.lanes ?? []).reduce((a, L) => a + L.cost, 0); return (
+              {flow && (() => { const fb = shipBadge(sel.id); const ship = (flow.lanes ?? []).reduce((a, L) => a + L.cost, 0); return (
                 <div className="mb-2.5">
                   <div className="font-mono text-[0.5rem] uppercase tracking-[0.12em] text-inksoft">This market · last round</div>
                   <div className="mt-1 flex items-center justify-between text-[0.78rem] text-inksoft"><span>Brewed here <b className="tnum text-ink">{fmt.int(flow.produced)}</b></span><span>Sold <b className="tnum text-ink">{fmt.int(flow.q_sold)}</b></span></div>
@@ -940,7 +981,7 @@ export function CityView({ view, actions, setActions, onInspect, extraBuilds = [
                 </div>
               ); })()}
               <button onClick={() => { setLayer("trade"); setDrawerOpen(true); }} className="w-full rounded-[10px] border border-line2 bg-panel py-2 font-mono text-[0.62rem] font-semibold uppercase tracking-wide text-inksoft">View distribution ↗</button>
-              <div className="mt-2 text-center font-mono text-[0.55rem] text-inksoft">Supply routed here: {fmt.pct((presence[sel.id] ?? 0) / totalPresence)}</div>
+              <div className="mt-2 text-center font-mono text-[0.55rem] text-inksoft">{offered(sel.id) ? `Supply offered here: ${fmt.int(offers[sel.id])} units` : anyOffer ? `Supply routed here: ${fmt.pct((presence[sel.id] ?? 0) / autoPresence)} of what your offers leave` : `Supply routed here: ${fmt.pct((presence[sel.id] ?? 0) / totalPresence)}`}</div>
             </section>
           </>
         )}
@@ -979,13 +1020,20 @@ export function CityView({ view, actions, setActions, onInspect, extraBuilds = [
       ); })()}
 
 
-      {/* distribution drawer */}
+      {/* distribution drawer — DW-082d: last round's flows (brewed, sent, sold, shipped from where), then,
+          apart from them, this round's offers. It read as one picture: "ships 21600" was brewed − sold
+          (beer left unsold counted as shipped), nothing said which round, and the offer boxes sat on
+          last round's numbers as if they set them. */}
       {drawerOpen && (() => {
         const mk = view.ownResult?.markets ?? null;
-        const rows = cities.filter((c) => c.entered).map((c) => { const m = mk?.[c.id]; return { id: c.id, name: c.name, brewed: m?.produced ?? 0, drunk: m?.q_sold ?? 0, net: m?.net ?? 0, lanes: m?.lanes ?? [] }; });
+        const rows = cities.filter((c) => c.entered).map((c) => { const m = mk?.[c.id]; return { id: c.id, name: c.name, brewed: m?.produced ?? 0, drunk: m?.q_sold ?? 0, sent: m?.supplied, lanes: m?.lanes ?? [] }; });
         const maxv = Math.max(1, ...rows.map((r) => Math.max(r.brewed, r.drunk)));
-        const selRow = rows.find((r) => r.id === sel.id) ?? rows[0];
         const nameOf = (id: string) => cities.find((c) => c.id === id)?.name ?? id;
+        const hadRound = rows.some((r) => r.brewed > 0 || r.drunk > 0);
+        const lastSupply = rows.some((r) => r.sent != null) ? rows.reduce((a, r) => a + (r.sent ?? 0), 0) : rows.reduce((a, r) => a + r.brewed, 0);
+        const offerTotal = Object.values(offers).reduce((a, b) => a + b, 0);
+        const nowMarkets = cities.filter((c) => presence[c.id] != null);
+        const setOffer = (id: string, v: string) => setActions((a) => { const supply = { ...(a.supply ?? carriedSupply ?? {}) }; if (!v) delete supply[id]; else supply[id] = Math.max(0, +v); return { ...a, supply }; });
         return (
         <>
           <div onClick={() => setDrawerOpen(false)} className="fixed inset-0 z-50" style={{ background: "rgba(44,29,17,.3)" }} />
@@ -995,43 +1043,43 @@ export function CityView({ view, actions, setActions, onInspect, extraBuilds = [
               <button onClick={() => setDrawerOpen(false)} className="border-none bg-none text-lg text-inksoft">✕</button>
             </div>
             <div className="px-5 py-4">
-              <div className="mb-3 text-sm text-inksoft">Produced vs consumed in every market you operate — <b className="text-copperdeep">brewed</b> left, <b style={{ color: "var(--color-aero)" }}>drunk</b> right. The gap is a lane you're paying to ship.</div>
-              {rows.length === 0 ? <div className="text-sm italic text-inksoft">No resolved round yet — flows appear once you end the first round.</div> : (
-              <>
-                <div className="mb-2 text-[0.62rem] leading-snug text-inksoft">Set <b className="text-ink">offer</b> to route supply to a market explicitly; leave blank for auto (split by presence).</div>
-                {rows.map((r) => { const fb = flowBadge(r.net); return (
-                  <div key={r.id} className="mb-3">
+              <div className="mb-1 font-mono text-[0.55rem] font-semibold uppercase tracking-[0.14em] text-copperdeep">Last round</div>
+              <div className="mb-3 text-sm text-inksoft">Where you <b className="text-copperdeep">brewed</b> (left of the line) and where you <b style={{ color: "var(--color-aero)" }}>sold</b> (right). Beer sold where it wasn't brewed ships in from your nearest brewery — a lane you pay for, per unit and per mile.</div>
+              {!hadRound ? <div className="mb-2 text-sm italic text-inksoft">No resolved round yet — flows appear once the first round closes.</div> : rows.map((r) => {
+                const fb = shipBadge(r.id);
+                const unsold = r.sent != null ? Math.max(0, r.sent - r.drunk) : 0;
+                const soldOut = r.sent != null && r.sent > 0 && unsold < 1;
+                return (
+                  <div key={r.id} className="mb-3.5">
                     <div className="mb-1 flex items-baseline justify-between gap-2">
                       <button onClick={() => setSelId(r.id)} className="display text-sm" style={{ color: r.id === sel.id ? "var(--color-copperdeep)" : "var(--color-ink)" }}>{r.name}</button>
-                      <span className="flex items-center gap-1.5"><span className="font-mono text-[0.6rem] font-bold" style={{ color: fb.tone === "out" ? "var(--color-copper)" : fb.tone === "in" ? "var(--color-aero)" : "var(--color-inksoft)" }}>{fb.text}</span><input type="number" min="0" step="10" placeholder="auto" value={actions.supply[r.id] ?? ""} onChange={(e) => { const v = e.target.value; setActions((a) => { const supply = { ...a.supply }; if (!v) delete supply[r.id]; else supply[r.id] = Math.max(0, +v); return { ...a, supply }; }); }} className="w-16 !py-0.5 text-right text-[0.7rem]" title="Units to offer here this round" /></span>
+                      <span className="font-mono text-[0.6rem] font-bold" style={{ color: fb.tone === "out" ? "var(--color-copper)" : fb.tone === "in" ? "var(--color-aero)" : "var(--color-inksoft)" }}>{fb.text}</span>
                     </div>
                     <div className="relative h-3.5 rounded-[3px]" style={{ background: "var(--color-panel2)" }}>
                       <div className="absolute bottom-0 top-0 rounded-l-[3px]" style={{ right: "50%", width: `${(r.brewed / maxv) * 50}%`, background: "var(--color-copper)" }} />
                       <div className="absolute bottom-0 top-0 rounded-r-[3px]" style={{ left: "50%", width: `${(r.drunk / maxv) * 50}%`, background: "var(--color-aero)" }} />
                       <div className="absolute -bottom-0.5 -top-0.5 left-1/2 w-px -translate-x-1/2" style={{ background: "var(--color-inksoft)" }} />
                     </div>
+                    <div className="mt-1 text-[0.68rem] leading-snug text-inksoft">
+                      brewed <b className="tnum text-ink">{fmt.int(r.brewed)}</b> · sold <b className="tnum text-ink">{fmt.int(r.drunk)}</b>
+                      {soldOut ? <> · <b className="text-hop">sold out</b> — you might have sold more here</> : unsold >= 1 ? <> · <b className="text-brick">{fmt.int(unsold)} unsold</b> of {fmt.int(r.sent ?? 0)} sent here</> : null}
+                    </div>
+                    {r.lanes.map((L, i) => (<div key={i} className="text-[0.68rem] leading-snug text-inksoft">from {nameOf(L.origin_market)} <b className="tnum text-ink">{fmt.int(L.units)}</b> · lane cost <b className="tnum text-brick">−{fmt.money(L.cost)}</b></div>))}
                   </div>
-                ); })}
-                {selRow && (
-                  <div className="mt-3 rounded-[11px] border border-line bg-panel2 p-3">
-                    <div className="mb-2 font-mono text-[0.55rem] uppercase tracking-wide text-inksoft">Where {selRow.name}'s {fmt.int(selRow.drunk)} comes from</div>
-                    {selRow.drunk <= 0 ? <div className="text-[0.7rem] italic text-inksoft">Nothing sold here last round.</div> : (() => {
-                      const localUnits = Math.max(0, Math.min(selRow.brewed, selRow.drunk));
-                      const shipped = selRow.lanes.reduce((a, L) => a + L.units, 0);
-                      const denom = Math.max(1, localUnits + shipped);
-                      return (<>
-                        <div className="mb-2 flex h-3.5 overflow-hidden rounded-[3px] border border-line2"><div style={{ width: `${(localUnits / denom) * 100}%`, background: "var(--color-aero)" }} /><div style={{ width: `${(shipped / denom) * 100}%`, background: "var(--color-copperdeep)" }} /></div>
-                        <div className="flex flex-col gap-1.5">
-                          <div className="flex items-center gap-2"><span className="h-2.5 w-2.5 flex-none rounded-sm" style={{ background: "var(--color-aero)" }} /><span className="flex-1 text-[0.72rem] text-ink">Brewed locally</span><span className="tnum text-[0.6rem] font-bold" style={{ color: "var(--color-aero)" }}>{fmt.int(localUnits)}</span></div>
-                          {selRow.lanes.map((L, i) => (<div key={i} className="flex items-center gap-2"><span className="h-2.5 w-2.5 flex-none rounded-sm" style={{ background: "var(--color-copperdeep)" }} /><span className="flex-1 text-[0.72rem] text-ink">Shipped from {nameOf(L.origin_market)}</span><span className="tnum text-[0.6rem] font-bold text-copperdeep">{fmt.int(L.units)}</span></div>))}
-                        </div>
-                        {selRow.lanes.length > 0 && <div className="mt-2.5 flex justify-between border-t border-line pt-2"><span className="text-[0.7rem] text-inksoft">Lane cost</span><span className="tnum text-[0.7rem] font-bold text-brick">−{fmt.money(selRow.lanes.reduce((a, L) => a + L.cost, 0))}</span></div>}
-                      </>);
-                    })()}
+                );
+              })}
+              <div className="mt-4 border-t border-line pt-3">
+                <div className="mb-1 font-mono text-[0.55rem] font-semibold uppercase tracking-[0.14em] text-copperdeep">This round · where your beer goes</div>
+                <div className="mb-2.5 text-[0.7rem] leading-snug text-inksoft">Leave a market on <b className="text-ink">auto</b> and your beer splits across your markets by presence — home counts most, a new market starts with a foothold, and brewing you site in a market raises its share. Or type an <b className="text-ink">offer</b>: exactly that many units go there, and the auto markets share what's left. An offer stays in force every round until you clear it.{lastSupply > 0 && <> Last round you had <b className="tnum text-ink">{fmt.int(lastSupply)}</b> units to sell.</>}</div>
+                {nowMarkets.map((c) => (
+                  <div key={c.id} className="mb-1.5 flex items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate text-[0.8rem] text-ink">{c.name}</span>
+                    <span className="tnum font-mono text-[0.6rem] text-inksoft">{offered(c.id) ? "offer" : anyOffer ? `auto · ${fmt.pct((presence[c.id] ?? 0) / autoPresence)} of the rest` : `auto · ${fmt.pct((presence[c.id] ?? 0) / totalPresence)}`}</span>
+                    <input type="number" min="0" step="10" placeholder="auto" value={offers[c.id] ?? ""} onChange={(e) => setOffer(c.id, e.target.value)} className="w-20 !py-0.5 text-right text-[0.7rem]" title={`Units to send to ${c.name} this round — blank for auto`} aria-label={`Units to send to ${c.name}`} />
                   </div>
-                )}
-              </>
-              )}
+                ))}
+                {offerTotal > 0 && lastSupply > 0 && offerTotal > lastSupply && <div className="mt-1 text-[0.64rem] leading-snug text-brick">Your offers add up to more than you had to sell last round. If they exceed what you brew, every offer is scaled down to fit.</div>}
+              </div>
             </div>
           </aside>
         </>

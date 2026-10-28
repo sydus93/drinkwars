@@ -6,8 +6,9 @@
  * Play (init/reset), CityView (edit), and DecisionForm (merge) all agree on one source of truth.
  */
 import type { FirmDecision } from "drinkwars-engine";
-import { sameLever } from "drinkwars-engine";
+import { DESK_LEVERS, sameLever } from "drinkwars-engine";
 import type { GameView } from "./controller.js";
+import type { TeamPlanSeat } from "./multiplayer.js";
 
 export interface CityBuildOrder {
   type: string; // FacilityTypeConfig.id
@@ -24,7 +25,11 @@ export interface CityActions {
   reactivations: string[]; // facility ids to reactivate
   divests: string[]; // facility ids to sell/demolish (frees the lot, recovers partial book value)
   maintain: Record<string, number>; // facility id → maintenance $ this round
-  supply: Record<string, number>; // Stage 2: explicit units to offer per market (overrides the presence split); empty ⇒ presence-weighted
+  // Stage 2: explicit units to offer per market; a market left out shares the rest by presence (engine,
+  // DW-082). null = the drawer is untouched this round, so the form's carried offers stand; an edited
+  // map is sent as is ({} = all auto — it used to fall back to the carried offers, so one could never
+  // be cleared).
+  supply: Record<string, number> | null;
 }
 
 /** Fresh actions for a round — seeded with the markets you already operate in. */
@@ -35,7 +40,7 @@ export const emptyCityActions = (view: GameView): CityActions => ({
   reactivations: [],
   divests: [],
   maintain: {},
-  supply: {},
+  supply: null,
 });
 
 /** DW-076: the inverse of `mergeDecision` for a slice this seat already SENT this round (team: the
@@ -55,6 +60,8 @@ export function cityActionsFrom(view: GameView, stored: Partial<FirmDecision> | 
   if (!stored) return base;
   const ids = (xs: unknown): string[] => (Array.isArray(xs) ? xs.filter((x): x is string => typeof x === "string") : []);
   const money = (o: unknown): Record<string, number> => Object.fromEntries(Object.entries((o && typeof o === "object" ? o : {}) as Record<string, unknown>).filter(([, v]) => typeof v === "number" && v > 0) as [string, number][]);
+  // an offer of 0 is a real choice (ship nothing there), unlike a blank market (auto)
+  const units = (o: unknown): Record<string, number> | null => (o && typeof o === "object" ? Object.fromEntries(Object.entries(o as Record<string, unknown>).filter(([, v]) => typeof v === "number" && v >= 0) as [string, number][]) : null);
   const builds = ((stored.build_facilities ?? []) as Partial<CityBuildOrder>[]).filter((b): b is CityBuildOrder => typeof b.type === "string" && typeof b.location === "string" && typeof b.market === "string");
   let markets = base.markets;
   const mp = stored.market_presence;
@@ -62,7 +69,7 @@ export function cityActionsFrom(view: GameView, stored: Partial<FirmDecision> | 
     const set = Array.from(new Set(["home", ...Object.entries(mp).filter(([, w]) => (w ?? 0) > 0).map(([id]) => id)]));
     if (sameLever(mp, marketPresenceFrom(view, set))) markets = set;
   }
-  return { markets, builds: dedupeBuilds(builds), mothballs: ids(stored.mothball_facilities), reactivations: ids(stored.reactivate_facilities), divests: ids(stored.divest_facilities), maintain: money(stored.maintain_facilities), supply: money(stored.market_supply) };
+  return { markets, builds: dedupeBuilds(builds), mothballs: ids(stored.mothball_facilities), reactivations: ids(stored.reactivate_facilities), divests: ids(stored.divest_facilities), maintain: money(stored.maintain_facilities), supply: units(stored.market_supply) };
 }
 /** DW-076: the poach list from a stored slice (same reload story as cityActionsFrom). */
 export function poachesFrom(stored: Partial<FirmDecision> | null | undefined): { firm: string; employee: string; offer: number }[] {
@@ -98,10 +105,29 @@ export function capacityInMarket(view: GameView, marketId: string): number {
 // same facility (and the projected-cash readout digs deeper each click). Two deliberately
 // identical orders in one round (same type+district+market+lot+bid) would collapse — give
 // the second one a lot or a different bid.
-const buildKey = (b: CityBuildOrder) => [b.type, b.location, b.market, b.lot ?? "", b.bid ?? ""].join("|");
+export const buildKey = (b: CityBuildOrder) => [b.type, b.location, b.market, b.lot ?? "", b.bid ?? ""].join("|");
 export function dedupeBuilds(builds: CityBuildOrder[]): CityBuildOrder[] {
   const seen = new Set<string>();
   return builds.filter((b) => { const k = buildKey(b); if (seen.has(k)) return false; seen.add(k); return true; });
+}
+
+/** DW-082d: the builds this seat SENT that the team plan doesn't carry — a teammate's word won the
+ *  lever (on an empty desk the CEO has the final say, DW-082b; on a seated desk, its chair). The City
+ *  View drew them as breaking ground and held their lots, so a CMO whose build the CEO cancelled saw it
+ *  still "pending" and couldn't re-site it. Key (buildKey) → the seat whose word stands, null if unclear. */
+export function overruledBuilds(view: GameView): Map<string, TeamPlanSeat | null> {
+  const out = new Map<string, TeamPlanSeat | null>();
+  const plan = view.teamPlan;
+  const me = plan?.seats.find((s) => s.me);
+  if (!plan?.composed || !me?.submitted) return out;
+  const inPlan = new Set(((plan.composed.build_facilities ?? []) as CityBuildOrder[]).map(buildKey));
+  const lost = ((me.partial?.build_facilities ?? []) as CityBuildOrder[]).filter((b) => !inPlan.has(buildKey(b)));
+  if (!lost.length) return out;
+  const ownerDesk = Object.entries(DESK_LEVERS).find(([, ls]) => (ls as string[]).includes("build_facilities"))?.[0];
+  const changed = plan.seats.filter((s) => !s.me && s.submitted && s.touched?.includes("build_facilities"));
+  const who = changed.find((s) => s.desk === "all") ?? changed.find((s) => s.desk === ownerDesk) ?? changed[0] ?? null;
+  for (const b of lost) out.set(buildKey(b), who);
+  return out;
 }
 const unionIds = (a: string[] | undefined, b: string[]): string[] => Array.from(new Set([...(a ?? []), ...b]));
 
@@ -121,8 +147,8 @@ export function mergeDecision(
     reactivate_facilities: unionIds(base.reactivate_facilities, cityActions.reactivations),
     divest_facilities: unionIds(base.divest_facilities, cityActions.divests),
     maintain_facilities: { ...(base.maintain_facilities ?? {}), ...cityActions.maintain },
-    // Stage 2: explicit per-market supply overrides the presence split (only when the player set any).
-    market_supply: Object.keys(cityActions.supply ?? {}).length ? cityActions.supply : base.market_supply,
+    // Stage 2: explicit per-market offers — the drawer's map once edited ({} = auto), else the form's carried ones.
+    market_supply: cityActions.supply ?? base.market_supply,
   };
 }
 
@@ -148,12 +174,17 @@ export function marketsTouched(view: GameView, cityActions: CityActions): boolea
 /** Turn the committed-markets set into engine `market_presence` weights. Home keeps a base
  *  anchor; every market is weighted up by the output you've sited there — so capacity routes
  *  to where you build, and a freshly-entered market still gets a foothold while you build up.
- *  A weight > 0 on a not-yet-entered market is what triggers entry (and its one-time cost). */
+ *  A weight > 0 on a not-yet-entered market is what triggers entry (and its one-time cost).
+ *  DW-082: the capacity term is per 80,000 units (it was per 200, set at the old "toy" scale and
+ *  missed by the ×400 units change in abbf040). At /200 a home nano brewery weighed ~240 against a
+ *  new market's 0.6, so an $80k entry routed 0.3% of output there; now ~1.5 vs 0.6, about 29% —
+ *  the foothold the bots take (adaptive.ts: 25–30%). */
+const CAPACITY_PER_WEIGHT = 200 * 400; // units of sited output worth one presence weight (toy-scale 200 × the ×400 units change)
 export function marketPresenceFrom(view: GameView, markets: string[]): Record<string, number> {
   const out: Record<string, number> = {};
   for (const id of new Set(["home", ...markets])) {
     const base = id === "home" ? 1.0 : 0.6;
-    out[id] = Math.round((base + capacityInMarket(view, id) / 200) * 1000) / 1000;
+    out[id] = Math.round((base + capacityInMarket(view, id) / CAPACITY_PER_WEIGHT) * 1000) / 1000;
   }
   return out;
 }

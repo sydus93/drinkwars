@@ -1071,7 +1071,7 @@ export interface FirmDecision {
   invest_water_efficiency?: number; // MOD-A03: spend on water efficiency (expensed; builds the stock)
   public_good_contributions?: Record<string, number>; // MOD-A02: per-good voluntary contributions
   market_presence?: Record<string, number>; // MOD-B01: capacity split across markets (≥0 weights)
-  market_supply?: Record<string, number>; // Phase 3 (Stage 2): explicit units to offer per market, drawn from total sellable (overrides the presence split). Absent ⇒ presence-weighted.
+  market_supply?: Record<string, number>; // Phase 3 (Stage 2): explicit units to offer per market, drawn from total sellable. A market left out shares what the offers leave, by presence (DW-082); absent or empty ⇒ presence-weighted.
   invest_rnd?: number; // MOD-B04: R&D spend toward the frontier category (expensed)
   buy_vertical?: string[]; // MOD-B06: vertical asset ids to purchase this round
   hire_roles?: string[]; // MOD-B03: key roles to hire this round
@@ -1242,9 +1242,10 @@ export interface FirmRoundResult {
   inventory: { begin: number; produced: number; sold: number; spoiled: number; end: number; turnover: number } | null;
   // Per-market performance (null unless geography is on). Drives the world-map / City View UI.
   // bySeg carries within-market per-segment standings (q_sold, within-market share, local price) for the per-city demand panel.
-  // produced = producer capacity sited in the market; net = produced − q_sold; lanes = inbound
-  // shipments (shortfall from the nearest base) for the trade-lane viz. (consumed == q_sold.)
-  markets: Record<string, { revenue: number; q_sold: number; entered: boolean; bySeg?: Record<SegmentId, { q_sold: number; share: number; price: number }>; produced: number; net: number; lanes: { origin_market: string; units: number; cost: number }[] }> | null;
+  // produced = producer capacity sited in the market; net = produced − q_sold; supplied = units
+  // routed here to sell (DW-082d; absent on older results — supplied − q_sold went unsold); lanes =
+  // inbound shipments (shortfall from the nearest base) for the trade-lane viz. (consumed == q_sold.)
+  markets: Record<string, { revenue: number; q_sold: number; entered: boolean; bySeg?: Record<SegmentId, { q_sold: number; share: number; price: number }>; produced: number; net: number; supplied?: number; lanes: { origin_market: string; units: number; cost: number }[] }> | null;
   scorecard_raw: { financial: number; market: number; intangible: number; stakeholder: number };
   scorecard_norm: { financial: number; market: number; intangible: number; stakeholder: number };
   scorecard_cumulative: number;

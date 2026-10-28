@@ -94,6 +94,12 @@ export interface SeatPartial {
    *  slice stored before DW-074, or an older client mid-deploy) ⇒ the merge infers it:
    *  "differs from the standing plan". */
   touched?: readonly string[] | null;
+  /** DW-082: when this seat last CHANGED (or held) each touched lever — its submit time then.
+   *  Among non-owners the later change wins, so a resubmit that leaves a lever alone keeps that
+   *  lever's old date: a CEO's unrelated resubmit no longer re-applies a price they set earlier
+   *  over a teammate's newer cover. Absent (a slice stored before DW-082, or a lever missing from
+   *  the map) ⇒ the slice's `updated_at`, exactly the old rule. */
+  touched_at?: Readonly<Record<string, number>> | null;
 }
 
 /** Did this seat deliberately set lever `f`? The explicit record when the slice carries one,
@@ -115,9 +121,14 @@ export interface Composition { decision: FirmDecision; from: Partial<Record<keyo
  *
  * Per lever, over `base` (the firm's standing plan — last round's levers carried forward):
  *  1. Non-owners (the CEO / desk "all", and anyone covering a desk that isn't theirs): the
- *     LATER submission wins (DW-051), so a cover for an empty chair lands — but only a word that
+ *     LATER change wins (DW-051), so a cover for an empty chair lands — but only a word that
  *     was meant: a seat that left the lever alone never erases a teammate's deliberate value
  *     (DW-080). The CEO overrules a cover by changing the lever, or holding it (Keep mine).
+ *     Each word is dated by when its seat last changed that lever (`touched_at`, DW-082), not by
+ *     the seat's latest submit — resubmitting other levers doesn't re-apply this one. And the CEO
+ *     has the final say: once a generalist seat changed (or held, or cancelled) the lever, no peer's
+ *     cover replaces it, however late; peers' words order by date among themselves (DW-082b — for
+ *     slices that carry `touched_at`; older slices compose exactly as before).
  *  2. The desk's own specialist then wins — IF they changed the lever this round (seatTouched).
  *     A lever the specialist left alone means "no change from me": a value the CEO changed
  *     stands instead (DW-073: every specialist submit ships their whole desk, so an untouched
@@ -148,9 +159,15 @@ export function composeTeamDecision(base: FirmDecision, seats: SeatPartial[]): C
     out[f] = v;
     from[f] = i;
   };
-  const byTime = seats.map((s, i) => ({ s, i })).sort((a, b) => ((a.s.updated_at ?? 0) - (b.s.updated_at ?? 0)) || (a.i - b.i));
-  for (const { s, i } of byTime) {
-    for (const f of ALL_LEVERS) {
+  // Per lever, the seats in the order their words on it were made (DW-082: the change, else the submit)…
+  const at = (s: SeatPartial, f: string): number => { const t = s.touched_at?.[f]; return typeof t === "number" && Number.isFinite(t) ? t : s.updated_at ?? 0; };
+  const byDate = (f: string) => seats.map((s, i) => ({ s, i })).sort((a, b) => (at(a.s, f) - at(b.s, f)) || ((a.s.updated_at ?? 0) - (b.s.updated_at ?? 0)) || (a.i - b.i));
+  // …with the CEO's own change last of all, so it stands over every peer's cover (DW-082b). A stable
+  // sort keeps the date order inside each group.
+  const ceoFinal = (s: SeatPartial, f: keyof FirmDecision) => s.touched_at != null && deskOf(s) === "all" && seatTouched(s, f, base);
+  const inOrder = (f: keyof FirmDecision) => byDate(f as string).sort((a, b) => Number(ceoFinal(a.s, f)) - Number(ceoFinal(b.s, f)));
+  for (const f of ALL_LEVERS) {
+    for (const { s, i } of inOrder(f)) {
       if (owns(s, f)) continue;
       const v = s.partial[f];
       if (v === undefined) continue;
@@ -188,7 +205,7 @@ export function composeTeamDecision(base: FirmDecision, seats: SeatPartial[]): C
       put(f, v, i);
     }
   });
-  const buyer = byTime.find(({ s }) => s.partial.buy_info === true && seatTouched(s, "buy_info", base)); // rule 4
+  const buyer = byDate("buy_info").find(({ s }) => s.partial.buy_info === true && seatTouched(s, "buy_info", base)); // rule 4
   if (buyer) { out.buy_info = true; from.buy_info = buyer.i; }
   out.firm_id = base.firm_id;
   return { decision: out as unknown as FirmDecision, from: from as Composition["from"] };
