@@ -1343,12 +1343,14 @@ export function DecisionForm({
           ))}
           <div className="px-4 pb-3 pt-2" style={{ borderTop: team ? "1px solid rgba(255,240,205,.13)" : undefined }}>
             {overcommit && <div className="mb-3 rounded-lg px-3 py-2 text-[0.72rem]" style={{ background: "rgba(216,106,82,.16)", border: "1px solid rgba(216,106,82,.5)", color: "#eaa088" }}>Spending exceeds cash on hand — draw financing or trim a desk before brewing.</div>}
-            {callsSlot && <div className="mb-3">{callsSlot}</div>}
             {unsent && diffs.rows.length > 0 && <div className="mb-2 rounded-lg px-3 py-2 text-[0.72rem] leading-snug" style={{ background: "rgba(240,185,78,.14)", border: "1px solid rgba(240,185,78,.45)", color: "#f2d9a0" }}>You've changed your desk since you submitted — it isn't on the team's plan until you update.</div>}
             <Button variant="go" onClick={() => onPlay(mergeDecision(view, d, cityActions, poaches))} disabled={busy} className="mt-1 w-full py-3 text-base">
               {submitText()}
             </Button>
             <div className="mt-1.5 text-center text-[0.66rem]" style={{ color: "#a98a5f" }}>{footerNote ?? "Seven rival breweries brew at the same time."}</div>
+            {/* DW-082e: the calls sit BELOW Submit — above it they pushed the button a long scroll down the rail
+                (playtest 10-28). Safe: a tap saves on its own within a second (Calls.tsx), and submit re-sends them. */}
+            {callsSlot && <div className="mt-3 pt-3" style={{ borderTop: "1px solid rgba(255,240,205,.13)" }}>{callsSlot}</div>}
           </div>
         </div>
       </div>

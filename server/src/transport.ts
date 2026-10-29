@@ -378,8 +378,8 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
       // A fresh seed per game (DW-046): the seed drives the rolled shock timeline, location
       // factors and hiring markets — with the config default (12345) every game with the same
       // modules replayed the same droughts, so section 2 could learn section 1's schedule.
-      // DW-078: calls default ON for a new game, as on the create form — a configOverride
-      // `classroom.forecasts.enabled: false` (the form's unticked box) turns them off.
+      // DW-078: calls default ON for a game created over the API. The create form always sends its
+      // box (unticked by default since DW-082e), so `classroom.forecasts.enabled: false` turns them off.
       let override: Record<string, unknown> = { game: { n_firms: nFirms, n_rounds: nRounds, seed: 1 + Math.floor(Math.random() * 2_000_000_000) }, classroom: { forecasts: { enabled: true } } };
       // Expansion modules: the instructor selector sends a `modules` override block
       // ({ asymmetricStarts: { enabled: true }, … }). Legacy `inventory` boolean still honored.

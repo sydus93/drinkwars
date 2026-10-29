@@ -40,7 +40,7 @@ await clickText(ins, "Everything (Pro)");
 await clickText(ins, "Create game");
 await waitText(ins, /share this join code/);
 const code = await ins.evaluate(() => document.querySelector(".wordmark")?.textContent?.trim());
-const ta = await ins.$('textarea[placeholder^="jdoe1"]');
+const ta = await ins.waitForSelector('textarea[placeholder^="jdoe1"]', { timeout: 15000 }); // the seat plan renders on the first /status (isTeam), after the join code
 await ta.type("a1, Ana Ceo, Hop Theory, CEO\nb2, Ben Cfo, Hop Theory, CFO\nc3, Cy Chro, Hop Theory, CHRO");
 await clickText(ins, "Apply seat plan");
 await sleep(1200);

@@ -23,6 +23,11 @@
 //          (j) the Trade tab says when exports open (export_unlock_round passed through the tuning-override path);
 //          (k) DW-082d: a build the CEO cancelled for an empty desk reads "not in the team plan" on the CMO's map,
 //              and the CMO can withdraw it there;
+//          (l) DW-082e: a build the CMO sends AFTER that cancel reads "Waiting on … (CEO)", not "cancelled it";
+//   ALPHA  (m) DW-082e: the CEO's map draws the COO's planned build (as a teammate's) before the round resolves;
+//          (n) a build the COO sent and then withdrew leaves the COO's map at once (not redrawn as a teammate's);
+//          (o) r3, playtest 10-29: the COO updates without touching builds, the CHRO sites one → the CEO's map points
+//              to Cancel it, the What locks row has it, one submit drops the build, the CHRO's map names both calls;
 //          (i) no pageerror / console error on any page, all game long.
 // Assertions are about OUTCOMES (what the composed plan holds, what resolved, what the screen says).
 // Prints PASS/FAIL per check; exits 1 on any FAIL. NOTE: a hidden tab does not poll — every read brings
@@ -46,6 +51,7 @@ const view = (tok) => fetch(`${API}/view?token=${tok}`).then((r) => r.json());
 const waitText = (page, re, t = 20000) => page.waitForFunction((src) => new RegExp(src, "i").test(document.body.innerText), { timeout: t }, re.source);
 const has = (page, re) => page.evaluate((src) => new RegExp(src, "i").test(document.body.innerText), re.source);
 const front = async (page) => { await page.bringToFront(); await sleep(250); };
+const shot = async (page, name) => { if (process.env.SHOTS) await page.screenshot({ path: `${process.env.SHOTS}/${name}.png` }); }; // SHOTS=<dir>: eyeball (l)/(m)
 const usd = (n) => (n == null ? "—" : `$${Math.round(n).toLocaleString("en-US")}`);
 const J = (o) => JSON.stringify(o ?? null);
 const keysOn = (mp) => Object.entries(mp ?? {}).filter(([, w]) => (w ?? 0) > 0).map(([k]) => k).sort();
@@ -230,6 +236,23 @@ c = await composed(A.ceo);
 ok(!!hiredId && (c.hire_employees ?? []).includes(hiredId) && c.hire_bids?.[hiredId] === BID, "(c) CHRO's hire + signing bonus land in the composed plan", `${hiredName} (${hiredId}) bid ${usd(c.hire_bids?.[hiredId])} · hires ${J(c.hire_employees)}`);
 // (d) CEO submits an UNTOUCHED form after all three
 await front(P.a_ceo); await sleep(4500);
+// (m) DW-082e: the CEO's map draws the COO's planned build too — the CEO's form never copies a teammate's (DW-081), so it
+// showed nothing until the round resolved (playtest 10-28). It is the COO's, so the CEO's popover offers no Withdraw.
+await goTab(P.a_ceo, "City");
+// the CEO's tab polls every 4 s (8 s once submitted) — wait for the plan to arrive rather than race it
+const pendingSel = '[data-dw="fac-marker"][title*="breaking ground"]';
+await P.a_ceo.waitForFunction((sel) => document.querySelectorAll(sel).length > 0, { timeout: 15000 }, pendingSel).catch(() => {});
+await shot(P.a_ceo, "m-ceo-map");
+const ceoSees = await P.a_ceo.evaluate((sel) => document.querySelectorAll(sel).length, pendingSel);
+let ceoTeammate = false;
+if (ceoSees === 1) {
+  await P.a_ceo.$eval('[data-dw="fac-marker"][title*="breaking ground"]', (b) => b.click()); await sleep(400);
+  await shot(P.a_ceo, "m-ceo-teammate-build");
+  ceoTeammate = (await has(P.a_ceo, /On the team plan from .+\(COO\)\. .+\(COO\) set this round's builds — it's their desk/)) && !(await has(P.a_ceo, /Withdraw this build/)); // playtest 10-29: names the sender, and that the chair's call stands
+  await P.a_ceo.keyboard.press("Escape"); await sleep(200);
+}
+const ceoMap = ceoSees === 1 ? "" : await P.a_ceo.evaluate(() => { const t = [...document.querySelectorAll('[data-dw="fac-marker"]')].map((b) => b.getAttribute("title")); const h = [...document.querySelectorAll("div")].find((d) => d.textContent.trim() === "Your facilities here"); return ` · markers ${JSON.stringify(t)} · here: ${(h?.closest("section")?.innerText ?? "?").replace(/\s+/g, " ").slice(0, 160)}`; });
+ok(ceoSees === 1 && ceoTeammate, "(m) DW-082e: the CEO's map shows the COO's planned build before the round resolves, as a teammate's (no Withdraw)", `${ceoSees} marker(s) · teammate popover ${ceoTeammate}${ceoMap} · plan ${J((await composed(A.ceo)).build_facilities ?? [])}`);
 const dlgD = await submit(P.a_ceo, "a_ceo", A.ceo.token);
 logs.push(`[info] ALPHA CEO r1 confirm: ${dlgD.join(" | ").slice(0, 300) || "none"}`);
 c = await composed(A.ceo);
@@ -311,11 +334,12 @@ const afterCancel = (await composed(B.ceo)).build_facilities ?? [];
 await front(P.b_cmo); await sleep(4500);
 await goTab(P.b_cmo, "City");
 const lostSel = '[data-dw="fac-marker"][title*="not in the team plan"]';
+await P.b_cmo.waitForFunction((sel) => document.querySelectorAll(sel).length > 0, { timeout: 15000 }, lostSel).catch(() => {}); // poll, don't race it (a 4.5 s sleep missed the CMO's poll once, 10-29)
 const nLost = await P.b_cmo.evaluate((sel) => document.querySelectorAll(sel).length, lostSel);
 ok(builtB.length === 1 && afterCancel.length === 0 && nLost === 1, "(k) DW-082d: the CEO cancels the CMO's build for the empty COO desk → the CMO's map marks it \"not in the team plan\"", `${siteB}: plan ${builtB.length} → ${afterCancel.length} · marked ${nLost}`);
 if (nLost === 1) {
   await P.b_cmo.$eval(lostSel, (b) => b.click()); await sleep(400);
-  const says = await has(P.b_cmo, /cancelled it\. On an empty desk the CEO has the final say/);
+  const says = await has(P.b_cmo, /cancelled it\. The CEO's word on builds is final/);
   const wd = await P.b_cmo.evaluateHandle(() => [...document.querySelectorAll("button")].find((b) => b.textContent.trim() === "Withdraw my proposal") ?? null);
   if (await wd.evaluate((x) => !!x)) { await wd.evaluate((x) => x.click()); await sleep(400); }
   const left = await P.b_cmo.evaluate(() => document.querySelectorAll('[data-dw="fac-marker"][title*="not in the team plan"], [data-dw="fac-marker"][title*="breaking ground"]').length);
@@ -324,6 +348,28 @@ if (nLost === 1) {
   const mineB = (await view(B.cmo.token)).teamPlan?.seats?.find((x) => x.me)?.partial?.build_facilities ?? [];
   ok(mineB.length === 0 && ((await composed(B.ceo)).build_facilities ?? []).length === 0, "(k) the CMO's next submit no longer proposes it; the plan stays without it", `slice ${mineB.length} · plan ${((await composed(B.ceo)).build_facilities ?? []).length}`);
 }
+// (l) DW-082e (playtest 10-28): builds are one lever, so after that cancel the CEO's word on them is final and a build
+// the CMO sends LATER waits for the CEO. Its popover must say so (it read "cancelled it", which the CEO never did), and
+// the banner over the map must count it. Withdrawn again after, so the plan ends where (k) left it.
+await siteFacilityUI(P.b_cmo);
+await submit(P.b_cmo, "b_cmo", B.cmo.token);
+await front(P.b_cmo); await sleep(4500);
+await goTab(P.b_cmo, "City");
+await P.b_cmo.waitForFunction((sel) => document.querySelectorAll(sel).length > 0, { timeout: 15000 }, lostSel).catch(() => {}); // poll, don't race it
+const nWait = await P.b_cmo.evaluate((sel) => document.querySelectorAll(sel).length, lostSel);
+const bannerL = await has(P.b_cmo, /One of your builds isn't in the team plan/);
+let waitsL = false;
+await shot(P.b_cmo, "l-cmo-map-waiting");
+if (nWait === 1) {
+  await P.b_cmo.$eval(lostSel, (b) => b.click()); await sleep(400);
+  await shot(P.b_cmo, "l-cmo-popover-waiting");
+  waitsL = (await has(P.b_cmo, /Waiting on .+\(CEO\)\. The CEO set this round's builds before you sent this one/)) && !(await has(P.b_cmo, /cancelled it/));
+  const wd = await P.b_cmo.evaluateHandle(() => [...document.querySelectorAll("button")].find((b) => b.textContent.trim() === "Withdraw my proposal") ?? null);
+  if (await wd.evaluate((x) => !!x)) { await wd.evaluate((x) => x.click()); await sleep(400); }
+}
+await submit(P.b_cmo, "b_cmo", B.cmo.token);
+const planL = ((await composed(B.ceo)).build_facilities ?? []).length;
+ok(nWait === 1 && bannerL && waitsL && planL === 0, "(l) DW-082e: a build the CMO sends AFTER the CEO's cancel reads \"Waiting on … (CEO)\", not \"cancelled it\", and the banner over the map counts it", `marked ${nWait} · banner ${bannerL} · waiting copy ${waitsL} · plan after withdraw ${planL}`);
 // (c) ALPHA's CHRO: a raise for the hire, and a poach from BRAVO's dossier (research is live once the CMO's buy composed)
 await front(P.a_chro);
 for (let i = 0; i < 20 && !(await view(A.chro.token)).infoActive; i++) await sleep(1000);
@@ -355,6 +401,27 @@ await front(P.a_ceo); await sleep(4500); await submit(P.a_ceo, "a_ceo", A.ceo.to
 await front(P.a_coo); await sleep(4500); await submit(P.a_coo, "a_coo", A.coo.token);
 c = await composed(A.ceo);
 ok(raidOk(c) && keysOn(c.market_presence).includes(mktG) && c.buy_info === true, "(d) CEO + COO untouched submits after the CHRO: raise, poach, the CEO's entry and the research buy all stand", J({ markets: keysOn(c.market_presence), raise: c.raise_employees, poach: (c.poach_employees ?? []).length, buy: c.buy_info }));
+// (n) pre-ship review (10-29): a build this seat SENT that the plan carries, withdrawn on its own map, must leave that map.
+// DW-082e also drew the plan's builds, so it came back as "a teammate's" (no Withdraw, its lot held) until the next
+// submit. ALPHA's COO sites one in r2, sends it, withdraws it and sends again: the plan ends without it, as before (n).
+try {
+  await siteFacilityUI(P.a_coo);
+  await submit(P.a_coo, "a_coo", A.coo.token);
+  const builtN = ((await composed(A.ceo)).build_facilities ?? []).length;
+  await goTab(P.a_coo, "City");
+  const pendSel = '[data-dw="fac-marker"][title*="breaking ground"]';
+  const nN = await P.a_coo.evaluate((sel) => document.querySelectorAll(sel).length, pendSel);
+  let leftN = -1;
+  if (nN === 1) {
+    await P.a_coo.$eval(pendSel, (b) => b.click()); await sleep(400);
+    const wd = await P.a_coo.evaluateHandle(() => [...document.querySelectorAll("button")].find((b) => b.textContent.trim() === "Withdraw this build") ?? null);
+    if (await wd.evaluate((x) => !!x)) { await wd.evaluate((x) => x.click()); await sleep(600); }
+    leftN = await P.a_coo.evaluate(() => document.querySelectorAll('[data-dw="fac-marker"][title*="breaking ground"], [data-dw="fac-marker"][title*="not in the team plan"]').length);
+  }
+  await submit(P.a_coo, "a_coo", A.coo.token);
+  const planN = ((await composed(A.ceo)).build_facilities ?? []).length;
+  ok(builtN === 1 && nN === 1 && leftN === 0 && planN === 0, "(n) a build the COO sent and then withdrew leaves the COO's map at once (not redrawn as a teammate's), and the next submit drops it", `plan ${builtN} · marked ${nN} · left after withdraw ${leftN} · plan after resubmit ${planN}`);
+} catch (e) { ok(false, "(n) withdraw a build already sent", e.message.split("\n")[0]); }
 // (j) the Trade tab names the export unlock (export_unlock_round came through the tuning-override path)
 await goTab(P.a_ceo, "City");
 await (await P.a_ceo.evaluateHandle(() => [...document.querySelectorAll("button")].find((b) => b.textContent.trim() === "Trade"))).click(); await sleep(400);
@@ -377,6 +444,47 @@ const left = e2.find((e) => e.startsWith(`POACHED: a rival hires ${emp.name} `) 
 ok(left ? true : !!empAfter && Math.abs(empAfter.salary - RAISE) < 1, left ? `(f) resolved r2: ${emp.name} left this round ("${left.slice(0, 48)}…") — the raise stands in the locked plan` : "(f) resolved r2: the raise took — the employee's salary is the new number", `${emp.name} ${usd(emp.salary)} → ${usd(empAfter?.salary)}`);
 for (const [tag, p] of Object.entries(P)) { await front(p); const at3 = await p.waitForFunction(() => /Round\s*3\s*\//.test(document.body.innerText), { timeout: 30000 }).then(() => true, () => false); if (!at3) ok(false, `${tag}: page followed the game to round 3`); }
 ok(true, "every browser chair followed the game to round 3");
+// (o) playtest 10-29: ALPHA's COO chair is SEATED and updates without touching builds; the CHRO sites one. The merge
+// lets the CEO's word stand over a peer's once that chair stays silent, but the CEO's row read "the COO decides" with
+// no button, and the CEO's map popover only said "answer it on Decide" — she had no way to cancel it.
+try {
+  await toDecide(P.a_coo, 2); await submit(P.a_coo, "a_coo", A.coo.token); // silent on builds
+  await toDecide(P.a_chro, 2); await siteFacilityUI(P.a_chro);
+  const dlgO = (await submit(P.a_chro, "a_chro", A.chro.token)).join(" ");
+  ok(/Build facilities is the COO's desk \(.+\)\. You set 1 build .+ Yours goes into the plan unless .+ changes it or the CEO cancels it/.test(dlgO), "(o) the CHRO's submit check: the build goes in unless the COO changes it or the CEO cancels it (it said \"the COO decides\")", dlgO.slice(0, 260));
+  const bO = ((await composed(A.ceo)).build_facilities ?? []);
+  await front(P.a_ceo); await sleep(4500);
+  await goTab(P.a_ceo, "City");
+  const clickBtn = async (page, pred, arg) => { const h = await page.evaluateHandle(pred, arg); const there = await h.evaluate((x) => !!x); if (there) { await h.evaluate((x) => x.click()); await sleep(400); } return there; };
+  await clickBtn(P.a_ceo, () => [...document.querySelectorAll("button")].find((b) => b.textContent.trim() === "Map") ?? null); // (j) left it on Trade
+  if (bO[0]?.market === "home") await clickBtn(P.a_ceo, () => [...document.querySelectorAll("button")].find((x) => x.querySelector("span.display")?.textContent?.trim() === "Front Range") ?? null); // (g) left it on the city it entered
+  const pendO = '[data-dw="fac-marker"][title*="breaking ground"]';
+  await P.a_ceo.waitForFunction((sel) => document.querySelectorAll(sel).length > 0, { timeout: 15000 }, pendO).catch(() => {});
+  let points = false;
+  if (await P.a_ceo.evaluate((sel) => document.querySelectorAll(sel).length === 1, pendO)) {
+    await P.a_ceo.$eval(pendO, (b) => b.click()); await sleep(400);
+    await shot(P.a_ceo, "o-ceo-popover");
+    points = await has(P.a_ceo, /On the team plan from .+\(CHRO\)\. To drop it: Decide › What locks › Build facilities › Cancel it/);
+    await P.a_ceo.keyboard.press("Escape"); await sleep(200);
+  }
+  await goTab(P.a_ceo, "Decide");
+  await shot(P.a_ceo, "o-ceo-row");
+  const hasCancel = await clickBtn(P.a_ceo, () => { const box = [...document.querySelectorAll('[data-testid="plan-differs"]')].find((x) => x.getClientRects().length > 0); const r = box && [...box.querySelectorAll("div.grid")].find((d) => d.querySelector("b")?.textContent?.trim() === "Build facilities"); return r?.querySelector('button[data-dw-action="cancel"]') ?? null; });
+  await submit(P.a_ceo, "a_ceo", A.ceo.token);
+  const planO = ((await composed(A.ceo)).build_facilities ?? []).length;
+  ok(bO.length === 1 && points && hasCancel && planO === 0, "(o) playtest 10-29: the COO stays silent, the CHRO sites a build → the CEO's map points to Cancel it, the row has it, one submit drops the build", `plan ${bO.length} → ${planO} · popover ${points} · Cancel it ${hasCancel}`);
+  await front(P.a_chro); await sleep(4500);
+  await goTab(P.a_chro, "City");
+  const lostO = '[data-dw="fac-marker"][title*="not in the team plan"]';
+  await P.a_chro.waitForFunction((sel) => document.querySelectorAll(sel).length > 0, { timeout: 15000 }, lostO).catch(() => {});
+  let saysO = false;
+  if (await P.a_chro.evaluate((sel) => document.querySelectorAll(sel).length === 1, lostO)) {
+    await P.a_chro.$eval(lostO, (b) => b.click()); await sleep(400);
+    await shot(P.a_chro, "o-chro-popover");
+    saysO = await has(P.a_chro, /\(CEO\) cancelled it\. The CEO's word on builds is final, unless .+\(COO\), whose desk it is, sets them: the CEO can bring it back with Use theirs/);
+  }
+  ok(saysO, "(o) the CHRO's map: the CEO cancelled it, and it stands unless the COO, whose desk it is, sets the builds (Use theirs brings it back)");
+} catch (e) { ok(false, "(o) the CEO cancels a peer's build after the COO stayed silent", e.message.split("\n")[0]); }
 await api(`/instructor/games/${gameId}/end`, {}).catch(() => {});
 } catch (e) { results.push("ABORT " + e.message); console.log("ABORT " + e.message.split("\n")[0]); if (gameId) await api(`/instructor/games/${gameId}/end`, {}).catch(() => {}); }
 // (i) nothing broke on any page

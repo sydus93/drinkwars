@@ -58,7 +58,7 @@ async function main() {
   const modules = Object.fromEntries(ids.map((id) => [id, { enabled: true }]));
   console.log(`Modules: ${ids.length ? ids.join(", ") : "(strategy core only)"}`);
 
-  const game = await call("POST", "/instructor/games", { nFirms: 3, nRounds: ROUNDS, firmMode: "team", modules, configOverride: { classroom: { forecasts: { enabled: true } } } /* DW-077: calls on, as the create form defaults */, title: `DRESS REHEARSAL ${new Date().toISOString().slice(0, 10)}` }, true);
+  const game = await call("POST", "/instructor/games", { nFirms: 3, nRounds: ROUNDS, firmMode: "team", modules, configOverride: { classroom: { forecasts: { enabled: false } } } /* DW-082e: calls off, as the create form defaults */, title: `DRESS REHEARSAL ${new Date().toISOString().slice(0, 10)}` }, true);
   const roster = await call("POST", "/instructor/roster", { cohort: "dress", roster: [...SEATS.map((s) => ({ external_id: s.ext, name: s.name })), { external_id: BENCH.ext, name: BENCH.name }] }, true);
   const claim = (ext: string) => roster?.students?.find((r: any) => r.external_id === ext)?.claim_code ?? "??";
   await call("POST", `/instructor/games/${game.gameId}/seats`, { plan: SEATS.map((s) => ({ external_id: s.ext, team: s.team, role: s.role })) }, true);

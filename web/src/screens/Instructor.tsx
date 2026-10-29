@@ -40,7 +40,7 @@ export function Instructor({ onExit }: { onExit: () => void }) {
   const [modCount, setModCount] = useState(0);
   const [tuneVals, setTuneVals] = useState<TuningVals>(() => tuningDefaults());
   const [practiceRounds, setPracticeRounds] = useState(0);
-  const [calls, setCalls] = useState(true); // DW-077: calls (three tickets per seat, settled on the results page) — on for new games unless unticked
+  const [calls, setCalls] = useState(false); // DW-077: calls (three tickets per seat, settled on the results page). DW-082e: off unless ticked (Sprint 2 plays without them)
   const [showTune, setShowTune] = useState(false);
   const tuned = JSON.stringify(tuneVals) !== JSON.stringify(tuningDefaults());
   const [game, setGame] = useState<{ gameId: string; joinCode: string } | null>(null);

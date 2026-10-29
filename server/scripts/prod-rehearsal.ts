@@ -173,7 +173,7 @@ async function main() {
   const modules = Object.fromEntries((full?.modules ?? []).map((id) => [id, { enabled: true }]));
 
   // 1. create game + roster + seat plan — the instructor's pre-class ritual, via API.
-  const game = await must(call("POST", "/instructor/games", { instructor: true, body: { nFirms: FIRMS, nRounds: Math.max(ROUNDS + 2, 6), firmMode: "team", modules, configOverride: { classroom: { forecasts: { enabled: true } } } /* DW-077: calls on, as the create form defaults */, title: `REHEARSAL ${new Date().toISOString().slice(0, 16)}` } }), "create game");
+  const game = await must(call("POST", "/instructor/games", { instructor: true, body: { nFirms: FIRMS, nRounds: Math.max(ROUNDS + 2, 6), firmMode: "team", modules, configOverride: { classroom: { forecasts: { enabled: false } } } /* DW-082e: calls off, as the create form defaults */, title: `REHEARSAL ${new Date().toISOString().slice(0, 16)}` } }), "create game");
   if (!game?.gameId) { console.error("Cannot continue without a game."); return finish(null); }
   const gid = game.gameId as string;
   console.log(`game ${game.joinCode} (${gid})`);

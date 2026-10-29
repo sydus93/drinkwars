@@ -27,7 +27,7 @@ import { TapDispatch } from "../components/TapDispatch.js";
 import { Emblem } from "../components/FacilityGlyph.js";
 import { firmColor, firmEmblem } from "../lib/teamColors.js";
 import { DESK_LEVERS, ROLE_DESK } from "drinkwars-engine";
-import { ackConflict, cancelsRequest, computeConflicts, leverText, offDeskEdits, openConflicts, same } from "../lib/reconcile.js";
+import { ackConflict, cancelsRequest, computeConflicts, dropsTheirs, leverText, offDeskEdits, openConflicts, same } from "../lib/reconcile.js";
 import { buildKey, cityActionsFrom, dedupeBuilds, keepUntouchedMarkets, marketPresenceFrom, marketsTouched, poachesFrom, type CityActions, type CityBuildOrder } from "../game/cityActions.js";
 import { CallsTickets, useCallsDesk, type CallsClient } from "../components/Calls.js"; // DW-077 calls tickets
 import { RoundResolved } from "../components/RoundResolved.js"; // DW-077 results page
@@ -371,13 +371,22 @@ export function Play({
         const T = (f: string, v: unknown) => leverText(f, v, view);
         // DW-082: against a teammate's build / hire / offer, your "none" is a cancel — the button says so
         const useYours = (c: { field: unknown; mine: unknown }) => cancelsRequest(String(c.field), c.mine) ? "press Cancel it in the commit panel to drop it" : "change it, or press Keep mine in the commit panel, to use yours";
+        // Pre-ship review 10-29: a list (builds, hires, offers) REPLACES the teammate's — "Yours will be used" read as adding
+        // to theirs, so a CEO who sited one more build dropped the CMO's unawares. Say what drops, and how to keep both.
+        const drops = (c: { mine: unknown; theirs: unknown }, how: string) => (dropsTheirs(c.mine, c.theirs) ? ` Yours replaces theirs, so theirs is dropped — ${how}.` : "");
+        const keepBoth = "to keep both, press Use theirs in the commit panel after this update";
         const lines = [
           ...open.slice(0, 6).map((c) => c.cover?.ownerName
-            ? `${c.label}: ${c.who} suggested ${T(String(c.field), c.theirs)} for ${c.cover.ownerName}'s desk; you have ${T(String(c.field), c.mine)}. ${c.cover.ownerSubmitted ? `${c.cover.ownerName} decides — it's their desk.` : c.winner === "me" ? `${cancelsRequest(String(c.field), c.mine) ? "It's cancelled" : "Yours will be used"} unless ${c.cover.ownerName} changes it.` : `Theirs will be used ${c.cover.sticks ? `unless ${c.cover.ownerName} cancels it` : `until ${c.cover.ownerName} submits`} — ${useYours(c)}.`}`
+            ? `${c.label}: ${c.who} suggested ${T(String(c.field), c.theirs)} for ${c.cover.ownerName}'s desk; you have ${T(String(c.field), c.mine)}. ${c.cover.decided ? `${c.cover.ownerName} decides — it's their desk.` : c.winner === "me" ? `${cancelsRequest(String(c.field), c.mine) ? "It's cancelled" : "Yours will be used"} unless ${c.cover.ownerName} changes it.${drops(c, keepBoth)}` : `Theirs will be used ${c.cover.sticks ? `unless ${c.cover.ownerName} cancels it` : `until ${c.cover.ownerName} submits`} — ${useYours(c)}.`}`
             : c.cover
-            ? `${c.label}: ${c.who} set ${T(String(c.field), c.theirs)} for an empty desk; you have ${T(String(c.field), c.mine)}. ${c.winner === "me" ? (cancelsRequest(String(c.field), c.mine) ? "It's cancelled — as CEO you have the final say." : "Yours will be used — as CEO you have the final say.") : `Theirs will be used — ${useYours(c)}.`}`
-            : `${c.label}: ${c.who} submitted ${T(String(c.field), c.theirs)}; you have ${T(String(c.field), c.mine)}. ${c.winner === "me" ? "Yours will be used — it's your desk." : c.untouched ? "The CEO's will be used — you haven't changed it this round. Go back and press Keep mine in the commit panel to hold your number." : "Theirs will be used — it's their desk."}`),
-          ...off.slice(0, 6).map((e) => `${e.label} is the ${e.deskOwner}'s desk${e.ownerName ? ` (${e.ownerName})` : e.ceoSeated ? " — empty, so the CEO covers it" : " — empty, no CEO seated"}. You set ${T(String(e.field), e.mine)}; the firm's plan has ${T(String(e.field), e.firm)}. ${e.applies ? (e.byCeo ? "The CEO has the final say on an empty desk — yours reaches them as a suggestion." : "Yours will be used, and the CEO will see it.") : `${e.ownerName ?? "The owner"} decides — yours is only a suggestion.`}`),
+            ? `${c.label}: ${c.who} set ${T(String(c.field), c.theirs)} for an empty desk; you have ${T(String(c.field), c.mine)}. ${c.winner === "me" ? (cancelsRequest(String(c.field), c.mine) ? "It's cancelled — as CEO you have the final say." : `Yours will be used — as CEO you have the final say.${drops(c, keepBoth)}`) : `Theirs will be used — ${useYours(c)}.`}`
+            : `${c.label}: ${c.who} submitted ${T(String(c.field), c.theirs)}; you have ${T(String(c.field), c.mine)}. ${c.winner === "me" ? `Yours will be used — it's your desk.${drops(c, "talk to them first")}` : c.untouched ? "The CEO's will be used — you haven't changed it this round. Go back and press Keep mine in the commit panel to hold your number." : "Theirs will be used — it's their desk."}`),
+          ...off.slice(0, 6).map((e) => `${e.label} is the ${e.deskOwner}'s desk${e.ownerName ? ` (${e.ownerName})` : e.ceoSeated ? " — empty, so the CEO covers it" : " — empty, no CEO seated"}. You set ${T(String(e.field), e.mine)}; the firm's plan has ${T(String(e.field), e.firm)}. ${e.applies ? (e.byCeo ? "The CEO has the final say on an empty desk — yours reaches them as a suggestion." : "Yours will be used, and the CEO will see it.")
+            : e.sticks // playtest 10-29: a build / hire / offer survives the chair's silent submit — "<chair> decides" misled
+              ? (e.wins ? `Yours goes into the plan unless ${e.ownerName} changes it or the CEO cancels it — it's their desk, so talk to them.`
+                : e.byChair ? `${e.ownerName} set it — theirs is used.`
+                : `${e.by ?? "A teammate"} ${e.gone ? "cancelled it" : "changed it"} — ${e.byCeo ? "the CEO's word stands" : "theirs stands"} unless ${e.ownerName} changes it.`)
+            : `${e.ownerName ?? "The owner"} decides — yours is only a suggestion.`}`),
         ];
         if (!(await askConfirm(lines))) return;
         if (roundRef.current !== formRound) return; // the round moved while the check was open

@@ -32,7 +32,11 @@ export interface Conflict {
    *  cover — among non-owners the latest deliberate change wins (DW-080: resubmitting without
    *  touching the lever leaves it in place; change it or Keep mine to overrule). Seated desk (ownerName) = a suggestion — the seated chair's own submission wins
    *  (DW-052); it only trades if that chair stays silent all round. */
-  cover?: { desk: string; ownerName?: string | null; ownerSubmitted?: boolean; sticks?: boolean };
+  cover?: { desk: string; ownerName?: string | null; ownerSubmitted?: boolean; sticks?: boolean;
+    /** the seated chair's word settles it: they changed the lever, or (a price, a number) their submit replaced the
+     *  suggestion. A build / hire / offer they left alone survives their submit, and the CEO's word still overrules
+     *  it (seats.ts) — so it stays open (playtest 10-29: it read "the COO decides", with no Cancel it). */
+    decided?: boolean };
   /** DW-052: another SPECIALIST set this lever on MY desk — a suggestion to me. I win. */
   suggestion?: boolean;
   /** DW-073: the CEO changed a lever on MY desk that I left at last round's value — the CEO's
@@ -187,6 +191,10 @@ const blankOverReal = (blank: unknown, real: unknown): boolean => {
 const empty = (v: unknown): boolean => sameLever(v, null);
 /** DW-082: holding "none" against a teammate's build / hire / offer cancels it ("Cancel it", not "Keep mine"). */
 export const cancelsRequest = (f: string, mine: unknown): boolean => ONE_SHOT.has(f) && empty(mine);
+/** Pre-ship review 10-29: a list lever (builds, hires, offers) where mine REPLACES theirs — mine isn't empty and
+ *  something of theirs isn't in it — so theirs is dropped, not added to. */
+export const dropsTheirs = (mine: unknown, theirs: unknown): boolean =>
+  Array.isArray(mine) && mine.length > 0 && Array.isArray(theirs) && theirs.some((t) => !mine.some((m) => same(m, t)));
 /** DW-081: market research is a team purchase — any chair buys it for the firm and none can veto it
  *  (engine seats.ts rule 4), so it is never a disagreement to reconcile. */
 const TEAM_BUY = "buy_info";
@@ -240,6 +248,7 @@ export const leverDesk = (f: string): string => (Object.entries(DESK_LEVERS).fin
 /** DW-051: a lever value in words a student recognises — candidate/employee NAMES, facility
  *  type labels, market names — instead of ids like "cand_2_3". Falls back to fmtLever. */
 export function leverText(field: string, v: unknown, view: GameView): string {
+  if (field === "market_presence" && v == null) return leverText(field, {}, view); // playtest 10-29: "the firm's plan has —" — none set yet = home only
   const cand = (id: string) => view.hiringMarket?.find((c) => c.id === id)?.name ?? humanizeId(id);
   const emp = (id: string) => view.own.employees?.find((e) => e.id === id)?.name ?? humanizeId(id);
   const facType = (t: string) => view.modules?.facilities?.types.find((x) => x.id === t)?.label ?? humanizeId(t);
@@ -263,8 +272,11 @@ export function leverText(field: string, v: unknown, view: GameView): string {
       // presence = relative weights (the split across markets); supply = explicit units per market,
       // the markets left out sharing the rest (DW-082). A 0 offer is kept: it ships nothing there.
       if (field === "market_supply") { const offers = Object.entries(v as Record<string, unknown>).filter(([, x]) => typeof x === "number"); return offers.length ? `${offers.map(([k, x]) => `${mk(k)} ${fmt.int(Number(x))}`).join(" · ")} · rest auto` : "auto (split by presence)"; }
-      if (!ents.length) return "home only";
-      return shareText(ents, mk);
+      if (!ents.length) return `${mk("home")} only`;
+      // Playtest 10-29: "Enter market" on the map IS a markets-served change (the CMO's lever) — name the entry, or the
+      // row reads as a split nobody typed. The engine charges the entry once per firm, at the round's end.
+      const entering = ents.filter(([id, x]) => Number(x) > 0 && view.markets?.some((m) => m.id === id && !m.entered)).map(([id]) => mk(id));
+      return shareText(ents, mk) + (entering.length ? ` (entering ${entering.join(", ")})` : "");
     }
   }
   return fmtLever(field, v);
@@ -326,7 +338,9 @@ export function computeConflicts(view: GameView, seatRole: string | null | undef
           const winner = winnerOf(f);
           // sticks: a build / hire / offer survives the seated chair's silent submit — its untouched "none"
           // never clears a real request (DW-071); a price or a number is replaced by it (seats.ts)
-          out.push({ field: f, label: leverLabel(f), who: s.name, whoRole: s.role, theirs, mine: mine[f], winner, key: `${round}:${f}:cover:${JSON.stringify(theirs ?? null)}:${JSON.stringify(mine[f] ?? null)}`, cover: { desk: d, ownerName: owner?.name ?? null, ownerSubmitted: !!owner?.partial, sticks: ONE_SHOT.has(f as string) && theirs !== null && typeof theirs === "object" } });
+          const sticks = ONE_SHOT.has(f as string) && theirs !== null && typeof theirs === "object";
+          const ownerTouched = !!owner?.partial && (owner.touched ? owner.touched.includes(f as string) : !same(owner.partial[f], standing?.[f]));
+          out.push({ field: f, label: leverLabel(f), who: s.name, whoRole: s.role, theirs, mine: mine[f], winner, key: `${round}:${f}:cover:${JSON.stringify(theirs ?? null)}:${JSON.stringify(mine[f] ?? null)}`, cover: { desk: d, ownerName: owner?.name ?? null, ownerSubmitted: !!owner?.partial, sticks, decided: !!owner?.partial && (ownerTouched || !sticks) } });
         }
       }
     }
@@ -370,7 +384,11 @@ export function computeConflicts(view: GameView, seatRole: string | null | undef
  *  submission wins — this seat's value goes through at lock unless the CEO submits after. */
 export interface OffDeskEdit { field: keyof FirmDecision; label: string; mine: unknown; firm: unknown; deskOwner: string; ownerName: string | null; ceoSeated: boolean; applies: boolean;
   /** DW-082b: the CEO's own change holds this lever — on an empty desk the CEO has the final say */
-  byCeo?: boolean }
+  byCeo?: boolean;
+  /** Playtest 10-29: a build / hire / offer survives the seated chair's silent submit (DW-071), so "<chair> decides" misled —
+   *  it goes in unless that chair changes it or the CEO cancels it. `wins`: in the plan once I submit; else `by` (seat label)
+   *  holds it — the chair (`byChair`) or the CEO (`byCeo`); `gone`: the plan has none. */
+  sticks?: boolean; wins?: boolean; by?: string; byChair?: boolean; gone?: boolean }
 export function offDeskEdits(view: GameView, seatRole: string | null | undefined, mine: FirmDecision | null, standing: FirmDecision | null | undefined): OffDeskEdit[] {
   if (!view.teamPlan || !seatRole || !mine) return [];
   const myDesk = ROLE_DESK[seatRole] ?? "all";
@@ -391,7 +409,12 @@ export function offDeskEdits(view: GameView, seatRole: string | null | undefined
       // One-shot levers (builds, hires, poaches — see ONE_SHOT) ARE edits even against an
       // absent key: absent just means "none planned" (DW-052).
       if (own.has(f as string) || f === TEAM_BUY || mine[f] === undefined || !planCarries(firm, f, view)) continue;
-      if (!same(mine[f], firm[f])) out.push({ field: f, label: leverLabel(f), mine: mine[f], firm: firm[f], deskOwner: DESK_OWNER[desk], ownerName: seated?.name ?? null, ceoSeated, applies: !seated, ...(ceoHolds(f) ? { byCeo: true } : {}) });
+      if (same(mine[f], firm[f])) continue;
+      const sticks = ONE_SHOT.has(f as string) && typeof mine[f] === "object" && !empty(mine[f]);
+      const i = now?.from[f];
+      const a = !now || i === undefined || i === now.meIdx ? null : now.refs[i];
+      const held = sticks ? { sticks, wins: !!now && i === now.meIdx, gone: empty(now?.decision[f]), ...(a ? { by: `${SEAT_LABEL[a.role ?? ""] ?? ""} ${a.name}`.trim(), byChair: (a.desk ?? (a.role ? ROLE_DESK[a.role] ?? "all" : "all")) === desk } : {}) } : {};
+      out.push({ field: f, label: leverLabel(f), mine: mine[f], firm: firm[f], deskOwner: DESK_OWNER[desk], ownerName: seated?.name ?? null, ceoSeated, applies: !seated, ...(ceoHolds(f) ? { byCeo: true } : {}), ...held });
     }
   }
   return out;
@@ -524,9 +547,10 @@ export function planDiffs(view: GameView, seatRole: string | null | undefined, f
       const pend = pendingOf(k, w);
       const hint = cancel ? "Cancel it to drop it" : "change it, or Keep mine, to use yours";
       if (c.cover.ownerName) {
-        // a seated chair that hasn't submitted: a peer's suggestion trades until that chair submits; the
-        // CEO's own change (or Keep mine) stands unless the chair changes the lever itself (seats.ts)
-        const open = !c.cover.ownerSubmitted;
+        // a seated chair that hasn't settled it (not submitted, or — a build / hire / offer — submitted without
+        // touching it): a peer's suggestion trades until then; the CEO's own change (or Keep mine / Cancel it)
+        // stands unless the chair changes the lever itself (seats.ts)
+        const open = !c.cover.decided;
         const tail = !open ? `the ${deskLbl} decides`
           : w === "me" ? (cancel ? `cancelled${pend ? " once you submit" : ""}, unless the ${deskLbl} puts it back` : `yours${pend ? " once you submit" : ""}, unless the ${deskLbl} changes it`)
           : c.cover.sticks ? `theirs unless the ${deskLbl} cancels it` : `theirs until the ${deskLbl} submits`;
@@ -562,7 +586,11 @@ export function planDiffs(view: GameView, seatRole: string | null | undefined, f
     const did = `${by} ${gone ? "cancelled it" : "changed it"}`;
     const who = e.applies
       ? (w === "me" ? `Not your desk — the ${e.deskOwner} chair is empty, so yours is used${pendingOf(k, w) ? " once you submit" : ""}${e.ceoSeated ? " and the CEO will see it" : ""}` : e.byCeo ? `Not your desk — the ${e.deskOwner} chair is empty; ${did} — on an empty desk the CEO has the final say` : `Not your desk — the ${e.deskOwner} chair is empty; ${did} after you · theirs`)
-      : `Not your desk — ${e.ownerName} (${e.deskOwner}) decides; yours is only a suggestion`;
+      : e.sticks // playtest 10-29: a build / hire / offer goes in unless the chair changes it or the CEO cancels it
+        ? (w === "me" ? `Not your desk — yours goes in${pendingOf(k, w) ? " once you submit" : ""}, unless ${e.ownerName} (${e.deskOwner}) changes it or the CEO cancels it`
+          : e.byChair ? `Not your desk — ${e.ownerName} (${e.deskOwner}) set it; theirs is used`
+          : `Not your desk — ${by} ${gone ? "cancelled it" : "changed it"}; ${e.byCeo ? "the CEO's word stands" : "theirs stands"} unless ${e.ownerName} (${e.deskOwner}) changes it`)
+        : `Not your desk — ${e.ownerName} (${e.deskOwner}) decides; yours is only a suggestion`;
     add(e.field, w, who, e.applies && w === "them" ? `${by} ${gone ? "cancelled" : "changed"} it` : "not your desk");
   }
   // 2b. DW-082: a cover I SENT that the plan no longer runs. Off my desk my form follows the plan
@@ -580,10 +608,11 @@ export function planDiffs(view: GameView, seatRole: string | null | undefined, f
       const by = author ? seatName(author) : "a teammate";
       const gone = ONE_SHOT.has(k) && empty(outcome.decision[f]);
       const byCeo = !!author && (author.desk ?? (author.role ? ROLE_DESK[author.role] ?? "all" : "all")) === "all";
+      // a seated chair who left the lever alone yields to the CEO (seats.ts) — then it was the CEO's call, not theirs
       const who = chair
-        ? `You suggested ${T(k, sent)} for the ${deskLbl}'s desk; ${chair.name} decides — theirs is used`
+        ? (byCeo ? `You suggested ${T(k, sent)} for the ${deskLbl}'s desk; ${by} ${gone ? "cancelled it" : "changed it"} — the CEO's word stands unless ${chair.name} sets it` : `You suggested ${T(k, sent)} for the ${deskLbl}'s desk; ${chair.name} decides — theirs is used`)
         : `You set ${T(k, sent)} for the empty ${deskLbl} desk; ${by} ${gone ? "cancelled it" : "changed it"}${byCeo ? " — on an empty desk the CEO has the final say" : " after you"}`;
-      add(f, "them", who, chair ? `the ${deskLbl} decides` : `${by} ${gone ? "cancelled" : "changed"} it`, { mine: sent });
+      add(f, "them", who, chair && !byCeo ? `the ${deskLbl} decides` : `${by} ${gone ? "cancelled" : "changed"} it`, { mine: sent });
     }
   }
   // 3. Anything else the merge still prices differently from this form.

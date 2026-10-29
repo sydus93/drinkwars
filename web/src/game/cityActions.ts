@@ -111,25 +111,95 @@ export function dedupeBuilds(builds: CityBuildOrder[]): CityBuildOrder[] {
   return builds.filter((b) => { const k = buildKey(b); if (seen.has(k)) return false; seen.add(k); return true; });
 }
 
+/** Why a build this seat sent is not in the team plan (DW-082e). `kind`: the builds desk's own chair
+ *  set them ("chair"), the CEO's word stands ("ceo"), or a peer changed them later ("peer"); null = no
+ *  one's change to point at. `waiting`: this seat changed its builds AFTER the CEO's word — a new
+ *  proposal the CEO hasn't taken yet, not one the CEO cancelled. `chair`: the builds desk's seated chair. */
+export interface LostBuild { who: TeamPlanSeat | null; kind: "chair" | "ceo" | "peer" | null; waiting: boolean; chair: TeamPlanSeat | null }
+
 /** DW-082d: the builds this seat SENT that the team plan doesn't carry — a teammate's word won the
- *  lever (on an empty desk the CEO has the final say, DW-082b; on a seated desk, its chair). The City
+ *  lever (the builds desk's chair when they changed it, else the CEO's final say, DW-082b). The City
  *  View drew them as breaking ground and held their lots, so a CMO whose build the CEO cancelled saw it
- *  still "pending" and couldn't re-site it. Key (buildKey) → the seat whose word stands, null if unclear. */
-export function overruledBuilds(view: GameView): Map<string, TeamPlanSeat | null> {
-  const out = new Map<string, TeamPlanSeat | null>();
+ *  still "pending" and couldn't re-site it. Key (buildKey) → why.
+ *  DW-082e (playtest 10-28): builds are ONE lever, so once the CEO cancels one, a build proposed after it
+ *  waits for the CEO too — it read "cancelled it", which the CEO never did. Dated per seat (touched_at)
+ *  so the two read apart; the chair's own word outranks the CEO's (seats.ts pass 2). */
+export function overruledBuilds(view: GameView): Map<string, LostBuild> {
+  const out = new Map<string, LostBuild>();
   const plan = view.teamPlan;
   const me = plan?.seats.find((s) => s.me);
   if (!plan?.composed || !me?.submitted) return out;
   const inPlan = new Set(((plan.composed.build_facilities ?? []) as CityBuildOrder[]).map(buildKey));
   const lost = ((me.partial?.build_facilities ?? []) as CityBuildOrder[]).filter((b) => !inPlan.has(buildKey(b)));
   if (!lost.length) return out;
-  const ownerDesk = Object.entries(DESK_LEVERS).find(([, ls]) => (ls as string[]).includes("build_facilities"))?.[0];
-  const changed = plan.seats.filter((s) => !s.me && s.submitted && s.touched?.includes("build_facilities"));
-  const who = changed.find((s) => s.desk === "all") ?? changed.find((s) => s.desk === ownerDesk) ?? changed[0] ?? null;
-  for (const b of lost) out.set(buildKey(b), who);
+  const F = "build_facilities";
+  const ownerDesk = Object.entries(DESK_LEVERS).find(([, ls]) => (ls as string[]).includes(F))?.[0];
+  const at = (s: TeamPlanSeat) => s.touched_at?.[F] ?? s.updated_at ?? 0;
+  const changed = plan.seats.filter((s) => !s.me && s.submitted && s.touched?.includes(F));
+  const chair = plan.seats.find((s) => !s.me && s.desk === ownerDesk) ?? null;
+  const owner = changed.find((s) => s.desk === ownerDesk);
+  const ceo = changed.find((s) => s.desk === "all");
+  const peer = changed.filter((s) => s !== owner && s !== ceo && at(s) > at(me)).sort((a, b) => at(b) - at(a))[0];
+  const why: LostBuild = owner ? { who: owner, kind: "chair", waiting: false, chair }
+    : ceo ? { who: ceo, kind: "ceo", waiting: at(me) > at(ceo), chair }
+    : peer ? { who: peer, kind: "peer", waiting: false, chair }
+    : { who: null, kind: null, waiting: false, chair };
+  for (const b of lost) out.set(buildKey(b), why);
   return out;
 }
-const unionIds = (a: string[] | undefined, b: string[]): string[] => Array.from(new Set([...(a ?? []), ...b]));
+
+/** DW-082e: the team plan's builds to draw on this seat's map as a teammate's (the CEO's form never copies
+ *  them, DW-081). Not one only this seat's own sent slice carries: withdrawn, it came back as "a teammate's" —
+ *  no Withdraw, its lot still held — until the next submit (pre-ship review 10-29). A teammate who changed
+ *  their builds to include it (the CEO's Use theirs) keeps it drawn: it runs on their word. */
+export function teammateBuilds(view: GameView): CityBuildOrder[] {
+  const plan = view.teamPlan;
+  const F = "build_facilities";
+  const keys = (s: TeamPlanSeat | undefined) => ((s?.submitted ? s.partial?.build_facilities ?? [] : []) as CityBuildOrder[]).map(buildKey);
+  const mine = new Set(keys(plan?.seats.find((s) => s.me)));
+  const theirs = new Set((plan?.seats ?? []).filter((s) => !s.me && s.touched?.includes(F)).flatMap(keys));
+  return ((plan?.composed?.build_facilities ?? []) as CityBuildOrder[]).filter((b) => !mine.has(buildKey(b)) || theirs.has(buildKey(b)));
+}
+
+/** Playtest 10-29: a teammate's build drawn on this map — who sent it, whether the builds desk's chair settled the
+ *  lever (changed it: their word stands), and whether this seat is the CEO, who answers it on Decide (What locks:
+ *  Cancel it / Keep mine). The CEO looked for a cancel on the map and found only "answer it on Decide". */
+export function teamBuildSource(view: GameView, b: CityBuildOrder): { by: TeamPlanSeat | null; chair: TeamPlanSeat | null; ceo: boolean } {
+  const plan = view.teamPlan;
+  const F = "build_facilities";
+  const ownerDesk = Object.entries(DESK_LEVERS).find(([, ls]) => (ls as string[]).includes(F))?.[0];
+  const k = buildKey(b);
+  const by = plan?.seats.find((s) => !s.me && s.submitted && ((s.partial?.build_facilities ?? []) as CityBuildOrder[]).some((x) => buildKey(x) === k)) ?? null;
+  const chair = plan?.seats.find((s) => !s.me && s.desk === ownerDesk && s.submitted && !!s.touched?.includes(F)) ?? null;
+  return { by, chair, ceo: plan?.seats.find((s) => s.me)?.desk === "all" };
+}
+
+/** Playtest 10-29: what a not-yet-entered city's panel says when the team plan already enters it (a teammate's Enter
+ *  market). The CEO's form never copies a teammate's (DW-081), so the CEO's map offered "Enter market · $80,000" for a
+ *  city the plan already enters, and a second press looked like a second fee — the engine charges entry once per firm.
+ *  Markets served is the CMO's desk: a peer's entry is a suggestion the CMO's own update replaces (DW-052), unless the
+ *  CMO or the CEO enters it too — so the note says whose call it is, and to the CMO that their update drops it. */
+export function teamEntryNote(view: GameView, id: string): string | null {
+  const plan = view.teamPlan;
+  const F = "market_presence";
+  const w = (d: Partial<FirmDecision> | null | undefined) => Number((d?.market_presence as Record<string, number> | undefined)?.[id] ?? 0);
+  if (!plan || view.markets?.some((m) => m.id === id && m.entered) || !(w(plan.composed as Partial<FirmDecision> | null) > 0)) return null;
+  const entering = plan.seats.filter((s) => !s.me && s.submitted && w(s.partial) > 0 && (s.touched ? s.touched.includes(F) : true));
+  const by = entering.find((s) => s.desk === "all") ?? entering[0]; // the CEO's word stands over a peer's
+  if (!by) return null;
+  const ownerDesk = Object.entries(DESK_LEVERS).find(([, ls]) => (ls as string[]).includes(F))?.[0];
+  const me = plan.seats.find((s) => s.me);
+  const chair = plan.seats.find((s) => !s.me && s.desk === ownerDesk) ?? null;
+  const tag = (s: TeamPlanSeat) => `${s.name} (${(s.role ?? "").toUpperCase()})`;
+  const fee = "The entry fee is charged once for the firm, however many of you press Enter.";
+  const byCeo = by.desk === "all";
+  if (me?.desk === ownerDesk) return byCeo
+    ? `${tag(by)} is entering it in the team plan — it stands unless you change markets served. ${fee}`
+    : `${tag(by)} proposed entering it. Markets served is your desk, so your update replaces their proposal — press Enter too to keep it. ${fee}`;
+  if (!byCeo && chair && !chair.submitted) return `${tag(by)} is entering it in the team plan, until ${tag(chair)}, whose desk it is, submits — ${me?.desk === "all" ? "press Enter too to keep it in" : "ask them, or the CEO, to enter it too"}. ${fee}`;
+  return `${tag(by)} is entering it in the team plan. ${fee}`;
+}
+const unionIds =(a: string[] | undefined, b: string[]): string[] => Array.from(new Set([...(a ?? []), ...b]));
 
 export function mergeDecision(
   view: GameView,

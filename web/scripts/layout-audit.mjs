@@ -218,7 +218,7 @@ for (const seat of SEATS) {
         else ok(false, `${seat} ${String(w).padStart(4)} city: the round-1 taproom has a marker to open`);
         await page.evaluate(() => window.scrollTo(0, 0));
         if (await page.$('[title="Open the globe"]')) { await page.$eval('[title="Open the globe"]', (d) => d.click()); await sleep(600); await check(page, seat, w, "city globe"); await click(page, /Close/); }
-        if (await click(page, /View distribution/)) { await check(page, seat, w, "city distribution"); await page.keyboard.press("Escape"); await click(page, /^✕$/); }
+        if (await click(page, /Supply & lanes/)) { await check(page, seat, w, "city distribution"); await page.keyboard.press("Escape"); await click(page, /^✕$/); }
         if (unentered) await click(page, /Enter · \$/); // the city list's row for a market not yet entered
         if (await click(page, /^Enter market ·/)) { await check(page, seat, w, "city enter-market"); await click(page, /^Not now$/); }
         else ok(!unentered, `${seat} ${String(w).padStart(4)} city: "Enter market" offered for ${unentered?.label}`);
